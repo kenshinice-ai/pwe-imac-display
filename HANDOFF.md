@@ -1,7 +1,8 @@
 # PWE iMac Display — 交接
 
 > 状态（2026-10-15）：1.0.0 已发布（GitHub 标签 `pwe-1.0.0`，Homebrew `kenshinice-ai/tap/pwe-imac-display`）。
-> 1.0.1（接收端加固）已在本地分支 `security-1.0.1` 上完成，计划 2026-10-22 发布；1.1 在做。路线见 `docs/pwe/PLAN-2026-10-15.md`（未入库）。
+> 1.0.1（接收端加固）已在本地分支 `security-1.0.1` 上完成，计划 2026-10-22 发布。
+> 1.1（PWE 自己的界面、自动连接、登录时打开、接收端安静画面）已在分支 `pwe-1.1` 上完成并打出本地包，等 Lee 试用和 iMac 基线。路线见 `docs/pwe/PLAN-2026-10-15.md`（未入库）。
 > pwestudio.site 产品页冻结中（Lee），方案在 `docs/pwe/SITE-PLAN.md`。还没在真实的 Intel iMac 上试过。
 > 仓库：`kenshinice-ai/pwe-imac-display`，公开，是 `swellweb/targetBridge` 的 fork。`main` 从上游 3.6.0 起。
 > 方向（Lee，2026-10-14）：PWE 自己签名的 app，同时给上游贡献。下游发行版还是彻底分叉待定。见 `docs/pwe/RESEARCH-TargetBridge.md`。
@@ -10,16 +11,19 @@
 
 ## 等 Lee
 
-- **[动手] iMac 到货后按 `docs/pwe/PLAN-2026-10-15.md` 第三节做真机基线** — 用最新的 DMG；带 40 Gbps 雷雳 3 线，2014、2015 款另带转换器 · 不做则默认码流配置定不下来，1.1 发不了 · 自 2026-10-15
+- **[动手] 试用 1.1** — 打开 `pwe/dist/local/PWE iMac Display 1.1.0.dmg`（本机构建，未公证，只在这台 Mac 上用）；或看 `--pwe-snapshot` 出的各状态截图。重点看：主窗口的说法、首次设置、自动连接是否符合预期 · 不试则 1.1 的界面没人拍板，发不了 · 自 2026-10-15
+- **[动手] iMac 到货后按 `docs/pwe/PLAN-2026-10-15.md` 第三节做真机基线** — 用 1.1 的包；带 40 Gbps 雷雳 3 线，2014、2015 款另带转换器 · 不做则默认码流配置定不下来，1.1 发不了 · 自 2026-10-15
 - **[决定] 2026-10-22 发布 1.0.1 吗** — 推荐发；Marco 若要求推迟就等他。发布前把 `security-1.0.1` 合进 `main` · 不定则接收端加固留在本地 · 自 2026-10-15
-- **[决定] 解冻 pwestudio.site** — 产品页方案在 `docs/pwe/SITE-PLAN.md`；1.1 的更新检查也需要在 `functions/_release.js` 加一条 · 不定则网站上没有这个产品，更新检查发不出去 · 自 2026-10-14
-- **[决定] 下游发行版还是彻底分叉** — 推荐下游发行版；1.1 的界面放在 PWE 自己的界面层里，不改上游界面文件 · 不定则不影响现在的工作 · 自 2026-10-14
+- **[决定] 解冻 pwestudio.site** — 产品页方案在 `docs/pwe/SITE-PLAN.md`；1.1 的更新检查还要在 `functions/_release.js` 加一条 `imacdisplay` · 不定则网站上没有这个产品，1.1 的「检查更新」只会回答「暂时无法检查」 · 自 2026-10-14
+- **[决定] 本仓库 Sponsor 按钮** — 组规矩 §0.9 要求放 `custom: [pwestudio.site/support]`，并由 Lee 同意打开 Sponsorships 开关；1.1 的「关于」里已有「支持 PWE…」 · 不定则仓库页没有支持入口 · 自 2026-10-15
+- **[决定] 下游发行版还是彻底分叉** — 推荐下游发行版；1.1 的界面放在 `pwe/sender-ui`，不改上游界面文件 · 不定则不影响现在的工作 · 自 2026-10-14
 
 ## 仓库规矩
 
 - 远端：`origin` 是 `kenshinice-ai/pwe-imac-display`，`upstream` 是 `swellweb/targetBridge`。
 - 跟进上游：`git fetch upstream`，再把上游的发版提交合并进 `main`。成功判据：`git diff <上游标签> main` 只列出 PWE 加的文件。
 - 给上游的 PR：在单独的 worktree 里从 `upstream/main` 开分支（`git worktree add <临时目录> -b <分支> upstream/main`），推到 `origin`，再向 `swellweb/targetBridge` 开 PR。
+- 看界面不用截屏：运行打包出的 `PWE iMac Display.app/Contents/MacOS/PWE iMac Display --pwe-snapshot <目录>`，每个状态出一张中英文 PNG；接收端设 `TB_RECEIVER_SNAPSHOT=<文件.png>` 运行。
 - 本地打包：运行 `pwe/package.sh`。成功判据：最后一行打印 `pwe/dist/local/PWE iMac Display <版本>.dmg` 和它的 sha256。正式包只由 `--notarize` 写进 `pwe/dist/`。
 - 发版打包：先提交，再运行 `pwe/package.sh --notarize`。成功判据：输出里 DMG 显示 `source=Notarized Developer ID`。
 - 发版：标签用 `pwe-<版本>`（不用 `v`），只推这一个标签；release 上传 `PWE-iMac-Display-<版本>.dmg` 和 `SHA256SUMS.txt`；再改 `homebrew-tap/Casks/pwe-imac-display.rb` 的 `version` 和 `sha256`。成功判据：`gh release download` 回来的文件通过 `shasum -c`，`brew fetch --cask kenshinice-ai/tap/pwe-imac-display` 显示 ✔。
