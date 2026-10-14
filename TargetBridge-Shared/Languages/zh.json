@@ -168,6 +168,7 @@
   "receiver.language.auto": "自动",
   "receiver.status.waiting_for_sender": "等待发送端",
   "receiver.splash.connecting": "正在连接你的 MacBook",
+  "receiver.splash.role": "接收端",
   "receiver.splash.waiting_first_frame": "正在等待第一帧…",
   "receiver.status.waiting": "等待中",
   "receiver.status.stream_active": "码流进行中",
