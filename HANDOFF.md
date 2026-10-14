@@ -4,7 +4,6 @@
 > 仓库：`kenshinice-ai/pwe-imac-display`，公开，是 `swellweb/targetBridge` 的 fork。`main` 从上游 3.6.0 起。
 > 方向（Lee，2026-10-14）：PWE 自己签名的 app，同时给上游贡献。下游发行版还是彻底分叉待定。见 `docs/pwe/RESEARCH-TargetBridge.md`。
 > 本文件和 `docs/pwe/` 是 PWE 加的；其余文件来自上游，改动先提给上游。
-> 第五节是定方向前的旧路线，待按下游发行版重写。
 
 ## 等 Lee
 
@@ -91,47 +90,24 @@ Lee 2026-10-14 定。理由：
 `CGVirtualDisplay` 等四个 ObjC 类在 macOS 27.0.1 上存在（2026-10-02 在 Lumen Bar 会话里实测）。
 C 函数 `CGVirtualDisplayCreate` 不存在，但用不到它。
 
-## 五、路线
+## 五、1.0 计划（2026-10-14，Lee 定目标）
 
-### 阶段 0：观察（Lee，约半天）
+1.0 只做一件事：插一根线，旧 iMac 就是一块屏。代码是 TargetBridge 3.6.0，加 PWE 这一层。
 
-见「等 Lee」。
+| 项 | 做法 | 状态 |
+|---|---|---|
+| 身份 | 发送端 `PWE iMac Display`（`com.pwegroup.pweimacdisplay`），接收端 `PWE iMac Display Receiver`（`com.pwegroup.pweimacdisplay.receiver`），URL scheme `pweimacdisplay://`，配置目录 `PWE iMac Display` | 进行中 |
+| 互通 | Bonjour 服务 `_targetbridge._tcp` 和传输协议不改，两边可以和 TargetBridge 混用 | 不改 |
+| 界面文字 | 所有语言里的 TargetBridge 改成 PWE iMac Display；About 写明基于 TargetBridge | 进行中 |
+| 语言 | 默认跟随系统语言（上游默认意大利语） | 待做 |
+| 默认功能 | Network Link 默认关；键鼠共享维持上游的默认关 | 待做 |
+| 接收端 | 自编 FFmpeg（只解码、LGPL、macOS 11）和 SDL2，通用二进制 | 待做 |
+| 签名 | Developer ID `2SQV3H5MH9`，hardened runtime，公证用 `PWE_NOTARY` | 待做 |
+| 打包 | 一个 DMG，装两个 App 和一份读我 | 待做 |
+| 文档 | 中文 README 为主，英文 README，`NOTICE` | 待做 |
+| 发布 | GitHub release、pwestudio.site 产品页、Homebrew cask | 等 Lee 真机试过、给上游的信发出之后 |
 
-关口：
-- 如果 TargetBridge 在这台 iMac 上已经够好，PWE 自己做只剩「签了名、更简单」。那就改为给它贡献 macOS 11 的接收端，不另起产品。
-- 如果卡在签名、安装、系统版本或画质上，这些卡点就是阶段 1 的需求。
-
-### 阶段 1：技术探针（iMac 放在桌上，约一周会话，粗估）
-
-1. 发送端：建一块 5K HiDPI 虚拟屏，用 ScreenCaptureKit 抓，用 VideoToolbox 低延迟编码。
-2. 接收端：以 macOS 11 为目标，用 AppKit + Metal + VideoToolbox 解码，全屏显示。
-3. 传输：Network.framework，走 Thunderbolt 桥接的链路本地地址。
-4. 测量：打字和拖窗口的延迟（手机 240 fps 慢动作拍），文字锐度，两端 CPU 和 GPU 占用。
-
-成功判据：在同一套硬件上不比 TargetBridge 差。具体数字先测出 TargetBridge 的基线再定，不预先编。
-
-**最大的技术风险：老 iMac 的硬件解码。**
-- 2014 款可能没有 HEVC 硬件解码；2014、2015 款只有 Thunderbolt 2。
-- 如果压缩路线撑不住 5K，就改走 monitorOS 那种「不压缩、只发变化区域」。
-
-### 阶段 2：最小产品
-
-只做一件事：插上线，自动扩展成一块 5K 屏。
-
-要做：
-- 发送端菜单栏 app 和接收端 app，都用 Developer ID 签名并公证。
-- 自动发现、断线重连；按接收端面板自动选模式。
-- 亮度键直接调 iMac 背光。
-- 与 Lumen Bar 的亮度交接（见第二节）。
-
-不做：镜像、多台接收端、Wi-Fi 和网络传输、键鼠共享、剪贴板、插件系统、编码器选项、Linux 接收端、MacBook 当接收端。
-
-阶段 2 之后再定：iMac 扬声器出声。它要装驱动、要管理员密码，等有人真的要再做。
-
-### 量级
-
-TargetBridge 由一位专职维护者加社区做了 5 个月，至今还有卡顿、颜色、睡眠的 issue 没关。
-这条线比 Lumen Bar 重一个数量级，长期成本在用户各式各样的旧硬件上。
+不进 1.0：App 内更新检查（PWE 的 `UpdateCheck` 要加第四份副本，留到 1.1）、亮度键、扬声器。
 
 ## 六、会改变判断的证据
 
