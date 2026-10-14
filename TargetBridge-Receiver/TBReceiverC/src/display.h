@@ -25,7 +25,8 @@ struct tb_display_info {
 enum tb_display_action {
     TB_DISP_ACTION_NONE = 0,
     TB_DISP_ACTION_QUIT = 1 << 0,
-    TB_DISP_ACTION_CYCLE_LANGUAGE = 1 << 1
+    TB_DISP_ACTION_CYCLE_LANGUAGE = 1 << 1,
+    TB_DISP_ACTION_TOGGLE_LOGIN_ITEM = 1 << 2
 };
 
 struct tb_display *tb_disp_create(int fullscreen);

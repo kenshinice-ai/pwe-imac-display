@@ -22,6 +22,11 @@
 #include "tb_gesture_bridge.h"
 #include "tb_display_tweaks.h"
 #include "tb_i18n.h"
+#include "tb_login_item.h"
+
+#ifndef TB_RECEIVER_OFFER_LOGIN_ITEM
+#define TB_RECEIVER_OFFER_LOGIN_ITEM 0
+#endif
 
 #include <SDL.h>
 #include <ApplicationServices/ApplicationServices.h>
@@ -355,6 +360,13 @@ static void tb_receiver_refresh_permissions_text(struct app *a) {
             input_monitoring ? "OK" : "Missing",
             accessibility ? "OK" : "Missing"
         );
+    }
+
+    if (TB_RECEIVER_OFFER_LOGIN_ITEM) {
+        size_t used = strlen(a->permissions_text);
+        snprintf(a->permissions_text + used, sizeof(a->permissions_text) - used, "   %s · %s",
+                 tb_i18n_get(tb_login_item_is_enabled() ? "receiver.login.state_on" : "receiver.login.state_off"),
+                 tb_i18n_get("receiver.login.toggle_hint"));
     }
 }
 
@@ -2042,6 +2054,10 @@ int main(int argc, char **argv) {
 
     a.disp = tb_disp_create(fullscreen);
     if (!a.disp) { fprintf(stderr, "tb_disp_create failed\n"); return 1; }
+    if (TB_RECEIVER_OFFER_LOGIN_ITEM) {
+        tb_login_item_offer_once();
+        tb_receiver_refresh_permissions_text(&a);
+    }
 
     /* SDL starts with screen-saver inhibition enabled. A Receiver that has not
      * accepted a client yet never reaches close_client(), so release the
@@ -2076,6 +2092,11 @@ int main(int argc, char **argv) {
         if (disp_actions & TB_DISP_ACTION_QUIT) break;
         if ((disp_actions & TB_DISP_ACTION_CYCLE_LANGUAGE) && a.client_fd < 0) {
             tb_receiver_cycle_language_preference(&a);
+        }
+        if (TB_RECEIVER_OFFER_LOGIN_ITEM &&
+            (disp_actions & TB_DISP_ACTION_TOGGLE_LOGIN_ITEM) && a.client_fd < 0) {
+            tb_login_item_set_enabled(!tb_login_item_is_enabled());
+            tb_receiver_refresh_permissions_text(&a);
         }
 
         uint64_t t = now_ms();

@@ -27,15 +27,23 @@ CFLAGS   += $(shell $(PKG) --cflags libavcodec libavutil libswscale sdl2)
 CFLAGS   += -DTB_RECEIVER_VERSION=\"$(APP_VERSION)\" -DTB_RECEIVER_BUILD=\"$(APP_BUILD)\"
 CFLAGS   += -DTB_LANGUAGE_SOURCE_DIR=\"$(abspath ../../TargetBridge-Shared/Languages)\"
 
+# 1 = a calm idle screen (name, what it waits for, one hint); I shows the details.
+COMPACT_IDLE ?= 0
+CFLAGS   += -DTB_RECEIVER_COMPACT_IDLE=$(COMPACT_IDLE)
+
+# 1 = ask once whether to open at login; A on the details screen turns it on or off.
+OFFER_LOGIN_ITEM ?= 0
+CFLAGS   += -DTB_RECEIVER_OFFER_LOGIN_ITEM=$(OFFER_LOGIN_ITEM)
+
 LDFLAGS  += $(shell $(PKG) --libs libavcodec libavutil libswscale sdl2)
 
 UNAME_S  := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
-LDFLAGS  += -framework ApplicationServices -framework AppKit -framework CoreFoundation -framework CoreGraphics -framework CoreText -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework IOSurface -framework CoreServices -framework CoreAudio -framework SystemConfiguration
+LDFLAGS  += -framework ApplicationServices -framework AppKit -framework CoreFoundation -framework CoreGraphics -framework CoreText -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework IOSurface -framework CoreServices -framework CoreAudio -framework SystemConfiguration -framework ServiceManagement
 endif
 
 C_SRC = src/main.c src/net.c src/decoder.c src/display.c src/input_queue.c src/idle_watchdog.c src/receiver_profile.c src/tb_i18n.c
-OBJC_SRC = src/tb_gesture_bridge.m src/tb_display_tweaks.m
+OBJC_SRC = src/tb_gesture_bridge.m src/tb_display_tweaks.m src/tb_login_item.m
 OBJ = $(C_SRC:.c=.o) $(OBJC_SRC:.m=.o)
 BIN = tbreceiver
 
