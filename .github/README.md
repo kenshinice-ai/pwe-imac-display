@@ -11,7 +11,8 @@
 
 ---
 
-> **1.0 准备中。** 还没有正式发布，下载链接会在发布后放在这里和 pwestudio.site。
+> **1.0.0 已发布**：[下载 DMG](https://github.com/kenshinice-ai/pwe-imac-display/releases/latest)，或 `brew install --cask kenshinice-ai/tap/pwe-imac-display`。
+> 安装和连接步骤见 [安装指南](../docs/pwe/安装指南.md)。1.0 还没在真实的 Intel iMac 上运行过，遇到问题请开 issue。
 
 ## 这是什么
 
