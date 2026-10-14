@@ -52,4 +52,16 @@ int  tb_net_get_wifi_ip(char *buf, size_t bufsz);
 /* Address classifier exposed for hardware-free unit tests. */
 int  tb_net_is_link_local_ipv4(const char *host);
 
+/* Whether a connection that arrived on interface `ifname` at local address
+ * `local_host` came over a direct cable rather than a shared network:
+ * loopback, Thunderbolt Bridge (bridge*), or a link-local address on a wired
+ * enX/ethX interface (direct USB networking). Wi-Fi never counts. Exposed for
+ * hardware-free unit tests. */
+int  tb_net_is_direct_link(const char *ifname, const char *local_host, int is_wifi);
+
+/* Classify an accepted client socket by the local interface it arrived on.
+ * Returns 1 for a direct link, 0 otherwise. Writes the interface name to
+ * `ifname` when known. */
+int  tb_net_client_is_direct_link(int fd, char *ifname, size_t ifname_size);
+
 #endif

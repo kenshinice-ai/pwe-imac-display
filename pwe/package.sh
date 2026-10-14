@@ -99,7 +99,7 @@ for ARCH in arm64 x86_64; do
     cd "$SRC/TargetBridge-Receiver/TBReceiverC"
     make clean >/dev/null
     PKG_CONFIG_LIBDIR="$DEPS/$ARCH/lib/pkgconfig" PKG_CONFIG_PATH= \
-      make CC="clang -arch $ARCH" PKG="pkg-config --static" \
+      make CC="clang -arch $ARCH" PKG="pkg-config --static" DIRECT_LINK_ONLY=1 \
         APP_VERSION="$VERSION" APP_BUILD="$BUILD" >"$WORK/receiver-$ARCH.log" 2>&1 \
       || { tail -30 "$WORK/receiver-$ARCH.log"; exit 1; }
     mv tbreceiver "$WORK/tbreceiver-$ARCH"

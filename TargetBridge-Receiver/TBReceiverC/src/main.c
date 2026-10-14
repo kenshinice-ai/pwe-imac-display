@@ -14,6 +14,7 @@
  */
 
 #include "net.h"
+#include "audio_ring.h"
 #include "decoder.h"
 #include "display.h"
 #include "idle_watchdog.h"
@@ -22,6 +23,10 @@
 #include "tb_gesture_bridge.h"
 #include "tb_display_tweaks.h"
 #include "tb_i18n.h"
+
+#ifndef TB_RECEIVER_DIRECT_LINK_ONLY
+#define TB_RECEIVER_DIRECT_LINK_ONLY 0
+#endif
 
 #include <SDL.h>
 #include <ApplicationServices/ApplicationServices.h>
@@ -61,6 +66,7 @@ struct app {
     struct tb_parser   parser;
 
     int      server_fd;
+    int      direct_link_only;  /* refuse senders that are not on a direct cable */
     int      client_fd;
 
     uint64_t frames;
@@ -113,9 +119,7 @@ struct app {
     uint64_t audio_retry_after_ms;
 
     uint8_t audio_buf[AUDIO_BUF_CAP];
-    int     audio_buf_head;
-    int     audio_buf_tail;
-    int     audio_buf_size;
+    struct tb_audio_ring audio_ring;
 
     uint64_t input_events_sent;
     uint64_t input_events_received;
@@ -997,27 +1001,10 @@ static void handle_raw_frame(struct app *a, const uint8_t *p, size_t len) {
     a->frames++;
 }
 
-static void ring_read(struct app *a, Uint8 *dst, int len) {
-    int first = AUDIO_BUF_CAP - a->audio_buf_tail;
-    if (first >= len) {
-        memcpy(dst, a->audio_buf + a->audio_buf_tail, len);
-    } else {
-        memcpy(dst, a->audio_buf + a->audio_buf_tail, first);
-        memcpy(dst + first, a->audio_buf, len - first);
-    }
-    a->audio_buf_tail = (a->audio_buf_tail + len) % AUDIO_BUF_CAP;
-    a->audio_buf_size -= len;
-}
-
 static void audio_callback(void *userdata, Uint8 *stream, int len) {
     struct app *a = (struct app *)userdata;
-    if (a->audio_buf_size >= len) {
-        ring_read(a, stream, len);
-    } else {
-        int available = a->audio_buf_size;
-        if (available > 0) ring_read(a, stream, available);
-        memset(stream + available, 0, len - available);
-    }
+    int copied = tb_audio_ring_pop(&a->audio_ring, stream, len);
+    if (copied < len) memset(stream + copied, 0, (size_t)(len - copied));
 }
 
 /* Keep the output device closed while Receiver is waiting for a Sender.  On
@@ -1070,9 +1057,7 @@ static void tb_audio_close_for_idle(struct app *a) {
         fprintf(stderr, "[main] SDL audio device closed for idle Receiver\n");
     }
 
-    a->audio_buf_head = 0;
-    a->audio_buf_tail = 0;
-    a->audio_buf_size = 0;
+    tb_audio_ring_reset(&a->audio_ring);
     a->audio_retry_after_ms = 0;
 }
 
@@ -1262,25 +1247,8 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
 
             // Limit audio backlog to 150ms (150 * 192 = 28800 bytes) to cushion
             // against network / scheduling jitter while still keeping playout tight.
-            const int cap_bytes = 28800;
-            if (a->audio_buf_size + len > cap_bytes) {
-                int excess = (a->audio_buf_size + len) - cap_bytes;
-                a->audio_buf_tail = (a->audio_buf_tail + excess) % AUDIO_BUF_CAP;
-                a->audio_buf_size -= excess;
-            }
-
-            // Write payload to circular buffer
-            if (a->audio_buf_size + (int)len <= AUDIO_BUF_CAP) {
-                int first = AUDIO_BUF_CAP - a->audio_buf_head;
-                if (first >= (int)len) {
-                    memcpy(a->audio_buf + a->audio_buf_head, payload, len);
-                } else {
-                    memcpy(a->audio_buf + a->audio_buf_head, payload, first);
-                    memcpy(a->audio_buf, payload + first, len - first);
-                }
-                a->audio_buf_head = (a->audio_buf_head + (int)len) % AUDIO_BUF_CAP;
-                a->audio_buf_size += (int)len;
-            }
+            // The ring keeps its size within bounds whatever the packet length.
+            tb_audio_ring_push(&a->audio_ring, payload, len, 28800);
 
             SDL_UnlockAudioDevice(a->audio_device);
 
@@ -2007,6 +1975,16 @@ int main(int argc, char **argv) {
     memset(&a, 0, sizeof(a));
     a.server_fd = -1;
     a.client_fd = -1;
+    tb_audio_ring_init(&a.audio_ring, a.audio_buf, AUDIO_BUF_CAP);
+    /* Built with DIRECT_LINK_ONLY=1, the receiver takes senders only over a
+     * direct cable unless the user opts in:
+     *   defaults write <receiver bundle id> AllowLocalNetwork -bool true */
+    a.direct_link_only = TB_RECEIVER_DIRECT_LINK_ONLY &&
+        !CFPreferencesGetAppBooleanValue(CFSTR("AllowLocalNetwork"),
+                                         kCFPreferencesCurrentApplication, NULL);
+    fprintf(stderr, "[net] senders accepted over %s\n",
+            a.direct_link_only ? "direct links only (Thunderbolt Bridge, USB, loopback)"
+                               : "every interface");
     if (tb_receiver_load_or_create_id(a.receiver_id, sizeof(a.receiver_id),
                                      CFSTR("com.targetbridge.receiver")) == 0) {
         fprintf(stderr, "[identity] receiver ID ready\n");
@@ -2134,6 +2112,16 @@ int main(int argc, char **argv) {
         /* Accept new client */
         if (a.client_fd < 0) {
             int c = tb_net_accept(a.server_fd);
+            if (c >= 0 && a.direct_link_only) {
+                char ifname[32];
+                if (!tb_net_client_is_direct_link(c, ifname, sizeof(ifname))) {
+                    fprintf(stderr, "[net] refused a sender on %s: not a direct link "
+                            "(set AllowLocalNetwork to accept local-network senders)\n",
+                            ifname[0] ? ifname : "an unknown interface");
+                    close(c);
+                    c = -1;
+                }
+            }
             if (c >= 0) {
                 a.client_fd = c;
                 a.have_video_frame = 0;

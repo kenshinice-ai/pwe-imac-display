@@ -27,6 +27,11 @@ CFLAGS   += $(shell $(PKG) --cflags libavcodec libavutil libswscale sdl2)
 CFLAGS   += -DTB_RECEIVER_VERSION=\"$(APP_VERSION)\" -DTB_RECEIVER_BUILD=\"$(APP_BUILD)\"
 CFLAGS   += -DTB_LANGUAGE_SOURCE_DIR=\"$(abspath ../../TargetBridge-Shared/Languages)\"
 
+# 1 = accept senders only over direct links (Thunderbolt Bridge, USB, loopback)
+# unless the user turns on AllowLocalNetwork; 0 = accept on every interface.
+DIRECT_LINK_ONLY ?= 0
+CFLAGS   += -DTB_RECEIVER_DIRECT_LINK_ONLY=$(DIRECT_LINK_ONLY)
+
 LDFLAGS  += $(shell $(PKG) --libs libavcodec libavutil libswscale sdl2)
 
 UNAME_S  := $(shell uname -s)
@@ -34,7 +39,7 @@ ifeq ($(UNAME_S),Darwin)
 LDFLAGS  += -framework ApplicationServices -framework AppKit -framework CoreFoundation -framework CoreGraphics -framework CoreText -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework IOSurface -framework CoreServices -framework CoreAudio -framework SystemConfiguration
 endif
 
-C_SRC = src/main.c src/net.c src/decoder.c src/display.c src/input_queue.c src/idle_watchdog.c src/receiver_profile.c src/tb_i18n.c
+C_SRC = src/main.c src/net.c src/audio_ring.c src/decoder.c src/display.c src/input_queue.c src/idle_watchdog.c src/receiver_profile.c src/tb_i18n.c
 OBJC_SRC = src/tb_gesture_bridge.m src/tb_display_tweaks.m
 OBJ = $(C_SRC:.c=.o) $(OBJC_SRC:.m=.o)
 BIN = tbreceiver
@@ -51,7 +56,7 @@ $(BIN): $(OBJ)
 	$(CC) $(CFLAGS) -fobjc-arc -c -o $@ $<
 
 clean:
-	rm -f $(OBJ) $(BIN) $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEIVER_PROFILE_BIN) test_monitor_shield
+	rm -f $(OBJ) $(BIN) $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEIVER_PROFILE_BIN) $(TEST_AUDIO_RING_BIN) test_monitor_shield
 
 # Unit tests for the packet parser. net.c is pure POSIX, so this needs no
 # ffmpeg/SDL/pkgconf — it runs anywhere, including CI, with no hardware.
@@ -64,6 +69,7 @@ TEST_BIN = test_net_parser
 TEST_INPUT_QUEUE_BIN = test_input_queue
 TEST_IDLE_WATCHDOG_BIN = test_idle_watchdog
 TEST_RECEIVER_PROFILE_BIN = test_receiver_profile
+TEST_AUDIO_RING_BIN = test_audio_ring
 
 test_net_parser: tests/test_net_parser.c src/net.c src/net.h src/proto.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_net_parser.c src/net.c $(TEST_LDFLAGS) -o $@
@@ -74,14 +80,18 @@ $(TEST_INPUT_QUEUE_BIN): tests/test_input_queue.c src/input_queue.c src/input_qu
 $(TEST_IDLE_WATCHDOG_BIN): tests/test_idle_watchdog.c src/idle_watchdog.c src/idle_watchdog.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_idle_watchdog.c src/idle_watchdog.c -o $@
 
+$(TEST_AUDIO_RING_BIN): tests/test_audio_ring.c src/audio_ring.c src/audio_ring.h
+	$(CC) $(TEST_CFLAGS) -Isrc tests/test_audio_ring.c src/audio_ring.c -o $@
+
 $(TEST_RECEIVER_PROFILE_BIN): tests/test_receiver_profile.c src/receiver_profile.c src/receiver_profile.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_receiver_profile.c src/receiver_profile.c -o $@
 
-test: $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEIVER_PROFILE_BIN)
+test: $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEIVER_PROFILE_BIN) $(TEST_AUDIO_RING_BIN)
 	./$(TEST_BIN)
 	./$(TEST_INPUT_QUEUE_BIN)
 	./$(TEST_IDLE_WATCHDOG_BIN)
 	./$(TEST_RECEIVER_PROFILE_BIN)
+	./$(TEST_AUDIO_RING_BIN)
 
 # AppKit lifecycle coverage requires a logged-in macOS GUI session.
 test_monitor_shield: tests/test_monitor_shield.m src/tb_gesture_bridge.m src/tb_gesture_bridge.h

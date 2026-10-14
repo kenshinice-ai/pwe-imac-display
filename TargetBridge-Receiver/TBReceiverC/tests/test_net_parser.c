@@ -83,6 +83,20 @@ static void test_link_local_ipv4_classifier(void) {
     CHECK(!tb_net_is_link_local_ipv4(NULL), "NULL address rejected");
 }
 
+static void test_direct_link_classifier(void) {
+    CHECK(tb_net_is_direct_link("lo0", "127.0.0.1", 0), "loopback is direct");
+    CHECK(tb_net_is_direct_link("bridge0", "169.254.10.2", 0), "Thunderbolt Bridge is direct");
+    CHECK(tb_net_is_direct_link("bridge0", "10.0.0.5", 0), "Thunderbolt Bridge with a manual address is direct");
+    CHECK(tb_net_is_direct_link("en5", "169.254.189.3", 0), "USB-NCM link-local is direct");
+    CHECK(!tb_net_is_direct_link("en0", "192.168.1.20", 0), "Ethernet LAN is not direct");
+    CHECK(!tb_net_is_direct_link("en1", "10.0.0.7", 1), "Wi-Fi LAN is not direct");
+    CHECK(!tb_net_is_direct_link("en1", "169.254.3.3", 1), "Wi-Fi link-local is not direct");
+    CHECK(!tb_net_is_direct_link("awdl0", "169.254.3.3", 0), "AirDrop peer link is not direct");
+    CHECK(!tb_net_is_direct_link("utun3", "10.8.0.2", 0), "VPN tunnel is not direct");
+    CHECK(!tb_net_is_direct_link("", "127.0.0.1", 0), "unknown interface is not direct");
+    CHECK(!tb_net_is_direct_link(NULL, "169.254.1.1", 0), "missing interface is not direct");
+}
+
 static void test_single_packet_whole_feed(void) {
     struct tb_parser p;
     tb_parser_init(&p, capture_cb, NULL);
@@ -224,6 +238,7 @@ static void test_large_payload_roundtrip(void) {
 
 int main(void) {
     test_link_local_ipv4_classifier();
+    test_direct_link_classifier();
     test_single_packet_whole_feed();
     test_byte_by_byte_feed();
     test_two_contiguous_packets();
