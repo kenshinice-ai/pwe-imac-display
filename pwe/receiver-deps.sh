@@ -31,7 +31,19 @@ SDL=SDL2-2.32.10
 SDL_SHA=5f5993c530f084535c65a6879e9b26ad441169b3e25d789d83287040a9ca5165
 SDL_URL=https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/$SDL.tar.gz
 
-STAMP="$FFMPEG+$SDL+macos$MIN_MACOS"
+# The cache is reused only when everything that shaped it is unchanged: the
+# sources, the target, this script (its configure flags), and the compiler.
+SCRIPT_HASH="$(shasum -a 256 "$0" | cut -c1-16)"
+CC_VERSION="$(clang --version | head -1)"
+STAMP="$FFMPEG+$SDL+macos$MIN_MACOS+script:$SCRIPT_HASH+$CC_VERSION"
+
+# One build at a time per cache: a second run waits instead of building over it.
+LOCK="$ROOT/.lock"
+mkdir -p "$ROOT"
+LOCKED=0
+for _ in {1..600}; do mkdir "$LOCK" 2>/dev/null && { LOCKED=1; break; }; sleep 1; done
+[[ "$LOCKED" == 1 ]] || { echo "✗ another build has held $LOCK for ten minutes"; exit 1; }
+trap 'rmdir "$LOCK" 2>/dev/null' EXIT
 mkdir -p "$SRC"
 
 fetch() {  # fetch <file> <url> <sha256>

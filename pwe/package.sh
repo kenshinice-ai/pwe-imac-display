@@ -24,11 +24,12 @@ IDENTITY="Developer ID Application: Li Liu (2SQV3H5MH9)"
 PROFILE="${NOTARY_PROFILE:-PWE_NOTARY}"
 BUILD="$(date +%Y%m%d%H%M%S)"
 
-WORK="${TMPDIR:-/tmp}/pwe-imacdisplay-release"
+# A fresh directory per run, so two builds never delete or mix each other's files.
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/pwe-imacdisplay-release.XXXXXX")"
 DEPS="${PWE_DEPS:-${TMPDIR:-/tmp}/pwe-imacdisplay-deps}"
 SRC="$WORK/src"
 OUT="$WORK/out"
-DIST="$REPO/pwe/dist"
+DIST="$REPO/pwe/dist"   # notarised release builds only; local checks go to dist/local
 
 NOTARIZE=0
 for arg in "$@"; do
@@ -57,7 +58,7 @@ echo "▸ $NAME ($BUILD)"
 
 # ---------------------------------------------------------------- source copy
 
-rm -rf "$WORK"
+[[ "$NOTARIZE" == 1 ]] || DIST="$DIST/local"
 mkdir -p "$SRC" "$OUT" "$DIST"
 # Tracked files only, as they stand in the working tree (committed, for --notarize).
 git ls-files -z | rsync -a --from0 --files-from=- ./ "$SRC/"
@@ -227,3 +228,4 @@ echo
 echo "▸ $DMG"
 echo "    $(du -h "$DMG" | cut -f1)   $(cut -c1-16 "$DIST/SHA256SUMS.txt")…"
 [[ "$NOTARIZE" == 1 ]] || echo "    Not notarised: a local check only. Release with pwe/package.sh --notarize."
+rm -rf "$WORK"

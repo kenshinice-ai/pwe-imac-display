@@ -259,6 +259,12 @@ def leftovers(root: Path) -> list[str]:
         for key, value in json.loads(path.read_text(encoding="utf-8")).items():
             if re.search("targetbridge", value, re.IGNORECASE):
                 found.append(f"{path.relative_to(root)}: {key}")
+    # The Chinese interface names its two apps 发送端 and 接收端. An English role
+    # word left in it is a string nobody translated (1.0 shipped "RECEIVER").
+    zh = json.loads((root / "TargetBridge-Shared/Languages/zh.json").read_text(encoding="utf-8"))
+    for key, value in zh.items():
+        if re.search(r"\b(sender|receiver|master|slave)\b", value.replace(RECEIVER_NAME, ""), re.IGNORECASE):
+            found.append(f"zh.json: {key}: English role word in {value!r}")
     plist = (root / "TargetBridge-Sender/TargetBridgeSupport/Info.plist").read_text(encoding="utf-8")
     for line in plist.split("\n"):
         if "<string>" in line and re.search("targetbridge", line, re.IGNORECASE) \
