@@ -1,0 +1,47 @@
+PWE iMac Display
+================
+
+PWE iMac Display is made and signed by PWE Group. It is a build of TargetBridge,
+with PWE's name, icon and signature, and with its own builds of FFmpeg and SDL2.
+
+Source code: https://github.com/kenshinice-ai/pwe-imac-display
+
+
+TargetBridge
+------------
+
+Copyright (c) Marco Caciotti (swellweb) and the TargetBridge contributors.
+https://github.com/swellweb/targetBridge
+Licensed under the MIT License; the full text is in "TargetBridge LICENSE (MIT).txt".
+
+PWE iMac Display is not TargetBridge's official build, and TargetBridge's
+authors are not responsible for it. Report problems with this build to
+https://github.com/kenshinice-ai/pwe-imac-display/issues.
+
+
+FFmpeg (in PWE iMac Display Receiver)
+-------------------------------------
+
+This software uses code of FFmpeg (https://ffmpeg.org), licensed under the
+GNU Lesser General Public License version 2.1 or later. The full text is in
+"FFmpeg COPYING.LGPLv2.1.txt".
+
+Version: FFmpeg 9.0.2, unmodified source from
+https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz
+(SHA-256 8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e).
+
+It is configured as LGPL (no GPL or non-free parts), with only H.264 and HEVC
+decoding, VideoToolbox and swscale enabled, and linked statically into the
+receiver. The exact configuration is in pwe/receiver-deps.sh in the source
+repository. To relink the receiver with a different build of FFmpeg, build
+FFmpeg into the same prefix and run pwe/package.sh; the receiver's object
+code is built from the source in the repository.
+
+
+SDL2 (in PWE iMac Display Receiver)
+-----------------------------------
+
+Simple DirectMedia Layer, copyright (C) Sam Lantinga, licensed under the zlib
+license; the full text is in "SDL2 LICENSE (zlib).txt".
+Version: SDL2 2.32.10, unmodified source from
+https://github.com/libsdl-org/SDL/releases/tag/release-2.32.10
