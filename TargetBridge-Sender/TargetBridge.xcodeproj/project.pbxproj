@@ -65,6 +65,7 @@
 		E81B28F81AE82FF904E0871F /* TBAddonStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06D011FF8AF7BB6D26EDC25B /* TBAddonStore.swift */; };
 		E9F7A263085592067562F768 /* TBDisplaySenderStatusItemController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AC1AF99431D4889F947CE1B /* TBDisplaySenderStatusItemController.swift */; };
 		F2274C924BAC479635B44A47 /* TBDisplaySenderManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4644CFB05098C895378B648A /* TBDisplaySenderManager.swift */; };
+		FEFFC9A867E0E1EFE79A2AAB /* TBSenderLanguageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EC03CAC8921A4511E017BBC /* TBSenderLanguageTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -92,6 +93,7 @@
 		1819A55F8D993D9347F0E407 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		186812C77BFF98DBE0118100 /* TBDisplaySenderContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TBDisplaySenderContentView.swift; sourceTree = "<group>"; };
 		20FE01BF2EA2F329442890AD /* TBInputBindingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TBInputBindingsView.swift; sourceTree = "<group>"; };
+		2EC03CAC8921A4511E017BBC /* TBSenderLanguageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TBSenderLanguageTests.swift; sourceTree = "<group>"; };
 		374B5A5AA247C6922BD9AF72 /* TBDisplaySenderAboutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TBDisplaySenderAboutView.swift; sourceTree = "<group>"; };
 		37515A84B71F4B19C8EB65B4 /* TBInputBindingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TBInputBindingTests.swift; sourceTree = "<group>"; };
 		3E8E93993FCAE2FCBA71C45B /* TBCaptureHealth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TBCaptureHealth.swift; sourceTree = "<group>"; };
@@ -203,6 +205,7 @@
 				17D2B1A011B9446090DA60A7 /* TBReceiverDiscoveryModelTests.swift */,
 				BAD8054BAF22B0176188F75E /* TBReceiverPreferenceMigrationTests.swift */,
 				ED08E3D2FCC8194F8B8185C9 /* TBSenderAutomationParsingTests.swift */,
+				2EC03CAC8921A4511E017BBC /* TBSenderLanguageTests.swift */,
 			);
 			path = TBDisplaySenderTests;
 			sourceTree = "<group>";
@@ -410,6 +413,7 @@
 				69C27FB23C2EF4078DD3D2F5 /* TBReceiverDiscoveryModelTests.swift in Sources */,
 				A2F19D69DD3375C9388BBB9C /* TBReceiverPreferenceMigrationTests.swift in Sources */,
 				4A8719A8C13A6560F4F0EB0D /* TBSenderAutomationParsingTests.swift in Sources */,
+				FEFFC9A867E0E1EFE79A2AAB /* TBSenderLanguageTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

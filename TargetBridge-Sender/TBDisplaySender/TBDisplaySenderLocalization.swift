@@ -34,9 +34,22 @@ enum TBDisplaySenderLanguage: String, CaseIterable, Identifiable {
     static func load() -> TBDisplaySenderLanguage {
         guard let raw = UserDefaults.standard.string(forKey: defaultsKey),
               let language = TBDisplaySenderLanguage(rawValue: raw) else {
-            return .italian
+            return preferred(by: Locale.preferredLanguages)
         }
         return language
+    }
+
+    /// The first supported language in the user's macOS language order, so a
+    /// first launch speaks the user's language instead of a fixed one.
+    /// English when none of them is supported.
+    static func preferred(by languageCodes: [String]) -> TBDisplaySenderLanguage {
+        for code in languageCodes {
+            let base = code.split(separator: "-").first.map(String.init)?.lowercased() ?? ""
+            if let language = allCases.first(where: { $0.fileStem == base }) {
+                return language
+            }
+        }
+        return .english
     }
 
     func persist() {
