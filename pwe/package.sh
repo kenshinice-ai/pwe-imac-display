@@ -22,7 +22,6 @@ RECEIVER_NAME="PWE iMac Display Receiver"
 RECEIVER_ID="com.pwegroup.pweimacdisplay.receiver"
 IDENTITY="Developer ID Application: Li Liu (2SQV3H5MH9)"
 PROFILE="${NOTARY_PROFILE:-PWE_NOTARY}"
-VERSION="$(<pwe/VERSION)"
 BUILD="$(date +%Y%m%d%H%M%S)"
 
 WORK="${TMPDIR:-/tmp}/pwe-imacdisplay-release"
@@ -30,7 +29,6 @@ DEPS="${PWE_DEPS:-${TMPDIR:-/tmp}/pwe-imacdisplay-deps}"
 SRC="$WORK/src"
 OUT="$WORK/out"
 DIST="$REPO/pwe/dist"
-DMG="$DIST/$NAME $VERSION.dmg"
 
 NOTARIZE=0
 for arg in "$@"; do
@@ -55,15 +53,21 @@ if [[ "$NOTARIZE" == 1 ]]; then
     || { echo "✗ commit first: a release is built from committed code only"; exit 1; }
 fi
 
-echo "▸ $NAME $VERSION ($BUILD)"
+echo "▸ $NAME ($BUILD)"
 
 # ---------------------------------------------------------------- source copy
 
 rm -rf "$WORK"
 mkdir -p "$SRC" "$OUT" "$DIST"
-# Tracked files only, as committed (or as they stand, for a local check).
+# Tracked files only, as they stand in the working tree (committed, for --notarize).
 git ls-files -z | rsync -a --from0 --files-from=- ./ "$SRC/"
-python3 -I pwe/rebrand.py "$SRC" --version "$VERSION" --build "$BUILD"
+# From here on everything is read from this snapshot, never from the working
+# tree: a branch switch or an edit during a ten-minute notarised build must not
+# change what gets built. (2026-10-14: a branch switch mid-build removed
+# pwe/receiver-deps.sh and the build stopped halfway.)
+VERSION="$(<"$SRC/pwe/VERSION")"
+DMG="$DIST/$NAME $VERSION.dmg"
+python3 -I "$SRC/pwe/rebrand.py" "$SRC" --version "$VERSION" --build "$BUILD"
 
 # ---------------------------------------------------------------- sender
 
@@ -86,7 +90,7 @@ ditto "$WORK/DerivedData/Build/Products/Release/$NAME.app" "$SENDER"
 # ---------------------------------------------------------------- receiver
 
 echo "▸ Building the receiver's libraries (cached in $DEPS)…"
-pwe/receiver-deps.sh "$DEPS"
+"$SRC/pwe/receiver-deps.sh" "$DEPS"
 
 echo "▸ Building the receiver (arm64 + x86_64, macOS 11)…"
 for ARCH in arm64 x86_64; do
@@ -106,7 +110,7 @@ mkdir -p "$RECEIVER/Contents/MacOS" "$RECEIVER/Contents/Resources/Languages"
 lipo -create "$WORK/tbreceiver-arm64" "$WORK/tbreceiver-x86_64" \
   -output "$RECEIVER/Contents/MacOS/PWEiMacDisplayReceiver"
 cp "$SRC/TargetBridge-Shared/Languages/"*.json "$RECEIVER/Contents/Resources/Languages/"
-iconutil -c icns "$REPO/pwe/assets/AppIcon.iconset" -o "$RECEIVER/Contents/Resources/AppIcon.icns"
+iconutil -c icns "$SRC/pwe/assets/AppIcon.iconset" -o "$RECEIVER/Contents/Resources/AppIcon.icns"
 cat > "$RECEIVER/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -136,8 +140,8 @@ printf 'APPL????' > "$RECEIVER/Contents/PkgInfo"
 # statically, so its licence text and the way to rebuild it must ship with it.
 LICENSES="$WORK/Licenses"
 mkdir -p "$LICENSES"
-cp "$REPO/LICENSE" "$LICENSES/TargetBridge LICENSE (MIT).txt"
-cp "$REPO/pwe/NOTICE.txt" "$LICENSES/NOTICE.txt"
+cp "$SRC/LICENSE" "$LICENSES/TargetBridge LICENSE (MIT).txt"
+cp "$SRC/pwe/NOTICE.txt" "$LICENSES/NOTICE.txt"
 tar -xJf "$DEPS/src/ffmpeg-"*.tar.xz -O '*/COPYING.LGPLv2.1' > "$LICENSES/FFmpeg COPYING.LGPLv2.1.txt"
 tar -xzf "$DEPS/src/SDL2-"*.tar.gz -O '*/LICENSE.txt' > "$LICENSES/SDL2 LICENSE (zlib).txt"
 for APP in "$SENDER" "$RECEIVER"; do
@@ -164,7 +168,7 @@ lipo -info "$SENDER/Contents/MacOS/$NAME" | grep -q "x86_64 arm64\|arm64 x86_64"
 echo "▸ Signing with $IDENTITY…"
 xattr -cr "$SENDER" "$RECEIVER"
 codesign --force --options runtime --timestamp --sign "$IDENTITY" \
-  --entitlements "$REPO/pwe/sender.entitlements" "$SENDER"
+  --entitlements "$SRC/pwe/sender.entitlements" "$SENDER"
 codesign --force --options runtime --timestamp --sign "$IDENTITY" "$RECEIVER"
 for APP in "$SENDER" "$RECEIVER"; do
   codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | sed 's/^/    /'
@@ -200,7 +204,7 @@ mkdir -p "$STAGE"
 ditto "$SENDER" "$STAGE/$NAME.app"
 ditto "$RECEIVER" "$STAGE/$RECEIVER_NAME.app"
 ln -s /Applications "$STAGE/Applications"
-cp "$REPO/pwe/read-me-first.txt" "$STAGE/读我 Read Me First.txt"
+cp "$SRC/pwe/read-me-first.txt" "$STAGE/读我 Read Me First.txt"
 ditto "$LICENSES" "$STAGE/Licenses"
 hdiutil create -volname "$NAME $VERSION" -srcfolder "$STAGE" -ov -format UDZO \
   "$WORK/image.dmg" >/dev/null

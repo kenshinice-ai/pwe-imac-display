@@ -18,13 +18,16 @@
 
 - 远端：`origin` 是 `kenshinice-ai/pwe-imac-display`，`upstream` 是 `swellweb/targetBridge`。
 - 跟进上游：`git fetch upstream`，再把上游的发版提交合并进 `main`。成功判据：`git diff <上游标签> main` 只列出 PWE 加的文件。
-- 给上游的 PR：从 `upstream/main` 开分支，推到 `origin`，再向 `swellweb/targetBridge` 开 PR。
+- 给上游的 PR：在单独的 worktree 里从 `upstream/main` 开分支（`git worktree add <临时目录> -b <分支> upstream/main`），推到 `origin`，再向 `swellweb/targetBridge` 开 PR。
 - 本地打包：运行 `pwe/package.sh`。成功判据：最后一行打印 `pwe/dist/PWE iMac Display <版本>.dmg` 和它的 sha256。
 - 发版打包：先提交，再运行 `pwe/package.sh --notarize`。成功判据：输出里 DMG 显示 `source=Notarized Developer ID`。
 - 如果合并上游后 `pwe/rebrand.py` 报 `upstream text changed`，就按报错改脚本里对应的锚点，不要改上游文件。
 
 > ⚠️ 不要执行 `git push --tags`，也不要推送任何 `v*` 标签。否则上游的 `release.yml` 会在本仓库发出 TargetBridge 的版本。
 > 原因：本地有上游全部 `v*` 标签，而 `release.yml` 由 `v*` 标签触发。
+
+> ⚠️ 不要在这个工作区切到上游分支。否则 `pwe/` 会从工作区消失，正在跑的打包和下一次打包都会失败。
+> 原因：上游分支没有 `pwe/`；2026-10-14 一次切分支让公证打包中途停下。
 
 > ⚠️ 不要在本仓库的 Actions 页面启用工作流，等 PWE 自己的发版流程写好再说。否则上游的 CI 和发版工作流会在本仓库运行。
 > 2026-10-14 实测：fork 后没有任何运行记录。
