@@ -13,6 +13,18 @@
 - **[决定] 中文做到哪一步** — 推荐先做界面重译和用户安装指南，教程片等真机跑通再定 · 不定则第一个上游 PR（中文重译）范围不清 · 自 2026-10-14
 - **[动手] 首次公开发版前给上游维护者写信** — 推荐由 Claude 起草、Lee 发送 · 不发则不发版 · 自 2026-10-14
 
+## 仓库规矩
+
+- 远端：`origin` 是 `kenshinice-ai/pwe-imac-display`，`upstream` 是 `swellweb/targetBridge`。
+- 跟进上游：`git fetch upstream`，再把上游的发版提交合并进 `main`。成功判据：`git diff <上游标签> main` 只列出 PWE 加的文件。
+- 给上游的 PR：从 `upstream/main` 开分支，推到 `origin`，再向 `swellweb/targetBridge` 开 PR。
+
+> ⚠️ 不要执行 `git push --tags`，也不要推送任何 `v*` 标签。否则上游的 `release.yml` 会在本仓库发出 TargetBridge 的版本。
+> 原因：本地有上游全部 `v*` 标签，而 `release.yml` 由 `v*` 标签触发。
+
+> ⚠️ 不要在本仓库的 Actions 页面启用工作流，等 PWE 自己的发版流程写好再说。否则上游的 CI 和发版工作流会在本仓库运行。
+> 2026-10-14 实测：fork 后没有任何运行记录。
+
 ---
 
 ## 一、这是什么
