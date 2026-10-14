@@ -33,7 +33,7 @@ struct PWEStrings {
 
     // Searching
     var searchingTitle: String { t("Looking for your iMac", "正在找你的 iMac") }
-    var searchingStep1: String { t("On the iMac, open PWE iMac Display Receiver.", "在 iMac 上打开「PWE iMac Display 接收端」。") }
+    var searchingStep1: String { t("On the iMac, open PWE iMac Display Receiver.", "在 iMac 上打开「PWE iMac Display Receiver」。") }
     var searchingStep2: String { t("Connect the two Macs with a Thunderbolt cable.", "用雷雳线连接两台电脑。") }
     var searchingHint: String {
         t("Your iMac appears here by itself. A 2014 or 2015 iMac needs Apple's Thunderbolt 3 to Thunderbolt 2 Adapter.",
