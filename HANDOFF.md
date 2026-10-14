@@ -1,6 +1,6 @@
 # PWE iMac Display — 交接
 
-> 状态（2026-10-14）：1.0 已能在本机打出签名的 DMG，还没公证、没在 iMac 上试过、没发布。
+> 状态（2026-10-14）：1.0 的 DMG 已签名并公证，还没在 iMac 上试过，没发布。
 > 仓库：`kenshinice-ai/pwe-imac-display`，公开，是 `swellweb/targetBridge` 的 fork。`main` 从上游 3.6.0 起。
 > 方向（Lee，2026-10-14）：PWE 自己签名的 app，同时给上游贡献。下游发行版还是彻底分叉待定。见 `docs/pwe/RESEARCH-TargetBridge.md`。
 > PWE 加的只有：本文件、`docs/pwe/`、`pwe/`、`.github/README.md`。其余是上游原样，改动先提给上游。
@@ -109,8 +109,8 @@ C 函数 `CGVirtualDisplayCreate` 不存在，但用不到它。
 | 语言 | 默认跟随系统语言（上游默认意大利语） | 完成 |
 | 默认功能 | Network Link 默认关；键鼠共享维持上游的默认关 | 完成 |
 | 接收端 | 自编 FFmpeg 9.0.2（只解码、LGPL）和 SDL2 2.32.10，通用二进制，`minos 11.0` | 完成；arm64 冒烟测试全过，x86_64 未测（本机无 Rosetta） |
-| 签名 | Developer ID `2SQV3H5MH9`，hardened runtime | 完成；公证未做 |
-| 打包 | 一个 DMG，装两个 App、读我和 `Licenses` | 完成（7.3 MB，2026-10-14） |
+| 签名 | Developer ID `2SQV3H5MH9`，hardened runtime，公证用 `PWE_NOTARY` | 完成；2026-10-14 DMG 和两个 App 都显示 `source=Notarized Developer ID` |
+| 打包 | 一个 DMG，装两个 App、读我和 `Licenses` | 完成：`pwe/dist/PWE iMac Display 1.0.0.dmg`，7.3 MB，sha256 `2a24e97c…`（2026-10-14，不入库） |
 | 文档 | `.github/README.md`（中文）、`docs/pwe/README.en.md`、`pwe/NOTICE.txt` | 完成 |
 | 发布 | GitHub release、pwestudio.site 产品页、Homebrew cask | 等 Lee 真机试过、两封信发出之后 |
 
