@@ -1,27 +1,32 @@
 # PWE iMac Display — 交接
 
-> 状态（2026-10-14）：1.0.0 已发布到 GitHub release（标签 `pwe-1.0.0`）和 Homebrew（`kenshinice-ai/tap/pwe-imac-display`）。
+> 状态（2026-10-15）：1.0.0 已发布（GitHub 标签 `pwe-1.0.0`，Homebrew `kenshinice-ai/tap/pwe-imac-display`）。
+> 1.0.1（接收端加固）已在本地分支 `security-1.0.1` 上完成，计划 2026-10-22 发布；1.1 在做。路线见 `docs/pwe/PLAN-2026-10-15.md`（未入库）。
 > pwestudio.site 产品页冻结中（Lee），方案在 `docs/pwe/SITE-PLAN.md`。还没在真实的 Intel iMac 上试过。
 > 仓库：`kenshinice-ai/pwe-imac-display`，公开，是 `swellweb/targetBridge` 的 fork。`main` 从上游 3.6.0 起。
 > 方向（Lee，2026-10-14）：PWE 自己签名的 app，同时给上游贡献。下游发行版还是彻底分叉待定。见 `docs/pwe/RESEARCH-TargetBridge.md`。
-> PWE 加的只有：本文件、`docs/pwe/`、`pwe/`、`.github/README.md`；删掉的只有上游的 `.github/FUNDING.yml`（Lee）。其余是上游原样，改动先提给上游。
-> 改名在打包时对副本做（`pwe/rebrand.py`），所以 `main` 上的上游代码保持原样。
+> `main` = 上游基线 + `pwe/PATCHES.md` 登记的补丁 + PWE 自己的文件（本文件、`docs/pwe/`、`pwe/`、`.github/README.md`、`.github/SECURITY.md`）。
+> 改上游文件之前先提 PR 给上游，再登记进 `pwe/PATCHES.md`。改名在打包时对副本做（`pwe/rebrand.py`），不改仓库里的文件。
 
 ## 等 Lee
 
-- **[动手] 在 iMac 上试 PWE iMac Display 1.0.0** — 接收端装 iMac、发送端装新 Mac，雷雳线连上；记下安装、权限、发现设备、画质、延迟、睡眠的卡点，以及 iMac 型号和系统版本 · 不做则 Intel 真机和 macOS 11 仍无证据，产品页上的「还没在真机上跑过」也撤不掉 · 自 2026-10-14
-- **[决定] 解冻 pwestudio.site 产品页** — 方案和文案初稿在 `docs/pwe/SITE-PLAN.md`；同时定字标写法（推荐 `IMAC DISPLAY`）并允许装 fonttools、uharfbuzz · 不定则网站上没有这个产品 · 自 2026-10-14
-- **[决定] 下游发行版还是彻底分叉** — 推荐下游发行版；1.0 已按下游方式做（改名在打包时进行），要分叉随时可以 · 不定则不影响现在的工作 · 自 2026-10-14
+- **[动手] iMac 到货后按 `docs/pwe/PLAN-2026-10-15.md` 第三节做真机基线** — 用最新的 DMG；带 40 Gbps 雷雳 3 线，2014、2015 款另带转换器 · 不做则默认码流配置定不下来，1.1 发不了 · 自 2026-10-15
+- **[决定] 2026-10-22 发布 1.0.1 吗** — 推荐发；Marco 若要求推迟就等他。发布前把 `security-1.0.1` 合进 `main` · 不定则接收端加固留在本地 · 自 2026-10-15
+- **[决定] 解冻 pwestudio.site** — 产品页方案在 `docs/pwe/SITE-PLAN.md`；1.1 的更新检查也需要在 `functions/_release.js` 加一条 · 不定则网站上没有这个产品，更新检查发不出去 · 自 2026-10-14
+- **[决定] 下游发行版还是彻底分叉** — 推荐下游发行版；1.1 的界面放在 PWE 自己的界面层里，不改上游界面文件 · 不定则不影响现在的工作 · 自 2026-10-14
 
 ## 仓库规矩
 
 - 远端：`origin` 是 `kenshinice-ai/pwe-imac-display`，`upstream` 是 `swellweb/targetBridge`。
 - 跟进上游：`git fetch upstream`，再把上游的发版提交合并进 `main`。成功判据：`git diff <上游标签> main` 只列出 PWE 加的文件。
 - 给上游的 PR：在单独的 worktree 里从 `upstream/main` 开分支（`git worktree add <临时目录> -b <分支> upstream/main`），推到 `origin`，再向 `swellweb/targetBridge` 开 PR。
-- 本地打包：运行 `pwe/package.sh`。成功判据：最后一行打印 `pwe/dist/PWE iMac Display <版本>.dmg` 和它的 sha256。
+- 本地打包：运行 `pwe/package.sh`。成功判据：最后一行打印 `pwe/dist/local/PWE iMac Display <版本>.dmg` 和它的 sha256。正式包只由 `--notarize` 写进 `pwe/dist/`。
 - 发版打包：先提交，再运行 `pwe/package.sh --notarize`。成功判据：输出里 DMG 显示 `source=Notarized Developer ID`。
 - 发版：标签用 `pwe-<版本>`（不用 `v`），只推这一个标签；release 上传 `PWE-iMac-Display-<版本>.dmg` 和 `SHA256SUMS.txt`；再改 `homebrew-tap/Casks/pwe-imac-display.rb` 的 `version` 和 `sha256`。成功判据：`gh release download` 回来的文件通过 `shasum -c`，`brew fetch --cask kenshinice-ai/tap/pwe-imac-display` 显示 ✔。
 - 如果合并上游后 `pwe/rebrand.py` 报 `upstream text changed`，就按报错改脚本里对应的锚点，不要改上游文件。
+
+> ⚠️ 不要推送本地分支 `security-1.0.1`，等 Lee 批准或到 2026-10-22。否则发布前就公开了它的内容。
+> 原因：按负责任披露的惯例，先给上游维护者一周时间。
 
 > ⚠️ 不要执行 `git push --tags`，也不要推送任何 `v*` 标签。否则上游的 `release.yml` 会在本仓库发出 TargetBridge 的版本。
 > 原因：本地有上游全部 `v*` 标签，而 `release.yml` 由 `v*` 标签触发。
@@ -108,7 +113,7 @@ C 函数 `CGVirtualDisplayCreate` 不存在，但用不到它。
 | 界面文字 | 所有语言里的 TargetBridge 改成 PWE iMac Display；About 写明基于 TargetBridge | 完成 |
 | 语言 | 默认跟随系统语言（上游默认意大利语） | 完成 |
 | 默认功能 | Network Link 默认关；键鼠共享维持上游的默认关 | 完成 |
-| 接收端 | 自编 FFmpeg 9.0.2（只解码、LGPL）和 SDL2 2.32.10，通用二进制，`minos 11.0` | 完成；arm64 冒烟测试全过，x86_64 未测（本机无 Rosetta） |
+| 接收端 | 自编 FFmpeg 9.0.2（只解码、LGPL）和 SDL2 2.32.10，通用二进制，`minos 11.0` | 完成；冒烟测试 arm64 原生与 x86_64（Rosetta）都全过（2026-10-14，构建 20261014233736）；真机未测 |
 | 签名 | Developer ID `2SQV3H5MH9`，hardened runtime，公证用 `PWE_NOTARY` | 完成；2026-10-14 DMG 和两个 App 都显示 `source=Notarized Developer ID` |
 | 打包 | 一个 DMG，装两个 App、读我和 `Licenses` | 完成：`pwe/dist/PWE iMac Display 1.0.0.dmg`，7.3 MB，sha256 `2a24e97c…`（2026-10-14，不入库） |
 | 文档 | `.github/README.md`（中文）、`docs/pwe/README.en.md`、`pwe/NOTICE.txt` | 完成 |
