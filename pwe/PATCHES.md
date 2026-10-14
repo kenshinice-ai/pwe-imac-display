@@ -13,6 +13,7 @@
 |---|---|---|---|---|
 | `3ee1bff`（经 `2a5319b` 合并） | 简体中文：`zh.json` 和发送端 Swift 里的中文 | 夹杂英文、术语不统一、用词与 macOS 不一致 | [#212](https://github.com/swellweb/targetBridge/pull/212) | 等审阅 |
 | `081c7a5` | 接收端连接画面按字宽居中；新键 `receiver.splash.role`（五种语言） | 文字偏离中心，「RECEIVER」没有翻译 | [#214](https://github.com/swellweb/targetBridge/pull/214) | 等审阅 |
+| `b2316e8` | 接收端：音频环形缓冲独立成 `audio_ring.c` 并限定边界；可选的 `DIRECT_LINK_ONLY` 构建开关，只接受直连（雷雳网桥、USB、回环）的发送端，用户可用 `AllowLocalNetwork` 放开 | 接收端加固（1.0.1） | 2026-10-15 私下发给维护者，等他选择接收方式 | 等回复 |
 | `3055222` | 删除 `.github/FUNDING.yml` | Lee 2026-10-14 定：本仓库不显示上游的赞助按钮 | 不提交（只属于 PWE） | 保留 |
 
 打包时的改名（`pwe/rebrand.py`）不改仓库里的文件，所以不在这张表里。它的锚点由脚本自己检查：上游改了对应的文字，脚本就会停下。
