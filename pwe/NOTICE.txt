@@ -29,13 +29,30 @@ GNU Lesser General Public License version 2.1 or later. The full text is in
 Version: FFmpeg 9.0.2, unmodified source from
 https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz
 (SHA-256 8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e).
+The same file is attached to every PWE iMac Display release on GitHub, next to
+the disk image: https://github.com/kenshinice-ai/pwe-imac-display/releases
 
 It is configured as LGPL (no GPL or non-free parts), with only H.264 and HEVC
 decoding, VideoToolbox and swscale enabled, and linked statically into the
-receiver. The exact configuration is in pwe/receiver-deps.sh in the source
-repository. To relink the receiver with a different build of FFmpeg, build
-FFmpeg into the same prefix and run pwe/package.sh; the receiver's object
-code is built from the source in the repository.
+receiver. The exact configure command is in "FFmpeg configuration.txt".
+
+To relink the receiver with your own or a modified FFmpeg (needs Xcode,
+XcodeGen and pkg-config, e.g. "brew install xcodegen pkg-config"; no Apple
+account or signing identity). This works from release 1.0.1 on:
+
+  1. git clone https://github.com/kenshinice-ai/pwe-imac-display.git
+     cd pwe-imac-display
+     git checkout pwe-<version>          (the version you have, e.g. pwe-1.1.0)
+  2. pwe/receiver-deps.sh ~/pwe-deps
+     This builds this release's FFmpeg and SDL2 for both architectures into
+     ~/pwe-deps/arm64 and ~/pwe-deps/x86_64.
+  3. Build your FFmpeg into the same two prefixes (static, macOS 11 target),
+     for example with the configure command in "FFmpeg configuration.txt" and
+     --prefix=$HOME/pwe-deps/<arch>.
+  4. pwe/package.sh --unsigned --deps ~/pwe-deps
+     This builds both apps from the repository, links the receiver against the
+     libraries in ~/pwe-deps without rebuilding them, signs ad hoc and writes
+     the disk image to pwe/dist/local/.
 
 
 SDL2 (in PWE iMac Display Receiver)
