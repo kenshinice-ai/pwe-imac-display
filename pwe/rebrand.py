@@ -232,10 +232,55 @@ def rebrand_sender(root: Path, version: str, build: str) -> None:
     edit(swift / "TBDisplaySenderAutomation.swift",
          'guard url.scheme?.lowercased() == "targetbridge" else { return }',
          f'guard url.scheme?.lowercased() == "{SCHEME}" else {{ return }}')
+    # The PWE window shows "Trying again…" only while the engine really is. The
+    # engine ends its retrying on its own (a Stop from the menu bar, a capture
+    # failure, a missing permission), so the window reads it from here.
+    edit(swift / "TBDisplaySenderAutomation.swift",
+         "    private static var continuousConnectTask: Task<Void, Never>?\n",
+         "    private static var continuousConnectTask: Task<Void, Never>? {\n"
+         "        didSet { NotificationCenter.default.post(name: automaticConnectionDidChange, object: nil) }\n"
+         "    }\n"
+         "    /// True while the engine keeps a connection up and retries it by itself.\n"
+         "    static var isConnectingAutomatically: Bool { continuousConnectTask != nil }\n"
+         '    static let automaticConnectionDidChange = Notification.Name("pwe.automaticConnectionDidChange")\n')
+    # "Reopen" on the permission screen only quit: opening a running app's own
+    # bundle activates it rather than starting another. Relaunch once this
+    # process has gone instead. (Upstream bug too; see the report on item 6.)
+    edit(swift / "TBDisplaySenderManager.swift",
+         "    func restartAfterPermissionChange() {\n"
+         "        let appURL = URL(fileURLWithPath: Bundle.main.bundlePath)\n"
+         "        NSWorkspace.shared.openApplication(at: appURL, configuration: .init()) { _, error in\n"
+         "            guard error == nil else { return }\n"
+         "            DispatchQueue.main.async {\n"
+         "                NSApp.terminate(nil)\n"
+         "            }\n"
+         "        }\n"
+         "    }\n",
+         "    func restartAfterPermissionChange() {\n"
+         "        // Wait (up to 10 s) for this process to exit, then open the app again.\n"
+         "        let relaunch = Process()\n"
+         '        relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")\n'
+         "        relaunch.arguments = [\n"
+         '            "-c",\n'
+         '            "for _ in $(/usr/bin/jot 50); do /bin/kill -0 \\"$0\\" 2>/dev/null || break; /bin/sleep 0.2; done; /usr/bin/open \\"$1\\"",\n'
+         '            String(ProcessInfo.processInfo.processIdentifier),\n'
+         "            Bundle.main.bundlePath,\n"
+         "        ]\n"
+         "        do {\n"
+         "            try relaunch.run()\n"
+         "        } catch {\n"
+         '            NSLog("[permissions] unable to schedule relaunch: \\(error.localizedDescription)")\n'
+         "            return\n"
+         "        }\n"
+         "        NSApp.terminate(nil)\n"
+         "    }\n")
     pwe_ui = swift / "PWE"
     pwe_ui.mkdir()
     for source in sorted((root / "pwe/sender-ui").glob("*.swift")):
         shutil.copy(source, pwe_ui / source.name)
+    # PWE's own unit tests run with upstream's, against the same app target.
+    for source in sorted((root / "pwe/sender-tests").glob("*.swift")):
+        shutil.copy(source, sender / "TBDisplaySenderTests" / source.name)
 
     icon = support / "Assets.xcassets/AppIcon.appiconset"
     shutil.rmtree(icon)

@@ -1,0 +1,135 @@
+import XCTest
+@testable import TargetBridge
+
+/// The PWE window's phase as a function of engine state (PWEPhaseRules).
+/// pwe/rebrand.py copies this file into the sender's test target.
+final class PWEPhaseRulesTests: XCTestCase {
+    private let imac = PWEReceiver(id: "imac", name: "iMac", detail: "")
+    private let other = PWEReceiver(id: "other", name: "Studio iMac", detail: "")
+
+    private func state(
+        _ status: TBDisplaySenderStatusState? = .ready,
+        retrying: Bool = false,
+        connected: Bool = false,
+        streaming: Bool = false,
+        receivers: [PWEReceiver]? = nil,
+        target: PWEReceiver?? = nil,
+        permission: Bool = true
+    ) -> PWEEngineState {
+        PWEEngineState(
+            hasPermission: permission,
+            status: status,
+            isConnected: connected,
+            isStreaming: streaming,
+            retrying: retrying,
+            receivers: receivers ?? [imac],
+            target: target ?? imac)
+    }
+
+    /// Runs a sequence of engine states through the rules the way the model does.
+    private func phases(_ states: [PWEEngineState]) -> [PWEPhase] {
+        var held: PWEReason?
+        return states.map { state in
+            held = PWEPhaseRules.heldFailure(after: held, state)
+            return PWEPhaseRules.phase(state, held: held)
+        }
+    }
+
+    // MARK: - Basics
+
+    func testPermissionComesFirst() {
+        XCTAssertEqual(PWEPhaseRules.phase(state(.captureActive("", "", .extendedDesktop), permission: false), held: nil),
+                       .needsPermission)
+    }
+
+    func testIdleShowsReadyChooseOrSearching() {
+        XCTAssertEqual(PWEPhaseRules.phase(state(.stopped), held: nil), .ready(imac))
+        XCTAssertEqual(PWEPhaseRules.phase(state(.ready, receivers: [imac, other], target: .some(nil)), held: nil),
+                       .choose([imac, other]))
+        XCTAssertEqual(PWEPhaseRules.phase(state(nil, receivers: [], target: .some(nil)), held: nil), .searching)
+    }
+
+    func testConnectingStagesAndConnected() {
+        XCTAssertEqual(PWEPhaseRules.phase(state(.connecting("10.0.0.2")), held: nil), .connecting(imac, .reaching))
+        XCTAssertEqual(PWEPhaseRules.phase(state(.creatingVirtualDisplay), held: nil), .connecting(imac, .preparing))
+        XCTAssertEqual(PWEPhaseRules.phase(state(.captureStartedWaitingFirstFrame), held: nil),
+                       .connecting(imac, .waitingForPicture))
+        XCTAssertEqual(PWEPhaseRules.phase(state(.captureActive("", "", .extendedDesktop)), held: nil), .connected(imac))
+    }
+
+    // MARK: - Without automatic connection (item 3)
+
+    func testFailuresExplainThemselvesWithoutRetrying() {
+        XCTAssertEqual(PWEPhaseRules.phase(state(.connectionFailed("refused")), held: nil),
+                       .interrupted(imac, .couldNotConnect, retrying: false))
+        XCTAssertEqual(PWEPhaseRules.phase(state(.connectionClosed("eof")), held: nil),
+                       .interrupted(imac, .cableOrReceiverGone, retrying: false))
+        XCTAssertEqual(PWEPhaseRules.phase(state(.receiverClosedConnection), held: nil),
+                       .interrupted(imac, .receiverQuit, retrying: false))
+        XCTAssertEqual(PWEPhaseRules.phase(state(.hevcNoFrames), held: nil),
+                       .interrupted(imac, .captureFailed, retrying: false))
+    }
+
+    // MARK: - While the engine retries (items 1 and 2)
+
+    func testRetryCycleKeepsTheFailureOnScreen() {
+        // Each failed attempt: connecting → failed → stopped (engine reset) → connecting again.
+        let cycle = phases([
+            state(.connecting("10.0.0.2"), retrying: true),
+            state(.connectionFailed("refused"), retrying: true),
+            state(.stopped, retrying: true),
+            state(.connecting("10.0.0.2"), retrying: true),
+            state(.connectionFailed("refused"), retrying: true),
+            state(.stopped, retrying: true),
+        ])
+        XCTAssertEqual(cycle.first, .connecting(imac, .reaching))
+        for phase in cycle.dropFirst() {
+            XCTAssertEqual(phase, .interrupted(imac, .couldNotConnect, retrying: true))
+        }
+    }
+
+    func testRetryThatReachesTheIMacShowsProgressThenConnects() {
+        let run = phases([
+            state(.connectionClosed("eof"), retrying: true),
+            state(.stopped, retrying: true),
+            state(.connecting("10.0.0.2"), retrying: true),
+            state(.waitingDisplayProfile, retrying: true, connected: true),
+            state(.captureActive("", "", .extendedDesktop), retrying: true, connected: true, streaming: true),
+            state(.stopped, retrying: true),
+        ])
+        XCTAssertEqual(run, [
+            .interrupted(imac, .cableOrReceiverGone, retrying: true),
+            .interrupted(imac, .cableOrReceiverGone, retrying: true),
+            .interrupted(imac, .cableOrReceiverGone, retrying: true),
+            .connecting(imac, .preparing),
+            .connected(imac),
+            // A fresh drop after a good connection holds nothing from before.
+            .connecting(imac, .reaching),
+        ])
+    }
+
+    func testRetryingWithTheIMacGoneSaysSo() {
+        XCTAssertEqual(PWEPhaseRules.phase(state(.stopped, retrying: true, receivers: [], target: .some(nil)), held: nil),
+                       .interrupted(nil, .cableOrReceiverGone, retrying: true))
+        // A known reason beats the generic one: the receiver app quitting also leaves Bonjour.
+        XCTAssertEqual(PWEPhaseRules.phase(state(.stopped, retrying: true, receivers: [], target: .some(nil)),
+                                           held: .receiverQuit),
+                       .interrupted(nil, .receiverQuit, retrying: true))
+    }
+
+    func testEngineStoppingItsRetriesEndsTryingAgain() {
+        // A Stop from the menu bar: retrying ends, the session is stopped.
+        var held: PWEReason? = .couldNotConnect
+        let stopped = state(.stopped, retrying: false)
+        held = PWEPhaseRules.heldFailure(after: held, stopped)
+        XCTAssertNil(held)
+        XCTAssertEqual(PWEPhaseRules.phase(stopped, held: held), .ready(imac))
+        // A capture failure suspends retrying: the failure stays, without "Trying again…".
+        XCTAssertEqual(PWEPhaseRules.phase(state(.noFirstFrame, retrying: false), held: nil),
+                       .interrupted(imac, .captureFailed, retrying: false))
+    }
+
+    func testFirstAttemptWhileRetryingShowsConnecting() {
+        XCTAssertEqual(PWEPhaseRules.phase(state(.ready, retrying: true), held: nil), .connecting(imac, .reaching))
+    }
+}

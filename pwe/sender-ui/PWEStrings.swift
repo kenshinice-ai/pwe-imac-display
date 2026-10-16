@@ -16,13 +16,15 @@ struct PWEStrings {
     // Window
     var appName: String { "PWE iMac Display" }
     var advanced: String { t("Advanced…", "高级设置…") }
+    /// The advanced window's title: a window title never ends in an ellipsis.
+    var advancedTitle: String { t("Advanced", "高级设置") }
     var about: String { t("About", "关于") }
 
     // Permission
     var permissionTitle: String { t("Allow Screen Recording", "允许录屏") }
     var permissionBody: String {
-        t("macOS asks once. PWE iMac Display records only the screen it shows on your iMac, and sends it nowhere else.",
-          "macOS 只问一次。PWE iMac Display 只录制要显示在 iMac 上的画面，不发往其他任何地方。")
+        t("To show this Mac's screen on your iMac, PWE iMac Display needs your permission. It records only the screen it shows on your iMac, and sends it nowhere else.",
+          "要把这台 Mac 的画面显示到 iMac 上，PWE iMac Display 需要你的允许。它只录制要显示在 iMac 上的画面，不发往其他任何地方。")
     }
     var permissionOpen: String { t("Open System Settings", "打开系统设置") }
     var permissionRestart: String { t("Reopen PWE iMac Display", "重新打开 PWE iMac Display") }
@@ -42,7 +44,6 @@ struct PWEStrings {
 
     // Choose / ready
     var chooseTitle: String { t("Choose your iMac", "选择你的 iMac") }
-    var readyTitle: String { t("Your iMac is connected by cable", "iMac 已经接上") }
     var useAsDisplay: String { t("Use as Display", "用作显示器") }
     var modeLabel: String { t("Show", "显示方式") }
     var modeExtended: String { t("Separate display", "独立的一块屏") }
@@ -55,7 +56,7 @@ struct PWEStrings {
     }
     func stage(_ stage: PWEStage) -> String {
         switch stage {
-        case .reaching: return t("Reaching the iMac", "正在连上 iMac")
+        case .reaching: return t("Reaching the iMac", "正在连接 iMac")
         case .preparing: return t("Preparing the display", "正在准备显示器")
         case .waitingForPicture: return t("Waiting for the picture", "正在等待画面")
         }
@@ -79,16 +80,21 @@ struct PWEStrings {
         case .receiverQuit: return t("The receiver on the iMac was closed", "iMac 上的接收端关闭了")
         case .couldNotConnect: return t("Could not reach the iMac", "连不上 iMac")
         case .captureFailed: return t("The picture did not start", "画面没有出来")
-        case .other: return t("The connection stopped", "连接停止了")
         }
     }
-    func interruptedHint(_ reason: PWEReason) -> String {
+    func interruptedHint(_ reason: PWEReason, retrying: Bool) -> String {
         switch reason {
-        case .cableOrReceiverGone: return t("Check the cable. It connects again when the iMac is back.", "检查一下线。iMac 回来后会自动重新连接。")
-        case .receiverQuit: return t("Open PWE iMac Display Receiver on the iMac again.", "在 iMac 上重新打开接收端。")
-        case .couldNotConnect: return t("Check that the receiver is open and the cable is in.", "确认 iMac 上的接收端开着、线插好了。")
-        case .captureFailed: return t("Try again, or choose a lower quality in Advanced.", "再试一次，或在「高级设置」里降低画质。")
-        case .other: return t("Try again.", "再试一次。")
+        case .cableOrReceiverGone:
+            return retrying
+                ? t("Check the cable. It connects again when the iMac is back.", "检查一下线。iMac 回来后会自动重新连接。")
+                : t("Check the cable. When the iMac is back, choose Try Again.", "检查一下线。iMac 回来后，点「重试」。")
+        case .receiverQuit:
+            return t("Open PWE iMac Display Receiver on the iMac again.", "在 iMac 上重新打开「PWE iMac Display Receiver」。")
+        case .couldNotConnect:
+            return t("Check that PWE iMac Display Receiver is open on the iMac and the cable is in.",
+                     "确认 iMac 上的「PWE iMac Display Receiver」开着、线插好了。")
+        case .captureFailed:
+            return t("Try again, or choose a lower quality in Advanced.", "再试一次，或在「高级设置」里降低画质。")
         }
     }
     var retrying: String { t("Trying again…", "正在重试…") }
