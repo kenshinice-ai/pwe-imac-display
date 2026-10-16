@@ -35,7 +35,8 @@ SDL_URL=https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/$SDL
 # sources, the target, this script (its configure flags), and the compiler.
 SCRIPT_HASH="$(shasum -a 256 "$0" | cut -c1-16)"
 CC_VERSION="$(clang --version | head -1)"
-STAMP="$FFMPEG+$SDL+macos$MIN_MACOS+script:$SCRIPT_HASH+$CC_VERSION"
+SDK_VERSION="$(xcrun --show-sdk-version)"
+STAMP="$FFMPEG+$SDL+macos$MIN_MACOS+script:$SCRIPT_HASH+$CC_VERSION+sdk$SDK_VERSION"
 
 # One build at a time per cache: a second run waits instead of building over it.
 LOCK="$ROOT/.lock"
@@ -48,7 +49,9 @@ mkdir -p "$SRC"
 
 fetch() {  # fetch <file> <url> <sha256>
   local file="$SRC/$1"
-  [[ -f "$file" ]] || curl -sfL "$2" -o "$file"
+  # Download beside the target and rename, so an interrupted run leaves no
+  # partial file that fails the checksum on every later run.
+  [[ -f "$file" ]] || { curl -sfL "$2" -o "$file.part" && mv "$file.part" "$file"; }
   local actual; actual="$(shasum -a 256 "$file" | cut -d' ' -f1)"
   if [[ "$actual" != "$3" ]]; then
     echo "✗ $1: SHA-256 $actual, expected $3" >&2
@@ -106,10 +109,14 @@ for ARCH in arm64 x86_64; do
     grep -q "^License: LGPL" "$ROOT/build-$ARCH/ffmpeg-configure.log" \
       || grep -q "License: LGPL" ffbuild/config.log \
       || { echo "✗ FFmpeg is not configured as LGPL" >&2; exit 1; }
+    # The exact configure line, as FFmpeg records it, ships in Licenses/ (LGPL).
+    sed -n 's/^#define FFMPEG_CONFIGURATION "\(.*\)"$/\1/p' config.h > "$ROOT/build-$ARCH/configuration"
+    [[ -s "$ROOT/build-$ARCH/configuration" ]] || { echo "✗ no FFMPEG_CONFIGURATION in config.h" >&2; exit 1; }
     env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME="$HOME" MACOSX_DEPLOYMENT_TARGET=$MIN_MACOS \
       make -j"$JOBS" >"$ROOT/build-$ARCH/ffmpeg-make.log" 2>&1
     make install >"$ROOT/build-$ARCH/ffmpeg-install.log" 2>&1
   )
+  mv "$ROOT/build-$ARCH/configuration" "$PREFIX/ffmpeg-configuration.txt"
 
   print -r -- "$STAMP" > "$PREFIX/.stamp"
   echo "▸ $ARCH: done → $PREFIX"

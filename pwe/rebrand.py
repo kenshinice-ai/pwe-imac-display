@@ -220,6 +220,11 @@ def rebrand_sender(root: Path, version: str, build: str) -> None:
          '"Library/Application Support/TargetBridge/Sender/enabled"',
          f'"Library/Application Support/{NAME}/Sender/enabled"')
 
+    # 1.0 shipped with this still "targetbridge", so URL automation did nothing.
+    edit(swift / "TBDisplaySenderAutomation.swift",
+         'guard url.scheme?.lowercased() == "targetbridge" else { return }',
+         f'guard url.scheme?.lowercased() == "{SCHEME}" else {{ return }}')
+
     icon = support / "Assets.xcassets/AppIcon.appiconset"
     shutil.rmtree(icon)
     shutil.copytree(root / "pwe/assets/AppIcon.appiconset", icon)
@@ -265,6 +270,9 @@ def leftovers(root: Path) -> list[str]:
     for key, value in zh.items():
         if re.search(r"\b(sender|receiver|master|slave)\b", value.replace(RECEIVER_NAME, ""), re.IGNORECASE):
             found.append(f"zh.json: {key}: English role word in {value!r}")
+    automation = (root / "TargetBridge-Sender/TBDisplaySender/TBDisplaySenderAutomation.swift").read_text(encoding="utf-8")
+    if '== "targetbridge"' in automation:
+        found.append("TBDisplaySenderAutomation.swift: URL scheme check still says targetbridge")
     plist = (root / "TargetBridge-Sender/TargetBridgeSupport/Info.plist").read_text(encoding="utf-8")
     for line in plist.split("\n"):
         if "<string>" in line and re.search("targetbridge", line, re.IGNORECASE) \

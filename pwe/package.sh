@@ -4,8 +4,13 @@
 #
 #   pwe/package.sh                 build + sign + dmg   (local check, not for release)
 #   pwe/package.sh --notarize      also notarise and staple the apps and the image
+#   pwe/package.sh --unsigned --deps <dir>
+#                                  anyone's build: ad-hoc signed, with the FFmpeg
+#                                  and SDL2 already built in <dir>/{arm64,x86_64}
+#                                  (how NOTICE.txt tells users to relink FFmpeg)
 #
-# Output: pwe/dist/PWE iMac Display <version>.dmg and SHA256SUMS.txt.
+# Output: pwe/dist/PWE-iMac-Display-<version>.dmg, SHA256SUMS.txt, and the FFmpeg
+# source the receiver was built from (LGPL: offered from the same place).
 #
 # The repository holds TargetBridge's code unchanged. Everything here happens to
 # a scratch copy in $TMPDIR: pwe/rebrand.py turns it into PWE iMac Display, the
@@ -32,16 +37,22 @@ OUT="$WORK/out"
 DIST="$REPO/pwe/dist"   # notarised release builds only; local checks go to dist/local
 
 NOTARIZE=0
-for arg in "$@"; do
-  case "$arg" in
+UNSIGNED=0
+OWN_DEPS=0
+while (( $# )); do
+  case "$1" in
     --notarize) NOTARIZE=1 ;;
-    *) echo "✗ unknown option: $arg"; exit 1 ;;
+    --unsigned) UNSIGNED=1; IDENTITY="-" ;;
+    --deps) DEPS="${2:?--deps needs a directory}"; OWN_DEPS=1; shift ;;
+    *) echo "✗ unknown option: $1"; exit 1 ;;
   esac
+  shift
 done
+[[ "$NOTARIZE$UNSIGNED" != 11 ]] || { echo "✗ --notarize needs the Developer ID"; exit 1; }
 
 # ---------------------------------------------------------------- preflight
 
-security find-identity -v -p codesigning | grep -q "$IDENTITY" \
+[[ "$UNSIGNED" == 1 ]] || security find-identity -v -p codesigning | grep -q "$IDENTITY" \
   || { echo "✗ signing identity not in the keychain: $IDENTITY"; exit 1; }
 if [[ "$NOTARIZE" == 1 ]]; then
   # A locked screen keeps the notary profile in the keychain out of reach, and
@@ -50,8 +61,12 @@ if [[ "$NOTARIZE" == 1 ]]; then
     || { echo "✗ the screen is locked; unlock it and run again"; exit 1; }
   xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1 \
     || { echo "✗ notary profile $PROFILE is not usable"; exit 1; }
-  [[ -z "$(git status --porcelain)" ]] \
+  [[ -z "$(git status --porcelain --untracked-files=no)" ]] \
     || { echo "✗ commit first: a release is built from committed code only"; exit 1; }
+  # The release is the tagged commit, so the version and the code cannot drift apart.
+  TAG="pwe-$(<pwe/VERSION)"
+  git tag --points-at HEAD | grep -qx "$TAG" \
+    || { echo "✗ tag the release first: git tag $TAG (HEAD is not $TAG)"; exit 1; }
 fi
 
 echo "▸ $NAME ($BUILD)"
@@ -67,7 +82,7 @@ git ls-files -z | rsync -a --from0 --files-from=- ./ "$SRC/"
 # change what gets built. (2026-10-14: a branch switch mid-build removed
 # pwe/receiver-deps.sh and the build stopped halfway.)
 VERSION="$(<"$SRC/pwe/VERSION")"
-DMG="$DIST/$NAME $VERSION.dmg"
+DMG="$DIST/PWE-iMac-Display-$VERSION.dmg"   # the name the release and the cask use
 python3 -I "$SRC/pwe/rebrand.py" "$SRC" --version "$VERSION" --build "$BUILD"
 
 # ---------------------------------------------------------------- sender
@@ -90,15 +105,22 @@ ditto "$WORK/DerivedData/Build/Products/Release/$NAME.app" "$SENDER"
 
 # ---------------------------------------------------------------- receiver
 
-echo "▸ Building the receiver's libraries (cached in $DEPS)…"
-"$SRC/pwe/receiver-deps.sh" "$DEPS"
+if [[ "$OWN_DEPS" == 1 ]]; then
+  echo "▸ Using the receiver's libraries as built in $DEPS"
+else
+  echo "▸ Building the receiver's libraries (cached in $DEPS)…"
+  "$SRC/pwe/receiver-deps.sh" "$DEPS"
+fi
 
 echo "▸ Building the receiver (arm64 + x86_64, macOS 11)…"
 for ARCH in arm64 x86_64; do
   (
     cd "$SRC/TargetBridge-Receiver/TBReceiverC"
     make clean >/dev/null
-    PKG_CONFIG_LIBDIR="$DEPS/$ARCH/lib/pkgconfig" PKG_CONFIG_PATH= \
+    # A clean environment: the Makefile appends to CFLAGS and LDFLAGS, so an
+    # exported -I/opt/homebrew/include would compile against other headers.
+    env -i PATH="$PATH" HOME="$HOME" \
+      PKG_CONFIG_LIBDIR="$DEPS/$ARCH/lib/pkgconfig" \
       make CC="clang -arch $ARCH" PKG="pkg-config --static" DIRECT_LINK_ONLY=1 \
         APP_VERSION="$VERSION" APP_BUILD="$BUILD" >"$WORK/receiver-$ARCH.log" 2>&1 \
       || { tail -30 "$WORK/receiver-$ARCH.log"; exit 1; }
@@ -138,13 +160,25 @@ EOF
 printf 'APPL????' > "$RECEIVER/Contents/PkgInfo"
 
 # Licences travel inside each app and in the image: FFmpeg is LGPL and linked
-# statically, so its licence text and the way to rebuild it must ship with it.
+# statically, so its licence text, its exact configuration and the way to
+# relink it ship with it, and its source goes next to the image.
+FFMPEG_SRC="$(sed -n 's/^FFMPEG=//p' "$SRC/pwe/receiver-deps.sh").tar.xz"
+SDL_SRC="$(sed -n 's/^SDL=//p' "$SRC/pwe/receiver-deps.sh").tar.gz"
+DEPS_SRC="${PWE_DEPS_SRC:-$DEPS/src}"
 LICENSES="$WORK/Licenses"
 mkdir -p "$LICENSES"
 cp "$SRC/LICENSE" "$LICENSES/TargetBridge LICENSE (MIT).txt"
 cp "$SRC/pwe/NOTICE.txt" "$LICENSES/NOTICE.txt"
-tar -xJf "$DEPS/src/ffmpeg-"*.tar.xz -O '*/COPYING.LGPLv2.1' > "$LICENSES/FFmpeg COPYING.LGPLv2.1.txt"
-tar -xzf "$DEPS/src/SDL2-"*.tar.gz -O '*/LICENSE.txt' > "$LICENSES/SDL2 LICENSE (zlib).txt"
+tar -xJf "$DEPS_SRC/$FFMPEG_SRC" -O '*/COPYING.LGPLv2.1' > "$LICENSES/FFmpeg COPYING.LGPLv2.1.txt"
+tar -xzf "$DEPS_SRC/$SDL_SRC" -O '*/LICENSE.txt' > "$LICENSES/SDL2 LICENSE (zlib).txt"
+for ARCH in arm64 x86_64; do
+  if [[ -f "$DEPS/$ARCH/ffmpeg-configuration.txt" ]]; then
+    # The prefix is the builder's own path; it says nothing about the build.
+    print -r -- "$ARCH: ./configure $(sed 's|--prefix=[^ ]*|--prefix=<prefix>|' "$DEPS/$ARCH/ffmpeg-configuration.txt")"
+  else  # only with --deps: FFmpeg built some other way
+    print -r -- "$ARCH: not recorded (FFmpeg was built outside pwe/receiver-deps.sh)"
+  fi
+done > "$LICENSES/FFmpeg configuration.txt"
 for APP in "$SENDER" "$RECEIVER"; do
   ditto "$LICENSES" "$APP/Contents/Resources/Licenses"
 done
@@ -163,14 +197,22 @@ if otool -L "$RECEIVER/Contents/MacOS/PWEiMacDisplayReceiver" | awk '/^[[:space:
 fi
 lipo -info "$SENDER/Contents/MacOS/$NAME" | grep -q "x86_64 arm64\|arm64 x86_64" \
   || { echo "✗ the sender is not universal"; exit 1; }
+for ARCH in arm64 x86_64; do
+  MIN="$(vtool -arch $ARCH -show-build "$SENDER/Contents/MacOS/$NAME" | awk '/minos/ {print $2}')"
+  [[ "$MIN" == 14.0 ]] || { echo "✗ sender $ARCH needs macOS $MIN, not the 14.0 the docs promise"; exit 1; }
+done
+# Weak imports for older systems, and the old URL scheme hidden in code.
+python3 -I "$SRC/pwe/check-bundle.py" "$SENDER" "$RECEIVER"
 
 # ---------------------------------------------------------------- sign
 
 echo "▸ Signing with $IDENTITY…"
 xattr -cr "$SENDER" "$RECEIVER"
-codesign --force --options runtime --timestamp --sign "$IDENTITY" \
+TIMESTAMP=(--timestamp)
+[[ "$UNSIGNED" == 0 ]] || TIMESTAMP=(--timestamp=none)
+codesign --force --options runtime "${TIMESTAMP[@]}" --sign "$IDENTITY" \
   --entitlements "$SRC/pwe/sender.entitlements" "$SENDER"
-codesign --force --options runtime --timestamp --sign "$IDENTITY" "$RECEIVER"
+codesign --force --options runtime "${TIMESTAMP[@]}" --sign "$IDENTITY" "$RECEIVER"
 for APP in "$SENDER" "$RECEIVER"; do
   codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | sed 's/^/    /'
 done
@@ -193,7 +235,10 @@ if [[ "$NOTARIZE" == 1 ]]; then
     ditto -c -k --keepParent "$APP" "$WORK/notarize.zip"
     notarize "$WORK/notarize.zip" "$(basename "$APP")"
     rm -f "$WORK/notarize.zip"
-    xcrun stapler staple "$APP" && xcrun stapler validate "$APP"
+    # One command per line: zsh's set -e ignores a failure on the left of &&,
+    # and an unstapled receiver cannot be checked on an iMac that is offline.
+    xcrun stapler staple "$APP"
+    xcrun stapler validate "$APP"
   done
 fi
 
@@ -209,11 +254,12 @@ cp "$SRC/pwe/read-me-first.txt" "$STAGE/读我 Read Me First.txt"
 ditto "$LICENSES" "$STAGE/Licenses"
 hdiutil create -volname "$NAME $VERSION" -srcfolder "$STAGE" -ov -format UDZO \
   "$WORK/image.dmg" >/dev/null
-codesign --force --timestamp --sign "$IDENTITY" "$WORK/image.dmg"
+codesign --force "${TIMESTAMP[@]}" --sign "$IDENTITY" "$WORK/image.dmg"
 
 if [[ "$NOTARIZE" == 1 ]]; then
   notarize "$WORK/image.dmg" "the disk image"
-  xcrun stapler staple "$WORK/image.dmg" && xcrun stapler validate "$WORK/image.dmg"
+  xcrun stapler staple "$WORK/image.dmg"
+  xcrun stapler validate "$WORK/image.dmg"
   echo "▸ Gatekeeper:"
   spctl -a -t open --context context:primary-signature -vv "$WORK/image.dmg" 2>&1 | sed 's/^/    /'
   for APP in "$SENDER" "$RECEIVER"; do
@@ -222,10 +268,12 @@ if [[ "$NOTARIZE" == 1 ]]; then
 fi
 
 cp "$WORK/image.dmg" "$DMG"
-(cd "$DIST" && shasum -a 256 "$(basename "$DMG")" > SHA256SUMS.txt)
+cp "$DEPS_SRC/$FFMPEG_SRC" "$DIST/$FFMPEG_SRC"
+(cd "$DIST" && shasum -a 256 "$(basename "$DMG")" "$FFMPEG_SRC" > SHA256SUMS.txt)
 
 echo
 echo "▸ $DMG"
-echo "    $(du -h "$DMG" | cut -f1)   $(cut -c1-16 "$DIST/SHA256SUMS.txt")…"
+echo "    $(du -h "$DMG" | cut -f1)   $(head -1 "$DIST/SHA256SUMS.txt" | cut -c1-16)…"
+echo "    Upload all three to the release: the image, $FFMPEG_SRC, SHA256SUMS.txt."
 [[ "$NOTARIZE" == 1 ]] || echo "    Not notarised: a local check only. Release with pwe/package.sh --notarize."
 rm -rf "$WORK"
