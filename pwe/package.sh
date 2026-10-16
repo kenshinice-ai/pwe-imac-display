@@ -163,6 +163,8 @@ if otool -L "$RECEIVER/Contents/MacOS/PWEiMacDisplayReceiver" | awk '/^[[:space:
 fi
 lipo -info "$SENDER/Contents/MacOS/$NAME" | grep -q "x86_64 arm64\|arm64 x86_64" \
   || { echo "✗ the sender is not universal"; exit 1; }
+# Weak imports for older systems, and the old URL scheme hidden in code.
+python3 -I "$SRC/pwe/check-bundle.py" "$SENDER" "$RECEIVER"
 
 # ---------------------------------------------------------------- sign
 
