@@ -68,6 +68,8 @@ struct tb_display {
     char          last_permissions[160];
     int           show_details;       /* idle screen: full diagnostics instead of the calm view */
     int           last_show_details;
+    enum tb_display_login_item login_item_state;
+    enum tb_display_login_item last_login_item_state;
     int           last_drawable_w;
     int           last_drawable_h;
     int           status_is_connecting;
@@ -429,6 +431,117 @@ static void tb_disp_draw_connecting_spinner(struct tb_display *d, int drawable_w
     SDL_SetRenderDrawBlendMode(d->ren, old_blend);
 }
 
+/* The details screen of the PWE build (COMPACT_IDLE or OFFER_LOGIN_ITEM). It is
+ * the upstream details layout, kept in the else branch below untouched, with
+ * three changes: it is measured in units of min_side / 720 like the compact
+ * screen, so it fits a 980x620 window on a non-Retina iMac and is not half size
+ * on a Retina one; its rows are tighter so the help lines clear the cards; and
+ * opening at login has its own cell, with a line on how to go back. The canvas
+ * has a top-left origin: y grows down. */
+static void tb_disp_draw_details_scaled(CGContextRef ctx,
+                                        const struct tb_display *d,
+                                        const char *ip,
+                                        const char *status,
+                                        const char *sender,
+                                        const char *panel,
+                                        const char *mode,
+                                        const char *language,
+                                        const char *permissions,
+                                        int drawable_w,
+                                        int drawable_h,
+                                        int zh) {
+    const char *title_font = zh ? "PingFangSC-Semibold" : "Helvetica-Bold";
+    const char *body_font = zh ? "PingFangSC-Regular" : "Helvetica";
+    const char *section_font = zh ? "PingFangSC-Semibold" : "Helvetica-Bold";
+    const char *mono_font = "Menlo";
+    const char *mono_bold_font = "Menlo-Bold";
+
+    const CGFloat W = (CGFloat)drawable_w;
+    const CGFloat H = (CGFloat)drawable_h;
+    const CGFloat s = (W < H ? W : H) / 720.0;
+
+    tb_disp_fill_rect(ctx, 0, 0, W, H, 0.06, 0.07, 0.09, 1.0);
+    tb_disp_fill_rect(ctx, 48 * s, 52 * s, W - 96 * s, H - 104 * s, 0.11, 0.12, 0.15, 1.0);
+    tb_disp_fill_rect(ctx, 48 * s, 128 * s, W - 96 * s, 2 * s, 0.22, 0.24, 0.29, 1.0);
+
+    const CGFloat outer_x = 72 * s;
+    const CGFloat outer_w = W - 144 * s;
+    const CGFloat outer_right = outer_x + outer_w;
+    const CGFloat card_gap = 28 * s;
+    const CGFloat card_w = (outer_w - card_gap) / 2.0;
+    const CGFloat pad = 20 * s;
+    const CGFloat right_x = outer_x + card_w + card_gap + pad;
+
+    tb_disp_draw_text(ctx, tb_i18n_get("receiver.ui.title"), title_font, 28 * s, outer_x, 84 * s, 0.95, 0.97, 1.0);
+    tb_disp_draw_text(ctx, tb_i18n_get("receiver.ui.subtitle"), body_font, 17 * s, outer_x, 110 * s, 0.72, 0.76, 0.84);
+    tb_disp_draw_text(ctx, TB_RECEIVER_VERSION, mono_bold_font, 17 * s,
+                      outer_right - tb_disp_text_width(TB_RECEIVER_VERSION, mono_bold_font, 17 * s), 82 * s,
+                      0.64, 0.69, 0.78);
+    tb_disp_draw_text(ctx, TB_RECEIVER_BUILD, mono_font, 13 * s,
+                      outer_right - tb_disp_text_width(TB_RECEIVER_BUILD, mono_font, 13 * s), 108 * s,
+                      0.53, 0.57, 0.66);
+
+    tb_disp_draw_text(ctx, tb_i18n_get("receiver.ui.ip_thunderbolt_bridge"), section_font, 15 * s, outer_x, 160 * s, 0.54, 0.62, 0.76);
+    tb_disp_draw_text(ctx, ip, mono_bold_font, 34 * s, outer_x, 196 * s, 0.43, 0.93, 0.60);
+
+    /* Two cards of two label/value rows each; the second card is full width. */
+    const CGFloat row_label_1 = 30 * s, row_value_1 = 60 * s;
+    const CGFloat row_label_2 = 96 * s, row_value_2 = 126 * s;
+    const CGFloat card_h = 146 * s;
+
+    const CGFloat info_top = 216 * s;
+    tb_disp_fill_rect(ctx, outer_x, info_top, card_w, card_h, 0.14, 0.15, 0.19, 1.0);
+    tb_disp_fill_rect(ctx, outer_x + card_w + card_gap, info_top, card_w, card_h, 0.14, 0.15, 0.19, 1.0);
+
+    tb_disp_draw_text(ctx, tb_i18n_get("receiver.ui.status"), section_font, 15 * s, outer_x + pad, info_top + row_label_1, 0.54, 0.62, 0.76);
+    tb_disp_draw_text(ctx, status, body_font, 22 * s, outer_x + pad, info_top + row_value_1, 0.94, 0.96, 0.99);
+    tb_disp_draw_text(ctx, tb_i18n_get("receiver.ui.sender"), section_font, 14 * s, outer_x + pad, info_top + row_label_2, 0.54, 0.62, 0.76);
+    tb_disp_draw_text(ctx, sender, body_font, 20 * s, outer_x + pad, info_top + row_value_2, 0.94, 0.96, 0.99);
+
+    tb_disp_draw_text(ctx, tb_i18n_get("receiver.ui.display"), section_font, 15 * s, right_x, info_top + row_label_1, 0.54, 0.62, 0.76);
+    tb_disp_draw_text(ctx, panel, zh ? body_font : mono_font, 20 * s, right_x, info_top + row_value_1, 0.94, 0.96, 0.99);
+    tb_disp_draw_text(ctx, tb_i18n_get("receiver.ui.stream_profile"), section_font, 14 * s, right_x, info_top + row_label_2, 0.54, 0.62, 0.76);
+    tb_disp_draw_text(ctx, mode, zh ? body_font : mono_font, 20 * s, right_x, info_top + row_value_2, 0.94, 0.96, 0.99);
+
+    const CGFloat footer_top = info_top + card_h + 16 * s;
+    tb_disp_fill_rect(ctx, outer_x, footer_top, outer_w, card_h, 0.14, 0.15, 0.19, 1.0);
+
+    tb_disp_draw_text(ctx, tb_i18n_get("receiver.ui.language"), section_font, 15 * s, outer_x + pad, footer_top + row_label_1, 0.54, 0.62, 0.76);
+    tb_disp_draw_text(ctx, language, body_font, 20 * s, outer_x + pad, footer_top + row_value_1, 0.94, 0.96, 0.99);
+
+    if (d->login_item_state != TB_DISP_LOGIN_ITEM_HIDDEN) {
+        tb_disp_draw_text(ctx, tb_i18n_get("receiver.ui.login_item"), section_font, 15 * s, right_x, footer_top + row_label_1, 0.54, 0.62, 0.76);
+        if (d->login_item_state == TB_DISP_LOGIN_ITEM_UNAVAILABLE) {
+            tb_disp_draw_text(ctx, tb_i18n_get("receiver.login.unavailable"), body_font, 20 * s,
+                              right_x, footer_top + row_value_1, 0.58, 0.63, 0.71);
+        } else {
+            const char *state = tb_i18n_get(d->login_item_state == TB_DISP_LOGIN_ITEM_ON
+                                            ? "receiver.login.state_on" : "receiver.login.state_off");
+            char hint[160];
+            snprintf(hint, sizeof(hint), "   ·   %s", tb_i18n_get("receiver.login.toggle_hint"));
+            tb_disp_draw_text(ctx, state, body_font, 20 * s, right_x, footer_top + row_value_1, 0.94, 0.96, 0.99);
+            tb_disp_draw_text(ctx, hint, body_font, 20 * s,
+                              right_x + tb_disp_text_width(state, body_font, 20 * s), footer_top + row_value_1,
+                              0.58, 0.63, 0.71);
+        }
+    }
+
+    tb_disp_draw_text(ctx, tb_i18n_get("receiver.ui.permissions"), section_font, 15 * s, outer_x + pad, footer_top + row_label_2, 0.54, 0.62, 0.76);
+    tb_disp_draw_text(ctx, permissions, body_font, 20 * s, outer_x + pad, footer_top + row_value_2, 0.94, 0.96, 0.99);
+
+    /* Help lines, bottom up; the compact screen is one key away. */
+    const char *help[4];
+    int help_count = 0;
+    help[help_count++] = tb_i18n_get("receiver.ui.help_1");
+    help[help_count++] = tb_i18n_get("receiver.ui.help_2");
+    help[help_count++] = tb_i18n_get("receiver.ui.help_4");
+    if (TB_RECEIVER_COMPACT_IDLE) help[help_count++] = tb_i18n_get("receiver.ui.details_back");
+    for (int i = 0; i < help_count; i++) {
+        tb_disp_draw_text(ctx, help[i], body_font, 17 * s, outer_x,
+                          H - (78 + 24 * (help_count - 1 - i)) * s, 0.76, 0.80, 0.88);
+    }
+}
+
 static void tb_disp_rebuild_status_texture(struct tb_display *d,
                                            const char *ip,
                                            const char *status,
@@ -531,6 +644,9 @@ static void tb_disp_rebuild_status_texture(struct tb_display *d,
                  ip, TB_RECEIVER_VERSION, tb_i18n_get("receiver.ui.compact_details"));
         tb_disp_draw_text_centered(ctx, footer, zh ? body_font : mono_font, 13.0 * scale,
                                    center_x, (CGFloat)drawable_h - 36.0 * scale, 0.40, 0.45, 0.53);
+    } else if (TB_RECEIVER_COMPACT_IDLE || d->login_item_state != TB_DISP_LOGIN_ITEM_HIDDEN) {
+        tb_disp_draw_details_scaled(ctx, d, ip, status, sender, panel, mode, language, permissions,
+                                    drawable_w, drawable_h, zh);
     } else {
     /* The canvas has a top-left origin (y grows down). This layout was written
      * for a bottom-left origin and drew upside down (title at the bottom, each
@@ -1296,10 +1412,20 @@ void tb_disp_set_cursor(struct tb_display *d,
     }
 }
 
+/* A fresh press of `sym` with no Command, Control or Option: holding a key
+ * must not repeat a toggle, and Cmd-A or Ctrl-L are not these commands. */
+static int tb_disp_is_plain_keypress(const SDL_Event *ev, SDL_Keycode sym) {
+    return ev->type == SDL_KEYDOWN &&
+           !ev->key.repeat &&
+           (ev->key.keysym.mod & (KMOD_GUI | KMOD_CTRL | KMOD_ALT)) == 0 &&
+           ev->key.keysym.sym == sym;
+}
+
 unsigned int tb_disp_poll_actions(struct tb_display *d) {
     unsigned int actions = TB_DISP_ACTION_NONE;
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
+        const int idle = !d->is_connected && !d->is_connecting;
         if (ev.type == SDL_QUIT) d->quit = 1;
         else if (!d->input_capture_active &&
                  !d->input_intercept_active &&
@@ -1307,16 +1433,16 @@ unsigned int tb_disp_poll_actions(struct tb_display *d) {
                  ev.key.keysym.sym == SDLK_ESCAPE) d->quit = 1;
         else if (!d->input_capture_active &&
                  !d->input_intercept_active &&
-                 ev.type == SDL_KEYDOWN &&
-                 ev.key.keysym.sym == SDLK_l) actions |= TB_DISP_ACTION_CYCLE_LANGUAGE;
+                 tb_disp_is_plain_keypress(&ev, SDLK_l)) actions |= TB_DISP_ACTION_CYCLE_LANGUAGE;
         else if (!d->input_capture_active &&
                  !d->input_intercept_active &&
-                 ev.type == SDL_KEYDOWN &&
-                 ev.key.keysym.sym == SDLK_i) d->show_details = !d->show_details;
+                 idle &&
+                 tb_disp_is_plain_keypress(&ev, SDLK_i)) d->show_details = !d->show_details;
+        /* A changes a setting, so only where its state is on screen. */
         else if (!d->input_capture_active &&
                  !d->input_intercept_active &&
-                 ev.type == SDL_KEYDOWN &&
-                 ev.key.keysym.sym == SDLK_a) actions |= TB_DISP_ACTION_TOGGLE_LOGIN_ITEM;
+                 (!TB_RECEIVER_COMPACT_IDLE || d->show_details) &&
+                 tb_disp_is_plain_keypress(&ev, SDLK_a)) actions |= TB_DISP_ACTION_TOGGLE_LOGIN_ITEM;
         else if (d->input_capture_active) {
             struct tb_input_event input_event;
             memset(&input_event, 0, sizeof(input_event));
@@ -1506,6 +1632,8 @@ static void tb_disp_set_stream_state(struct tb_display *d, int connected, int co
     if (d->is_connected == connected && d->is_connecting == connecting) return;
     d->is_connected = connected;
     d->is_connecting = connecting;
+    /* A session starts: the next idle screen opens on the calm view again. */
+    if (connected || connecting) d->show_details = 0;
     tb_disp_refresh_window_mode(d);
 }
 
@@ -1582,6 +1710,7 @@ void tb_disp_render_status(struct tb_display *d,
         d->last_drawable_w != drawable_w ||
         d->last_drawable_h != drawable_h ||
         d->last_show_details != d->show_details ||
+        d->last_login_item_state != d->login_item_state ||
         d->status_tex == NULL ||
         d->status_is_connecting) {
         snprintf(d->last_ip, sizeof(d->last_ip), "%s", ip);
@@ -1594,6 +1723,7 @@ void tb_disp_render_status(struct tb_display *d,
         d->last_drawable_w = drawable_w;
         d->last_drawable_h = drawable_h;
         d->last_show_details = d->show_details;
+        d->last_login_item_state = d->login_item_state;
         d->status_is_connecting = 0;
         tb_disp_rebuild_status_texture(d, ip, status, sender, panel, mode, language, permissions,
                                        drawable_w, drawable_h, 0);
@@ -1637,6 +1767,11 @@ void tb_disp_render_connecting(struct tb_display *d) {
     if (d->status_tex) SDL_RenderCopy(d->ren, d->status_tex, NULL, NULL);
     tb_disp_draw_connecting_spinner(d, drawable_w, drawable_h);
     SDL_RenderPresent(d->ren);
+}
+
+void tb_disp_set_login_item_state(struct tb_display *d, enum tb_display_login_item state) {
+    if (!d) return;
+    d->login_item_state = state;
 }
 
 void tb_disp_set_brightness(struct tb_display *d, double level) {
