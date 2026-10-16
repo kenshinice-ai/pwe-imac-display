@@ -243,6 +243,37 @@ def rebrand_sender(root: Path, version: str, build: str) -> None:
          "    /// True while the engine keeps a connection up and retries it by itself.\n"
          "    static var isConnectingAutomatically: Bool { continuousConnectTask != nil }\n"
          '    static let automaticConnectionDidChange = Notification.Name("pwe.automaticConnectionDidChange")\n')
+    # "Reopen" on the permission screen only quit: opening a running app's own
+    # bundle activates it rather than starting another. Relaunch once this
+    # process has gone instead. (Upstream bug too; see the report on item 6.)
+    edit(swift / "TBDisplaySenderManager.swift",
+         "    func restartAfterPermissionChange() {\n"
+         "        let appURL = URL(fileURLWithPath: Bundle.main.bundlePath)\n"
+         "        NSWorkspace.shared.openApplication(at: appURL, configuration: .init()) { _, error in\n"
+         "            guard error == nil else { return }\n"
+         "            DispatchQueue.main.async {\n"
+         "                NSApp.terminate(nil)\n"
+         "            }\n"
+         "        }\n"
+         "    }\n",
+         "    func restartAfterPermissionChange() {\n"
+         "        // Wait (up to 10 s) for this process to exit, then open the app again.\n"
+         "        let relaunch = Process()\n"
+         '        relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")\n'
+         "        relaunch.arguments = [\n"
+         '            "-c",\n'
+         '            "for _ in $(/usr/bin/jot 50); do /bin/kill -0 \\"$0\\" 2>/dev/null || break; /bin/sleep 0.2; done; /usr/bin/open \\"$1\\"",\n'
+         '            String(ProcessInfo.processInfo.processIdentifier),\n'
+         "            Bundle.main.bundlePath,\n"
+         "        ]\n"
+         "        do {\n"
+         "            try relaunch.run()\n"
+         "        } catch {\n"
+         '            NSLog("[permissions] unable to schedule relaunch: \\(error.localizedDescription)")\n'
+         "            return\n"
+         "        }\n"
+         "        NSApp.terminate(nil)\n"
+         "    }\n")
     pwe_ui = swift / "PWE"
     pwe_ui.mkdir()
     for source in sorted((root / "pwe/sender-ui").glob("*.swift")):
