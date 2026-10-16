@@ -3,9 +3,9 @@
 Turn a 2014–2017 5K iMac into a display for a newer Mac. No firmware hacks, no
 teardown, one Thunderbolt cable. [中文](../../.github/README.md)
 
-> **1.0.0 is out**: [download the disk image](https://github.com/kenshinice-ai/pwe-imac-display/releases/latest),
-> or `brew install --cask kenshinice-ai/tap/pwe-imac-display`. It has not yet run on a
-> real Intel iMac; if it misbehaves on yours, please open an issue.
+> **Get the latest version**: [download the disk image](https://github.com/kenshinice-ai/pwe-imac-display/releases/latest),
+> or `brew install --cask kenshinice-ai/tap/pwe-imac-display`. As of 2026-10-16 it has not
+> yet run on a real Intel iMac; if it misbehaves on yours, please open an issue.
 
 ## What it is
 

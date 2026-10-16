@@ -3,14 +3,14 @@ PWE iMac Display — 读我
 把 2014–2017 年的 5K iMac 变成新 Mac 的外接显示器。两台电脑各装一个 App，用一根雷雳线连起来。
 
 1. 在新 Mac 上：把「PWE iMac Display」拖进「应用程序」并打开。
-   第一次打开时，按提示在「隐私与安全」里允许录屏。
+   第一次打开时，按提示在「隐私与安全性」里允许录屏。
 2. 在 iMac 上：把「PWE iMac Display Receiver」拷进 iMac 的「应用程序」并打开。
-   它会全屏显示一个 IP 地址，等待连接。iMac 需要 macOS 11 或更新。
+   屏幕中间显示「等待 Mac 连接」。iMac 需要 macOS 11 或更新。
 3. 用雷雳线连接两台电脑。
    2014、2015 款 iMac 是雷雳 2 接口，需要 Apple 的雷雳 3（USB-C）转雷雳 2 转换器。
    普通的 USB-C 转 Mini DisplayPort 转换器不行。
-4. 在新 Mac 的 PWE iMac Display 里点「连接」。
-   接收端出现在列表里就选它；没出现就填 iMac 上显示的 IP。
+4. iMac 会自己出现在新 Mac 的 PWE iMac Display 里，点「用作显示器」。
+   以后接上线就会自动连接。
 
 几秒后 iMac 就是新 Mac 的一块屏，在「系统设置 > 显示器」里可以排列位置。
 
@@ -26,14 +26,14 @@ app, and one Thunderbolt cable connects them.
 1. On the newer Mac: drag "PWE iMac Display" to Applications and open it.
    The first time, allow Screen Recording in Privacy & Security when asked.
 2. On the iMac: copy "PWE iMac Display Receiver" to the iMac's Applications and
-   open it. It shows an IP address full screen and waits. The iMac needs
-   macOS 11 or later.
+   open it. It shows "Waiting for your Mac" in the middle of the screen.
+   The iMac needs macOS 11 or later.
 3. Connect the two computers with a Thunderbolt cable.
    2014 and 2015 iMacs have Thunderbolt 2 ports and need Apple's Thunderbolt 3
    (USB-C) to Thunderbolt 2 Adapter. A plain USB-C to Mini DisplayPort adapter
    will not work.
-4. In PWE iMac Display on the newer Mac, click Connect. Choose the receiver if
-   it is listed; otherwise type the IP address the iMac shows.
+4. The iMac appears in PWE iMac Display on the newer Mac by itself; click
+   Use as Display. From then on it connects whenever the cable goes in.
 
 A few seconds later the iMac is a display for your Mac; arrange it in
 System Settings > Displays.
