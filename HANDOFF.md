@@ -1,8 +1,8 @@
 # PWE iMac Display — 交接
 
-> 状态（2026-10-15）：1.0.0 已发布（GitHub 标签 `pwe-1.0.0`，Homebrew `kenshinice-ai/tap/pwe-imac-display`）。
-> 1.0.1（接收端加固）已在本地分支 `security-1.0.1` 上完成，计划 2026-10-22 发布。
-> 1.1（PWE 自己的界面、自动连接、登录时打开、接收端安静画面）已在分支 `pwe-1.1` 上完成并打出本地包，等 Lee 试用和 iMac 基线。路线见 `docs/pwe/PLAN-2026-10-15.md`（未入库）。
+> 状态（2026-10-16）：1.0.0 已发布（GitHub 标签 `pwe-1.0.0`，Homebrew `kenshinice-ai/tap/pwe-imac-display`）。
+> 1.0.1（接收端加固）在本地分支 `security-1.0.1` 上，已合入 `main` 的打包和许可修正，计划 2026-10-22 发布。
+> 1.1（PWE 自己的界面、自动连接、登录时打开、接收端安静画面）在分支 `pwe-1.1` 上；2026-10-16 按三路评审修了发送端 11 处、接收端 8 处，并打出本地包。等 Lee 试用和 iMac 基线。路线见 `docs/pwe/PLAN-2026-10-15.md`（未入库）。
 > pwestudio.site 产品页冻结中（Lee），方案在 `docs/pwe/SITE-PLAN.md`。还没在真实的 Intel iMac 上试过。
 > 仓库：`kenshinice-ai/pwe-imac-display`，公开，是 `swellweb/targetBridge` 的 fork。`main` 从上游 3.6.0 起。
 > 方向（Lee，2026-10-14）：PWE 自己签名的 app，同时给上游贡献。下游发行版还是彻底分叉待定。见 `docs/pwe/RESEARCH-TargetBridge.md`。
@@ -11,12 +11,21 @@
 
 ## 等 Lee
 
-- **[动手] 试用 1.1** — 打开 `pwe/dist/local/PWE iMac Display 1.1.0.dmg`（本机构建，未公证，只在这台 Mac 上用）；或看 `--pwe-snapshot` 出的各状态截图。重点看：主窗口的说法、首次设置、自动连接是否符合预期 · 不试则 1.1 的界面没人拍板，发不了 · 自 2026-10-15
-- **[动手] iMac 到货后按 `docs/pwe/PLAN-2026-10-15.md` 第三节做真机基线** — 用 1.1 的包；带 40 Gbps 雷雳 3 线，2014、2015 款另带转换器 · 不做则默认码流配置定不下来，1.1 发不了 · 自 2026-10-15
-- **[决定] 2026-10-22 发布 1.0.1 吗** — 推荐发；Marco 若要求推迟就等他。发布前把 `security-1.0.1` 合进 `main` · 不定则接收端加固留在本地 · 自 2026-10-15
-- **[决定] 解冻 pwestudio.site** — 产品页方案在 `docs/pwe/SITE-PLAN.md`；1.1 的更新检查还要在 `functions/_release.js` 加一条 `imacdisplay` · 不定则网站上没有这个产品，1.1 的「检查更新」只会回答「暂时无法检查」 · 自 2026-10-14
+- **[动手] 推送 `main` 和 `pwe-1.1`** — 本机已提交，还没推。`main` 要 Lee 在终端运行 `git push origin main`；推完后 Claude 推 `pwe-1.1` · 不推则别人看不到许可和打包的修正 · 自 2026-10-16
+- **[动手] 试用 1.1** — 打开 `pwe/dist/local/PWE-iMac-Display-1.1.0.dmg`（2026-10-16 本机构建，未公证，只在这台 Mac 上用）。重点看：主窗口的说法、首次设置、自动连接是否符合预期 · 不试则 1.1 的界面没人拍板，发不了 · 自 2026-10-15
+- **[动手] iMac 到货后按 `docs/pwe/PLAN-2026-10-15.md` 第三节做真机基线** — 用 1.1 的包；同时用 `pwe/dist/local/PWE-iMac-Display-1.0.1.dmg` 确认真实雷雳线能连上（1.0.1 的接收端改动只在本机回环上测过）；带 40 Gbps 雷雳 3 线，2014、2015 款另带转换器 · 不做则默认码流配置定不下来，1.1 发不了 · 自 2026-10-15
+- **[决定] 2026-10-22 发布 1.0.1 吗** — 推荐发；iMac 若在此前到货，先用真线试一次再发；Marco 若要求推迟就等他。发布前把 `security-1.0.1` 合进 `main` · 不定则接收端加固留在本地 · 自 2026-10-15
+- **[决定] 给已发布的 1.0.0 补上 FFmpeg 源代码** — 推荐：把 `ffmpeg-9.0.2.tar.xz` 加到 `pwe-1.0.0` release，并在说明里写「重新链接的步骤见 1.0.1」。LGPL 要求在发布二进制的同一处提供源代码 · 不定则 1.0.0 的许可义务一直缺一块 · 自 2026-10-16
+- **[决定] 解冻 pwestudio.site** — 产品页方案在 `docs/pwe/SITE-PLAN.md`；1.1 的更新检查还要在 `functions/_release.js` 加一条 `imacdisplay` · 不定则网站上没有这个产品，1.1 的「检查更新」只会回答「已经是最新版本」 · 自 2026-10-14
 - **[决定] 本仓库 Sponsor 按钮** — 组规矩 §0.9 要求放 `custom: [pwestudio.site/support]`，并由 Lee 同意打开 Sponsorships 开关；1.1 的「关于」里已有「支持 PWE…」 · 不定则仓库页没有支持入口 · 自 2026-10-15
 - **[决定] 下游发行版还是彻底分叉** — 推荐下游发行版；1.1 的界面放在 `pwe/sender-ui`，不改上游界面文件 · 不定则不影响现在的工作 · 自 2026-10-14
+
+## 1.1 发版前（Claude 做，不等 Lee）
+
+- 先发 1.0.1，再把 `main` 合进 `pwe-1.1`。成功判据：`git merge-base --is-ancestor security-1.0.1 pwe-1.1` 退出码 0，证明加固进了 1.1。
+- `package.sh` 的接收端 make 行合并后要同时带 `DIRECT_LINK_ONLY=1 COMPACT_IDLE=1 OFFER_LOGIN_ITEM=1`。
+- cask 的 `zap` 加上 `~/Library/LaunchAgents/com.pwegroup.pweimacdisplay.receiver.plist`。
+- 给上游提 PR：发送端「重新打开」按钮只退出不重开（PWE 已在 `rebrand.py` 里修）。
 
 ## 仓库规矩
 
