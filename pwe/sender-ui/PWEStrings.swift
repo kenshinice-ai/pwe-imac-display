@@ -82,13 +82,20 @@ struct PWEStrings {
         case .other: return t("The connection stopped", "连接停止了")
         }
     }
-    func interruptedHint(_ reason: PWEReason) -> String {
+    func interruptedHint(_ reason: PWEReason, retrying: Bool) -> String {
         switch reason {
-        case .cableOrReceiverGone: return t("Check the cable. It connects again when the iMac is back.", "检查一下线。iMac 回来后会自动重新连接。")
-        case .receiverQuit: return t("Open PWE iMac Display Receiver on the iMac again.", "在 iMac 上重新打开接收端。")
-        case .couldNotConnect: return t("Check that the receiver is open and the cable is in.", "确认 iMac 上的接收端开着、线插好了。")
-        case .captureFailed: return t("Try again, or choose a lower quality in Advanced.", "再试一次，或在「高级设置」里降低画质。")
-        case .other: return t("Try again.", "再试一次。")
+        case .cableOrReceiverGone:
+            return retrying
+                ? t("Check the cable. It connects again when the iMac is back.", "检查一下线。iMac 回来后会自动重新连接。")
+                : t("Check the cable. When the iMac is back, choose Try Again.", "检查一下线。iMac 回来后，点「重试」。")
+        case .receiverQuit:
+            return t("Open PWE iMac Display Receiver on the iMac again.", "在 iMac 上重新打开接收端。")
+        case .couldNotConnect:
+            return t("Check that the receiver is open and the cable is in.", "确认 iMac 上的接收端开着、线插好了。")
+        case .captureFailed:
+            return t("Try again, or choose a lower quality in Advanced.", "再试一次，或在「高级设置」里降低画质。")
+        case .other:
+            return t("Try again.", "再试一次。")
         }
     }
     var retrying: String { t("Trying again…", "正在重试…") }

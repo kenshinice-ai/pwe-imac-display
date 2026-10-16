@@ -218,7 +218,7 @@ struct PWEMainView: View {
                     .accessibilityHidden(true)
                 Text(strings.interruptedTitle(reason)).font(.title3.weight(.semibold))
             }
-            Text(strings.interruptedHint(reason))
+            Text(strings.interruptedHint(reason, retrying: retrying))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if retrying {

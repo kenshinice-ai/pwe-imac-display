@@ -232,10 +232,24 @@ def rebrand_sender(root: Path, version: str, build: str) -> None:
     edit(swift / "TBDisplaySenderAutomation.swift",
          'guard url.scheme?.lowercased() == "targetbridge" else { return }',
          f'guard url.scheme?.lowercased() == "{SCHEME}" else {{ return }}')
+    # The PWE window shows "Trying again…" only while the engine really is. The
+    # engine ends its retrying on its own (a Stop from the menu bar, a capture
+    # failure, a missing permission), so the window reads it from here.
+    edit(swift / "TBDisplaySenderAutomation.swift",
+         "    private static var continuousConnectTask: Task<Void, Never>?\n",
+         "    private static var continuousConnectTask: Task<Void, Never>? {\n"
+         "        didSet { NotificationCenter.default.post(name: automaticConnectionDidChange, object: nil) }\n"
+         "    }\n"
+         "    /// True while the engine keeps a connection up and retries it by itself.\n"
+         "    static var isConnectingAutomatically: Bool { continuousConnectTask != nil }\n"
+         '    static let automaticConnectionDidChange = Notification.Name("pwe.automaticConnectionDidChange")\n')
     pwe_ui = swift / "PWE"
     pwe_ui.mkdir()
     for source in sorted((root / "pwe/sender-ui").glob("*.swift")):
         shutil.copy(source, pwe_ui / source.name)
+    # PWE's own unit tests run with upstream's, against the same app target.
+    for source in sorted((root / "pwe/sender-tests").glob("*.swift")):
+        shutil.copy(source, sender / "TBDisplaySenderTests" / source.name)
 
     icon = support / "Assets.xcassets/AppIcon.appiconset"
     shutil.rmtree(icon)

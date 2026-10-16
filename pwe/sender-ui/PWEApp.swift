@@ -47,6 +47,8 @@ struct PWEApp: App {
         }
         .windowResizability(.contentSize)
         .commands {
+            // One main window: a second would only repeat the first.
+            CommandGroup(replacing: .newItem) {}
             CommandGroup(replacing: .appTermination) {
                 Button(TBDisplaySenderL10n.quitApp(service.language)) {
                     service.quitAfterUserRequest()
@@ -93,6 +95,8 @@ private struct PWEWindowContent: View {
                 await updates.checkIfDue(enabled: dailyChecks)
             }
             .onOpenURL { TBSenderAutomation.handle(url: $0) }
+            // A pweimacdisplay:// URL goes to the open window instead of opening another.
+            .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
     }
 }
 
@@ -114,6 +118,7 @@ enum PWESnapshot {
             ("6-connected", .connected(imac)),
             ("7-interrupted-retrying", .interrupted(imac, .cableOrReceiverGone, retrying: true)),
             ("8-interrupted", .interrupted(imac, .captureFailed, retrying: false)),
+            ("8b-interrupted-cable", .interrupted(imac, .cableOrReceiverGone, retrying: false)),
         ]
         for language in [TBDisplaySenderLanguage.english, .chinese] {
             let strings = PWEStrings(language: language)

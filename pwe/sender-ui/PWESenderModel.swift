@@ -40,11 +40,89 @@ enum PWEPhase: Equatable {
     case interrupted(PWEReceiver?, PWEReason, retrying: Bool)
 }
 
+/// Everything the window's phase depends on, read from the engine in one go.
+struct PWEEngineState {
+    var hasPermission = true
+    /// The first session's status; nil before the engine has a session.
+    var status: TBDisplaySenderStatusState?
+    var isConnected = false
+    var isStreaming = false
+    /// The engine is keeping a connection up and retries it by itself.
+    var retrying = false
+    var receivers: [PWEReceiver] = []
+    var target: PWEReceiver?
+}
+
+/// Engine state in, phase out: no engine, no clock, so every rule has a test
+/// (PWEPhaseRulesTests).
+enum PWEPhaseRules {
+    /// What a status says went wrong, if anything.
+    static func failure(_ status: TBDisplaySenderStatusState) -> PWEReason? {
+        switch status {
+        case .connectionFailed: return .couldNotConnect
+        case .connectionClosed: return .cableOrReceiverGone
+        case .receiverClosedDuringCapture, .receiverClosedConnection, .receiverTerminatedSession: return .receiverQuit
+        case .virtualDisplayCreationFailed, .captureError, .captureDesktopError,
+             .noShareableDisplay, .hevcNoFrames, .noFirstFrame: return .captureFailed
+        case .ready, .stopped, .connecting, .testingCable, .waitingDisplayProfile, .creatingVirtualDisplay,
+             .startingCapture, .captureStartedWaitingFirstFrame, .captureActive: return nil
+        }
+    }
+
+    /// The failure to keep on screen while the engine retries. Between attempts
+    /// the engine resets the session to "stopped" and starts over; without this
+    /// the window would flash Ready and Connecting every two seconds.
+    static func heldFailure(after previous: PWEReason?, _ state: PWEEngineState) -> PWEReason? {
+        guard state.retrying, !state.isStreaming else { return nil }
+        if let status = state.status {
+            if case .captureActive = status { return nil }
+            if let reason = failure(status) { return reason }
+        }
+        return previous
+    }
+
+    static func phase(_ state: PWEEngineState, held: PWEReason?) -> PWEPhase {
+        guard state.hasPermission else { return .needsPermission }
+        let target = state.target
+
+        if let status = state.status {
+            switch status {
+            case .connecting, .testingCable:
+                // A retry reaching for an iMac that just failed: still the same failure.
+                if state.retrying, let held { return .interrupted(target, held, retrying: true) }
+                return .connecting(target, .reaching)
+            case .waitingDisplayProfile, .creatingVirtualDisplay, .startingCapture:
+                return .connecting(target, .preparing)
+            case .captureStartedWaitingFirstFrame:
+                return .connecting(target, .waitingForPicture)
+            case .captureActive:
+                return .connected(target)
+            case .ready, .stopped:
+                break
+            default:
+                if let reason = failure(status) {
+                    return .interrupted(target, reason, retrying: state.retrying)
+                }
+            }
+            if state.isStreaming { return .connected(target) }
+            if state.isConnected { return .connecting(target, .preparing) }
+        }
+
+        if state.retrying {
+            if let held { return .interrupted(target, held, retrying: true) }
+            if state.receivers.isEmpty { return .interrupted(target, .cableOrReceiverGone, retrying: true) }
+            return .connecting(target, .reaching)
+        }
+        if let target { return .ready(target) }
+        if state.receivers.count > 1 { return .choose(state.receivers) }
+        return .searching
+    }
+}
+
 enum PWEDisplayMode: String, CaseIterable, Identifiable {
     case extended, mirror
     var id: String { rawValue }
 }
-
 @MainActor
 final class PWESenderModel: ObservableObject {
     @Published private(set) var phase: PWEPhase = .searching
@@ -61,13 +139,24 @@ final class PWESenderModel: ObservableObject {
     private let defaults: UserDefaults
     private var cancellables: Set<AnyCancellable> = []
     private var sessionCancellables: Set<AnyCancellable> = []
-    /// True while the engine is retrying on our behalf, from the moment we ask it
-    /// to keep a connection up until the person disconnects.
-    private var keepingConnected = false
+    /// The last failure while the engine retries (PWEPhaseRules.heldFailure).
+    private var heldFailure: PWEReason?
+    /// Whether the engine was retrying at the last look. When it stops without
+    /// PWE asking (a Stop from the menu bar, a capture failure), that counts as
+    /// the person's Disconnect: nothing resumes until the iMac is replugged.
+    private var wasRetrying = false
     /// Set when the person disconnects; cleared when their iMac disappears, so the
     /// next time the cable goes in it connects again.
     private var pausedUntilReplug = false
     private var preferredWasPresent = false
+    /// The launch-time connection runs once per process, not once per window.
+    private var didStartOnLaunch = false
+    /// Sleep takes the Thunderbolt link down and wake brings it back, so the iMac
+    /// leaves and rejoins Bonjour. That is not a replug and must not undo a
+    /// Disconnect; ignore the iMac coming and going until the link has settled.
+    private var asleep = false
+    private var awokeAt = Date.distantPast
+    private static let wakeSettleTime: TimeInterval = 15
 
     enum Keys {
         static let autoConnect = "pwe.autoConnect"
@@ -83,7 +172,15 @@ final class PWESenderModel: ObservableObject {
 
         service.objectWillChange
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.engineChanged() }
+            .sink { [weak self] _ in
+                self?.observeSessions()
+                self?.refresh()
+            }
+            .store(in: &cancellables)
+        NotificationCenter.default
+            .publisher(for: TBSenderAutomation.automaticConnectionDidChange)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.refresh() }
             .store(in: &cancellables)
         // Coming back from System Settings is when a permission changes; check
         // then, so nobody has to press "I have allowed it".
@@ -92,10 +189,15 @@ final class PWESenderModel: ObservableObject {
             .sink { [weak self] _ in self?.recheckPermission() }
             .store(in: &cancellables)
         NSWorkspace.shared.notificationCenter
-            .publisher(for: NSWorkspace.didWakeNotification)
-            .sink { [weak self] _ in self?.resumeIfDue(reason: "wake") }
+            .publisher(for: NSWorkspace.willSleepNotification)
+            .sink { [weak self] _ in self?.asleep = true }
             .store(in: &cancellables)
-        engineChanged()
+        NSWorkspace.shared.notificationCenter
+            .publisher(for: NSWorkspace.didWakeNotification)
+            .sink { [weak self] _ in self?.didWake() }
+            .store(in: &cancellables)
+        observeSessions()
+        refresh()
     }
 
     /// A fixed phase for snapshots: no engine, nothing changes.
@@ -111,10 +213,18 @@ final class PWESenderModel: ObservableObject {
 
     private var session: TBDisplaySenderSession? { service?.sessions.first }
 
-    private func engineChanged() {
+    private func refresh() {
         guard let service else { return }
-        observeSessions()
-        let next = computePhase(service)
+        let retrying = TBSenderAutomation.isConnectingAutomatically
+        if wasRetrying, !retrying, !pausedUntilReplug {
+            NSLog("[pwe] the engine stopped retrying; waiting for a replug")
+            pausedUntilReplug = true
+        }
+        wasRetrying = retrying
+
+        let state = engineState(service, retrying: retrying)
+        heldFailure = PWEPhaseRules.heldFailure(after: heldFailure, state)
+        let next = PWEPhaseRules.phase(state, held: heldFailure)
         if next != phase { phase = next }
         watchForReplug(service)
     }
@@ -124,13 +234,20 @@ final class PWESenderModel: ObservableObject {
         for session in service?.sessions ?? [] {
             session.objectWillChange
                 .receive(on: RunLoop.main)
-                .sink { [weak self] _ in
-                    guard let self, let service = self.service else { return }
-                    let next = self.computePhase(service)
-                    if next != self.phase { self.phase = next }
-                }
+                .sink { [weak self] _ in self?.refresh() }
                 .store(in: &sessionCancellables)
         }
+    }
+
+    private func engineState(_ service: TBDisplaySenderService, retrying: Bool) -> PWEEngineState {
+        PWEEngineState(
+            hasPermission: CGPreflightScreenCaptureAccess(),
+            status: session?.statusState,
+            isConnected: session?.isConnected ?? false,
+            isStreaming: session?.isStreaming ?? false,
+            retrying: retrying,
+            receivers: receivers(service),
+            target: current(service))
     }
 
     private func receivers(_ service: TBDisplaySenderService) -> [PWEReceiver] {
@@ -149,45 +266,6 @@ final class PWESenderModel: ObservableObject {
         return all.count == 1 ? all[0] : nil
     }
 
-    private func computePhase(_ service: TBDisplaySenderService) -> PWEPhase {
-        if !CGPreflightScreenCaptureAccess() { return .needsPermission }
-        let target = current(service)
-
-        if let session {
-            switch session.statusState {
-            case .connecting, .testingCable:
-                return .connecting(target, .reaching)
-            case .waitingDisplayProfile, .creatingVirtualDisplay, .startingCapture:
-                return .connecting(target, .preparing)
-            case .captureStartedWaitingFirstFrame:
-                return .connecting(target, .waitingForPicture)
-            case .captureActive:
-                return .connected(target)
-            case .connectionFailed:
-                if keepingConnected { return .interrupted(target, .couldNotConnect, retrying: true) }
-            case .connectionClosed:
-                if keepingConnected { return .interrupted(target, .cableOrReceiverGone, retrying: true) }
-            case .receiverClosedDuringCapture, .receiverClosedConnection, .receiverTerminatedSession:
-                if keepingConnected { return .interrupted(target, .receiverQuit, retrying: true) }
-            case .virtualDisplayCreationFailed, .captureError, .captureDesktopError,
-                 .noShareableDisplay, .hevcNoFrames, .noFirstFrame:
-                return .interrupted(target, .captureFailed, retrying: keepingConnected)
-            case .ready, .stopped:
-                break
-            }
-            if session.isStreaming { return .connected(target) }
-            if session.isConnected { return .connecting(target, .preparing) }
-        }
-
-        let all = receivers(service)
-        if keepingConnected, all.isEmpty {
-            return .interrupted(target, .cableOrReceiverGone, retrying: true)
-        }
-        if let target { return .ready(target) }
-        if all.count > 1 { return .choose(all) }
-        return .searching
-    }
-
     // MARK: - Actions
 
     func connect(to receiver: PWEReceiver) {
@@ -204,7 +282,7 @@ final class PWESenderModel: ObservableObject {
     /// just selected as the preferred one, so the engine never picks another Mac.
     private func startConnecting() {
         pausedUntilReplug = false
-        keepingConnected = autoConnect
+        heldFailure = nil
         var components = URLComponents()
         components.scheme = "pweimacdisplay"
         components.host = "connect"
@@ -214,31 +292,48 @@ final class PWESenderModel: ObservableObject {
             URLQueryItem(name: "retry", value: autoConnect ? "1" : "0"),
         ]
         if let url = components.url { TBSenderAutomation.handle(url: url) }
-        engineChanged()
+        // The engine has started (or, with retry=0, ended) its retrying already;
+        // that change is ours, not one to read as a Disconnect.
+        wasRetrying = TBSenderAutomation.isConnectingAutomatically
+        refresh()
     }
 
     func disconnect() {
-        keepingConnected = false
         pausedUntilReplug = true
-        session?.stop()
-        engineChanged()
+        heldFailure = nil
+        session?.stop()  // the engine's Stop also ends its retrying
+        wasRetrying = TBSenderAutomation.isConnectingAutomatically
+        refresh()
     }
 
     func stopRetrying() { disconnect() }
 
-    /// On launch: if a receiver was used before and the person wants it, keep it connected.
+    /// On launch: if a receiver was used before and the person wants it, keep it
+    /// connected. Each new window asks; only the first ask counts.
     func startIfDue() {
-        guard autoConnect, CGPreflightScreenCaptureAccess(),
-              let id = session?.selectedReceiverID, !id.isEmpty else { return }
-        startConnecting()
+        guard !didStartOnLaunch else { return }
+        didStartOnLaunch = true
+        resumeIfDue(reason: "launch")
     }
 
     private func resumeIfDue(reason: String) {
-        guard autoConnect, !pausedUntilReplug, !keepingConnected,
+        guard autoConnect, !pausedUntilReplug, !TBSenderAutomation.isConnectingAutomatically,
+              CGPreflightScreenCaptureAccess(),
               let session, !session.isConnected, !session.isStreaming,
               !session.selectedReceiverID.isEmpty else { return }
         NSLog("[pwe] resuming automatic connection after \(reason)")
         startConnecting()
+    }
+
+    private func didWake() {
+        asleep = false
+        awokeAt = Date()
+        resumeIfDue(reason: "wake")
+        // The iMac usually rejoins only after the settle time; look again then.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(Self.wakeSettleTime))
+            self?.resumeIfDue(reason: "wake")
+        }
     }
 
     /// The remembered iMac disappearing means the cable came out or the iMac
@@ -248,6 +343,7 @@ final class PWESenderModel: ObservableObject {
         guard let id = session?.selectedReceiverID, !id.isEmpty else { return }
         let present = service.discoveredReceivers.contains { $0.matchesPersistedIdentity(id) }
         defer { preferredWasPresent = present }
+        guard !asleep, Date().timeIntervalSince(awokeAt) >= Self.wakeSettleTime else { return }
         if !present, preferredWasPresent { pausedUntilReplug = false }
         if present, !preferredWasPresent { resumeIfDue(reason: "the iMac reappeared") }
     }
@@ -261,7 +357,7 @@ final class PWESenderModel: ObservableObject {
 
     func recheckPermission() {
         service?.refreshPrivacyPermissions()
-        engineChanged()
+        refresh()
     }
 
     func restartForPermission() { service?.restartAfterPermissionChange() }
