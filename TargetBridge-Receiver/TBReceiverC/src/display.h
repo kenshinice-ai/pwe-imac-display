@@ -29,6 +29,15 @@ enum tb_display_action {
     TB_DISP_ACTION_TOGGLE_LOGIN_ITEM = 1 << 2
 };
 
+/* What the details screen says about opening at login. HIDDEN keeps the
+ * upstream details screen. */
+enum tb_display_login_item {
+    TB_DISP_LOGIN_ITEM_HIDDEN = 0,
+    TB_DISP_LOGIN_ITEM_OFF,
+    TB_DISP_LOGIN_ITEM_ON,
+    TB_DISP_LOGIN_ITEM_UNAVAILABLE   /* this copy runs from a disk image or translocated path */
+};
+
 struct tb_display *tb_disp_create(int fullscreen);
 void               tb_disp_destroy(struct tb_display *d);
 void               tb_disp_set_connection_state(struct tb_display *d, int connected);
@@ -76,5 +85,6 @@ void tb_disp_render_status(struct tb_display *d,
                            const char *language,
                            const char *permissions);
 void tb_disp_render_connecting(struct tb_display *d);
+void tb_disp_set_login_item_state(struct tb_display *d, enum tb_display_login_item state);
 
 #endif
