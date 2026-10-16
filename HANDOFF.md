@@ -24,9 +24,17 @@
 - 跟进上游：`git fetch upstream`，再把上游的发版提交合并进 `main`。成功判据：`git diff <上游标签> main` 只列出 PWE 加的文件。
 - 给上游的 PR：在单独的 worktree 里从 `upstream/main` 开分支（`git worktree add <临时目录> -b <分支> upstream/main`），推到 `origin`，再向 `swellweb/targetBridge` 开 PR。
 - 看界面不用截屏：运行打包出的 `PWE iMac Display.app/Contents/MacOS/PWE iMac Display --pwe-snapshot <目录>`，每个状态出一张中英文 PNG；接收端设 `TB_RECEIVER_SNAPSHOT=<文件.png>` 运行。
-- 本地打包：运行 `pwe/package.sh`。成功判据：最后一行打印 `pwe/dist/local/PWE iMac Display <版本>.dmg` 和它的 sha256。正式包只由 `--notarize` 写进 `pwe/dist/`。
-- 发版打包：先提交，再运行 `pwe/package.sh --notarize`。成功判据：输出里 DMG 显示 `source=Notarized Developer ID`。
-- 发版：标签用 `pwe-<版本>`（不用 `v`），只推这一个标签；release 上传 `PWE-iMac-Display-<版本>.dmg` 和 `SHA256SUMS.txt`；再改 `homebrew-tap/Casks/pwe-imac-display.rb` 的 `version` 和 `sha256`。成功判据：`gh release download` 回来的文件通过 `shasum -c`，`brew fetch --cask kenshinice-ai/tap/pwe-imac-display` 显示 ✔。
+- 本地打包：运行 `pwe/package.sh`。成功判据：最后打印 `pwe/dist/local/PWE-iMac-Display-<版本>.dmg` 和它的 sha256。正式包只由 `--notarize` 写进 `pwe/dist/`。
+- 无签名打包（用户自己换 FFmpeg 重新链接，见 `pwe/NOTICE.txt`）：运行 `pwe/package.sh --unsigned --deps <目录>`。成功判据：同上，App 为 ad hoc 签名。
+- 检查成品：挂载 DMG 后运行 `python3 -I pwe/check-bundle.py <两个 App>`。成功判据：打印 `bundle checks passed`。打包时已自动跑一次。
+- 发版打包：
+  1. 提交，再在本地打标签 `git tag pwe-<版本>`（不推）。
+  2. 运行 `pwe/package.sh --notarize`。它要求 HEAD 正好是这个标签。成功判据：输出里 DMG 显示 `source=Notarized Developer ID`。
+- 发版：
+  1. 只推这一个标签：`git push origin pwe-<版本>`（不用 `v`）。
+  2. release 上传 `pwe/dist/` 里的三个文件：`PWE-iMac-Display-<版本>.dmg`、`ffmpeg-9.0.2.tar.xz`（LGPL 要求在同一处提供源代码）、`SHA256SUMS.txt`。
+  3. 改 `homebrew-tap/Casks/pwe-imac-display.rb` 的 `version` 和 `sha256`。
+  成功判据：`gh release download` 回来的文件通过 `shasum -c`，`brew fetch --cask kenshinice-ai/tap/pwe-imac-display` 显示 ✔。
 - 如果合并上游后 `pwe/rebrand.py` 报 `upstream text changed`，就按报错改脚本里对应的锚点，不要改上游文件。
 
 > ⚠️ 不要推送本地分支 `security-1.0.1`，等 Lee 批准或到 2026-10-22。否则发布前就公开了它的内容。
