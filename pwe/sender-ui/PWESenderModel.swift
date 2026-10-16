@@ -27,7 +27,6 @@ enum PWEReason: Equatable {
     case receiverQuit
     case couldNotConnect
     case captureFailed
-    case other
 }
 
 enum PWEPhase: Equatable {
@@ -161,6 +160,7 @@ final class PWESenderModel: ObservableObject {
     enum Keys {
         static let autoConnect = "pwe.autoConnect"
         static let displayMode = "pwe.displayMode"
+        static let askedForScreenRecording = "pwe.askedForScreenRecording"
     }
 
     init(service: TBDisplaySenderService, defaults: UserDefaults = .standard) {
@@ -182,11 +182,14 @@ final class PWESenderModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.refresh() }
             .store(in: &cancellables)
-        // Coming back from System Settings is when a permission changes; check
-        // then, so nobody has to press "I have allowed it".
+        // Coming back from System Settings is when a permission or a login item
+        // changes; check then, so nobody has to press "I have allowed it".
         NotificationCenter.default
             .publisher(for: NSApplication.didBecomeActiveNotification)
-            .sink { [weak self] _ in self?.recheckPermission() }
+            .sink { [weak self] _ in
+                self?.recheckPermission()
+                self?.refreshLaunchAtLogin()
+            }
             .store(in: &cancellables)
         NSWorkspace.shared.notificationCenter
             .publisher(for: NSWorkspace.willSleepNotification)
@@ -350,9 +353,16 @@ final class PWESenderModel: ObservableObject {
 
     // MARK: - Permission
 
+    /// The first press asks macOS, which shows its own prompt with a way into
+    /// System Settings; asking again shows nothing, so later presses open
+    /// System Settings directly. Doing both at once put two prompts on screen.
     func requestScreenRecording() {
-        service?.requestScreenRecordingPermission()
-        service?.openScreenRecordingSettings()
+        if defaults.bool(forKey: Keys.askedForScreenRecording) {
+            service?.openScreenRecordingSettings()
+        } else {
+            defaults.set(true, forKey: Keys.askedForScreenRecording)
+            service?.requestScreenRecordingPermission()
+        }
     }
 
     func recheckPermission() {
@@ -368,6 +378,10 @@ final class PWESenderModel: ObservableObject {
         get { session?.brightness ?? 1 }
         set { session?.brightness = newValue; objectWillChange.send() }
     }
+
+    /// Sound is relayed only if it was on when the picture started, so the
+    /// switch is offered before connecting, and only with the audio add-on.
+    var soundAvailable: Bool { service?.audioRelayAvailable ?? true }
 
     var soundOn: Bool {
         get { session?.audioEnabled ?? true }

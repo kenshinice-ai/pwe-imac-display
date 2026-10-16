@@ -100,8 +100,10 @@ struct PWEMainView: View {
             Button(strings.permissionOpen) { model.requestScreenRecording() }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
-            HStack(spacing: 4) {
-                Text(strings.permissionRestartHint).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(strings.permissionRestartHint)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Button(strings.permissionRestart) { model.restartForPermission() }
                     .buttonStyle(.link)
             }
@@ -159,6 +161,10 @@ struct PWEMainView: View {
             }
             .pickerStyle(.segmented)
             .fixedSize()
+            // Decided when the picture starts, so it is set here, not while connected.
+            if model.soundAvailable {
+                Toggle(strings.sound, isOn: $model.soundOn)
+            }
             Button(strings.useAsDisplay) { model.connect(to: receiver) }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
@@ -199,7 +205,6 @@ struct PWEMainView: View {
                     Image(systemName: "sun.max").foregroundStyle(.secondary).accessibilityHidden(true)
                 }
             }
-            Toggle(strings.sound, isOn: $model.soundOn)
             HStack(spacing: 10) {
                 Button(strings.arrange) { model.openDisplaySettings() }
                     .controlSize(.large)

@@ -57,7 +57,7 @@ struct PWEApp: App {
             }
         }
 
-        Window(PWEStrings(language: service.language).advanced, id: "advanced") {
+        Window(PWEStrings(language: service.language).advancedTitle, id: "advanced") {
             TBDisplaySenderContentView(service: service)
                 .frame(minWidth: 540)
                 .onOpenURL { TBSenderAutomation.handle(url: $0) }
