@@ -53,7 +53,6 @@
 		BB4D986A5A0F32BC1480BD4D /* TBDisplaySenderSurfaceViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD33D06A2FA6BA7E075A9E46 /* TBDisplaySenderSurfaceViews.swift */; };
 		BB61FDD4D950F325E9D2ADAC /* TBInjectedPointerEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10EC09EEBA6EA9B2EA6ACD1F /* TBInjectedPointerEvent.swift */; };
 		BBFD76A352FEDC54029B2158 /* TBDisplaySenderLocalization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D063CAADA68CC48C54157FB /* TBDisplaySenderLocalization.swift */; };
-		BF146F68BB365CFE5AA9A1BD /* check_localizations.sh in Resources */ = {isa = PBXBuildFile; fileRef = 10E53D6EF9DCC519EEBFA5A2 /* check_localizations.sh */; };
 		C1A77120267A12D9E355DCEA /* network-link.json in Resources */ = {isa = PBXBuildFile; fileRef = 6579B499CBC11196966318EA /* network-link.json */; };
 		C2CCAB017BC3CAB1DCFA5CCC /* TBMonitorProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA01317B43B46B1B323A7008 /* TBMonitorProtocol.swift */; };
 		CBA7C2F0FA57CC475E2307AF /* TBInputRelayController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E3DC447E3E8E522565E725B /* TBInputRelayController.swift */; };
@@ -85,7 +84,6 @@
 		06D011FF8AF7BB6D26EDC25B /* TBAddonStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TBAddonStore.swift; sourceTree = "<group>"; };
 		0AFC1E2E64342FDE66C3AAC8 /* TBLocalPointerModifiers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TBLocalPointerModifiers.swift; sourceTree = "<group>"; };
 		0B483A658326FE85720BCBE2 /* TBDisplaySenderService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TBDisplaySenderService.swift; sourceTree = "<group>"; };
-		10E53D6EF9DCC519EEBFA5A2 /* check_localizations.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = check_localizations.sh; sourceTree = "<group>"; };
 		10EC09EEBA6EA9B2EA6ACD1F /* TBInjectedPointerEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TBInjectedPointerEvent.swift; sourceTree = "<group>"; };
 		17D2B1A011B9446090DA60A7 /* TBReceiverDiscoveryModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TBReceiverDiscoveryModelTests.swift; sourceTree = "<group>"; };
 		17FD38CAA4E2CF350CC210D2 /* TBDisplaySender.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TBDisplaySender.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -229,14 +227,6 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
-		7E21EABAF9B2BFBC450B708E /* scripts */ = {
-			isa = PBXGroup;
-			children = (
-				10E53D6EF9DCC519EEBFA5A2 /* check_localizations.sh */,
-			);
-			path = scripts;
-			sourceTree = "<group>";
-		};
 		87C33F2A84553825E9CA67A4 = {
 			isa = PBXGroup;
 			children = (
@@ -274,7 +264,6 @@
 			children = (
 				06A7B8965F81826A098F9D6F /* Addons */,
 				E2297DD5219176C3BC211922 /* Languages */,
-				7E21EABAF9B2BFBC450B708E /* scripts */,
 			);
 			name = "TargetBridge-Shared";
 			path = "../TargetBridge-Shared";
@@ -358,7 +347,6 @@
 			files = (
 				198725EB3B2C7662DBB0B8D0 /* Assets.xcassets in Resources */,
 				0D17E4E85D8E9CDAB8707EB6 /* audio-relay.json in Resources */,
-				BF146F68BB365CFE5AA9A1BD /* check_localizations.sh in Resources */,
 				7F1AE9053DA59169FB761FAA /* de.json in Resources */,
 				96DDF119DE60DFBA437D32D2 /* en.json in Resources */,
 				9B07E096AE81E351B6D1E17C /* fr.json in Resources */,
