@@ -1610,7 +1610,15 @@ static int tb_disp_metal_slot_free(const struct tb_display *d) {
     return tb_disp_now_ns() - d->last_submit_ns > 50000000ull;
 }
 
-static int tb_disp_metal_video_flowing(const struct tb_display *d) {
+/* Whether a moved pointer should wait for the next video frame instead of
+ * being drawn on its own. Paced: while frames came in this refresh or the
+ * last one. Unpaced: as the OpenGL path, within 40 ms of a frame, and at most
+ * one pointer-only draw per 16 ms. */
+static int tb_disp_metal_defer_pointer(const struct tb_display *d) {
+    if (!d->paced) {
+        const uint32_t now = SDL_GetTicks();
+        return now - d->last_video_frame_time <= 40 || now - d->last_cursor_render_time < 16;
+    }
     return d->video_submit_tick != UINT64_MAX && d->video_submit_tick + 1 >= tb_disp_tick_count(d);
 }
 
@@ -1759,6 +1767,7 @@ static void tb_disp_metal_render(struct tb_display *d) {
     }
     d->last_submit_tick = tb_disp_tick_count(d);
     d->last_submit_ns = tb_disp_now_ns();
+    d->last_cursor_render_time = SDL_GetTicks();
     if (new_frame) {
         d->video_submit_tick = d->last_submit_tick;
         d->new_frame_since_tick = 1;
@@ -1824,7 +1833,7 @@ void tb_disp_tick(struct tb_display *d) {
         if (!tb_disp_metal_slot_free(d)) return;
         if (d->pending ||
             d->redraw_needed ||
-            (d->cursor_dirty && !tb_disp_metal_video_flowing(d))) {
+            (d->cursor_dirty && !tb_disp_metal_defer_pointer(d))) {
             tb_disp_metal_render(d);
         }
         return;
@@ -1855,7 +1864,7 @@ void tb_disp_set_cursor(struct tb_display *d,
     d->cursor_dirty = 1;
 
     if (d->mtl) {
-        if (d->is_connected && !tb_disp_metal_video_flowing(d) && tb_disp_metal_slot_free(d)) {
+        if (d->is_connected && !tb_disp_metal_defer_pointer(d) && tb_disp_metal_slot_free(d)) {
             tb_disp_metal_render(d);
         }
         return;
