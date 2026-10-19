@@ -140,7 +140,7 @@ summarise() {
                for (i=1;i<=nt;i++) for (j=i+1;j<=nt;j++) if (tot[j]<tot[i]) {t=tot[i]; tot[i]=tot[j]; tot[j]=t}
                for (i=1;i<=nd;i++) for (j=i+1;j<=nd;j++) if (dec[j]<dec[i]) {t=dec[i]; dec[i]=dec[j]; dec[j]=t}
                bad = (sh+rep > 0) ? 100.0*(rep+rpt)/(sh+rep+rpt) : 0
-               printf "shown/s median %d (in %d, shown %d over %d s); replaced %d, repeat %d (%.1f%%), late %d; decode p95 median %s ms; total p95 median %s ms",
+               printf "shown/s median %d (in %d, shown %d over %d s); replaced %d, repeat %d (together %.1f%%), late %d; decode p95 median %s ms; total p95 median %s ms",
                       v[int((secs+1)/2)], tin, sh, secs, rep, rpt, bad, late, dec[int((nd+1)/2)], tot[int((nt+1)/2)]
              }' "$dir/receiver-stderr.log")"
   {
