@@ -164,7 +164,13 @@ struct PWEMainView: View {
             picturePicker
             // Decided when the picture starts, so it is set here, not while connected.
             if model.soundAvailable {
-                Toggle(strings.sound, isOn: $model.soundOn)
+                VStack(alignment: .leading, spacing: 6) {
+                    Toggle(strings.sound, isOn: $model.soundOn)
+                    if model.soundOn {
+                        Toggle(strings.soundOnlyOnIMac, isOn: $model.soundOnlyOnIMac)
+                            .padding(.leading, 20)
+                    }
+                }
             }
             Button(strings.useAsDisplay) { model.connect(to: receiver) }
                 .buttonStyle(.borderedProminent)
@@ -209,6 +215,9 @@ struct PWEMainView: View {
             VStack(alignment: .leading, spacing: 4) {
                 picturePicker
                 Text(strings.pictureChangeHint).font(.callout).foregroundStyle(.secondary)
+            }
+            if model.soundAvailable, model.soundOn {
+                Toggle(strings.soundOnlyOnIMac, isOn: $model.soundOnlyOnIMac)
             }
             HStack(spacing: 10) {
                 Button(strings.arrange) { model.openDisplaySettings() }

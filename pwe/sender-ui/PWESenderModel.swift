@@ -152,11 +152,19 @@ final class PWESenderModel: ObservableObject {
     @Published var displayMode: PWEDisplayMode {
         didSet { defaults.set(displayMode.rawValue, forKey: Keys.displayMode) }
     }
+    /// While the iMac plays this Mac's sound, keep the Mac's own speakers muted.
+    @Published var soundOnlyOnIMac: Bool {
+        didSet {
+            defaults.set(soundOnlyOnIMac, forKey: Keys.soundOnlyOnIMac)
+            refresh()
+        }
+    }
     @Published private(set) var launchAtLogin = false
     @Published private(set) var launchAtLoginNeedsApproval = false
 
     let service: TBDisplaySenderService?
     private let defaults: UserDefaults
+    private var localMute: PWELocalAudioMute?
     private var cancellables: Set<AnyCancellable> = []
     private var sessionCancellables: Set<AnyCancellable> = []
     /// The last failure while the engine retries (PWEPhaseRules.heldFailure).
@@ -187,6 +195,7 @@ final class PWESenderModel: ObservableObject {
         static let askedForScreenRecording = "pwe.askedForScreenRecording"
         /// [receiver identity: TBDisplayCapturePreset raw value]
         static let pictures = "pwe.pictures"
+        static let soundOnlyOnIMac = "pwe.soundOnlyOnIMac"
     }
 
     /// What the Picture menu offers. A preset chosen in Advanced shows up too.
@@ -197,6 +206,8 @@ final class PWESenderModel: ObservableObject {
         self.defaults = defaults
         self.autoConnect = defaults.object(forKey: Keys.autoConnect) as? Bool ?? true
         self.displayMode = PWEDisplayMode(rawValue: defaults.string(forKey: Keys.displayMode) ?? "") ?? .extended
+        self.soundOnlyOnIMac = defaults.object(forKey: Keys.soundOnlyOnIMac) as? Bool ?? true
+        self.localMute = PWELocalAudioMute(defaults: defaults)
         refreshLaunchAtLogin()
 
         service.objectWillChange
@@ -220,6 +231,11 @@ final class PWESenderModel: ObservableObject {
                 self?.refreshLaunchAtLogin()
             }
             .store(in: &cancellables)
+        // Quitting while the iMac plays the sound must give the Mac its speakers back.
+        NotificationCenter.default
+            .publisher(for: NSApplication.willTerminateNotification)
+            .sink { [weak self] _ in self?.localMute?.release() }
+            .store(in: &cancellables)
         NSWorkspace.shared.notificationCenter
             .publisher(for: NSWorkspace.willSleepNotification)
             .sink { [weak self] _ in self?.asleep = true }
@@ -238,6 +254,7 @@ final class PWESenderModel: ObservableObject {
         self.defaults = UserDefaults(suiteName: "pwe.preview") ?? .standard
         self.autoConnect = true
         self.displayMode = .extended
+        self.soundOnlyOnIMac = true
         self.phase = phase
     }
 
@@ -259,7 +276,14 @@ final class PWESenderModel: ObservableObject {
         let next = PWEPhaseRules.phase(state, held: heldFailure)
         if next != phase { phase = next }
         rememberShowingPicture()
+        localMute?.update(mute: soundOnlyOnIMac && isRelayingSound)
         watchForReplug(service)
+    }
+
+    /// The picture is up with sound relayed: the iMac is playing this Mac's audio.
+    private var isRelayingSound: Bool {
+        guard let session else { return false }
+        return session.isStreaming && session.audioEnabled && session.audioAddonAvailable
     }
 
     private func observeSessions() {

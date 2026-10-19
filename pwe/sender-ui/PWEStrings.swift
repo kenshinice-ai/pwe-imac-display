@@ -80,6 +80,7 @@ struct PWEStrings {
     }
     var brightness: String { t("Brightness", "亮度") }
     var sound: String { t("Play sound on the iMac", "用 iMac 的扬声器播放声音") }
+    var soundOnlyOnIMac: String { t("Mute this Mac's speakers meanwhile", "同时让这台 Mac 静音") }
     var arrange: String { t("Arrange Displays…", "排列显示器…") }
     var disconnect: String { t("Disconnect", "断开") }
 
