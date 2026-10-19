@@ -43,6 +43,8 @@ final class PWEStatusMenu: NSObject {
             // swallows clicks (upstream's note in its status item controller).
             let menu = NSMenu()
             menu.delegate = self
+            // Items say themselves whether they are enabled (the Picture submenu).
+            menu.autoenablesItems = false
             item.menu = menu
             statusItem = item
             updateButton(model.phase)
@@ -146,6 +148,8 @@ final class PWEStatusMenu: NSObject {
             submenu.addItem(disabled(strings.pictureChangeHint))
         }
         item.submenu = submenu
+        // The picture is remembered per iMac; with none in sight there is nothing to set.
+        item.isEnabled = model.knownReceiverName != nil
         return item
     }
 
