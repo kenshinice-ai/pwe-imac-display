@@ -2,7 +2,7 @@ PWE iMac Display
 ================
 
 PWE iMac Display is made and signed by PWE Group. It is a build of TargetBridge,
-with PWE's name, icon and signature, and with its own builds of FFmpeg and SDL2.
+with PWE's name, icon and signature, and with its own builds of FFmpeg, SDL2 and libsodium.
 
 Source code: https://github.com/kenshinice-ai/pwe-imac-display
 
@@ -62,3 +62,14 @@ Simple DirectMedia Layer, copyright (C) Sam Lantinga, licensed under the zlib
 license; the full text is in "SDL2 LICENSE (zlib).txt".
 Version: SDL2 2.32.10, unmodified source from
 https://github.com/libsdl-org/SDL/releases/tag/release-2.32.10
+
+
+libsodium (in both apps)
+------------------------
+
+Pairing and encryption use libsodium, copyright (c) Frank Denis, licensed under
+the ISC license; the full text is in "libsodium LICENSE (ISC).txt".
+Version: libsodium 1.0.22, unmodified source from
+https://download.libsodium.org/libsodium/releases/libsodium-1.0.22.tar.gz
+(SHA-256 adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349),
+linked statically. pwe/receiver-deps.sh builds it with the receiver's libraries.
