@@ -197,7 +197,8 @@ enum TBSenderAutomation {
             service,
             preferredIdentity: receiver.lowercased() == "auto"
                 ? session.selectedReceiverID
-                : receiver
+                : receiver,
+            transportKind: session.transportKind
         )
         if receiver.lowercased() == "auto" {
             guard let discovered = automaticReceiver(
@@ -224,6 +225,7 @@ enum TBSenderAutomation {
                 }
                 apply(selected, receiver: discovered, to: session)
             } else {
+                guard hasAddress(discovered, for: session.transportKind) else { return nil }
                 service.applyDiscoveredReceiver(discovered, to: session)
             }
         } else if let discovered = discoveredReceivers.first(where: { matches(receiver, $0) }) {
@@ -238,6 +240,7 @@ enum TBSenderAutomation {
                 }
                 apply(selected, receiver: discovered, to: session)
             } else {
+                guard hasAddress(discovered, for: session.transportKind) else { return nil }
                 service.applyDiscoveredReceiver(discovered, to: session)
             }
         } else {
@@ -352,7 +355,8 @@ enum TBSenderAutomation {
     /// immediately because it is unambiguous.
     private static func waitForReceivers(
         _ service: TBDisplaySenderService,
-        preferredIdentity: String
+        preferredIdentity: String,
+        transportKind: TBTransportKind
     ) async -> [TBDiscoveredReceiver] {
         var lastSignature: [String] = []
         var unchangedIterations = 0
@@ -360,9 +364,17 @@ enum TBSenderAutomation {
 
         for iteration in 0..<24 {
             let receivers = service.discoveredReceivers
-            if !preferredIdentity.isEmpty,
-               receivers.contains(where: { $0.matchesPersistedIdentity(preferredIdentity) }) {
-                return receivers
+            if !preferredIdentity.isEmpty {
+                let preferred = receivers.filter { $0.matchesPersistedIdentity(preferredIdentity) }
+                if preferred.contains(where: { !$0.ip(for: transportKind).isEmpty }) {
+                    return receivers
+                }
+                // Present but not yet reachable on this transport: its bridge
+                // address usually follows within a second or two of a replug.
+                if !preferred.isEmpty {
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                    continue
+                }
             }
 
             if !receivers.isEmpty {
@@ -386,6 +398,14 @@ enum TBSenderAutomation {
             try? await Task.sleep(nanoseconds: 250_000_000)
         }
         return service.discoveredReceivers
+    }
+
+    /// A receiver seen only with its Wi-Fi or LAN address cannot be dialed over
+    /// the Thunderbolt Bridge. Skip this attempt; the retry loop asks again.
+    private static func hasAddress(_ receiver: TBDiscoveredReceiver, for transportKind: TBTransportKind) -> Bool {
+        guard receiver.ip(for: transportKind).isEmpty else { return true }
+        NSLog("[automation] \(receiver.receiverName) has no \(transportKind.rawValue) address yet; waiting for it")
+        return false
     }
 
     /// Automatic startup is safe only when the preferred display is present or

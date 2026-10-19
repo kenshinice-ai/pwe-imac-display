@@ -91,7 +91,15 @@ struct TBDiscoveredReceiver: Identifiable, Equatable {
     func ip(for transportKind: TBTransportKind, localInterfaceIP: String = "") -> String {
         switch transportKind {
         case .thunderboltBridge:
-            return !thunderboltIP.isEmpty ? thunderboltIP : preferredIP
+            // Only a Thunderbolt Bridge address answers on the bridge. While the
+            // receiver's bridge has no address (just after a replug or a receiver
+            // restart) it advertises its Wi-Fi or LAN address as `ip`; dialing
+            // that from bridge0 can only time out. Return nothing and let the
+            // caller wait for `tbIP`. Receivers older than 3.0 send no `tbIP`
+            // and advertise the bridge's link-local address as `ip`: keep that.
+            if !thunderboltIP.isEmpty { return thunderboltIP }
+            if preferredIP.hasPrefix("169.254."), preferredIP != usbIP { return preferredIP }
+            return ""
         case .networkLink:
             if localInterfaceIP.hasPrefix("169.254."), !usbIP.isEmpty {
                 return usbIP

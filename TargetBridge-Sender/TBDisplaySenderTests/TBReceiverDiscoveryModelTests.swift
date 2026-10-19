@@ -42,9 +42,21 @@ final class TBReceiverDiscoveryModelTests: XCTestCase {
         XCTAssertEqual(receiver.ip(for: .thunderboltBridge), "169.254.89.80")
     }
 
-    func testThunderboltTransportFallsBackToPreferredIP() {
+    func testThunderboltTransportNeverDialsTheLANAddress() {
+        // A receiver whose bridge has no address yet advertises its Wi-Fi address as `ip`.
         let receiver = makeReceiver(preferredIP: "192.168.1.64", thunderboltIP: "", networkIP: "192.168.1.64")
-        XCTAssertEqual(receiver.ip(for: .thunderboltBridge), "192.168.1.64")
+        XCTAssertEqual(receiver.ip(for: .thunderboltBridge), "")
+    }
+
+    func testThunderboltTransportAcceptsALegacyLinkLocalIP() {
+        // Receivers before 3.0 send no `tbIP`; their `ip` is the bridge address.
+        let receiver = makeReceiver(preferredIP: "169.254.89.80", thunderboltIP: "")
+        XCTAssertEqual(receiver.ip(for: .thunderboltBridge), "169.254.89.80")
+    }
+
+    func testThunderboltTransportNeverDialsTheUSBAddress() {
+        let receiver = makeReceiver(preferredIP: "169.254.189.3", thunderboltIP: "", usbIP: "169.254.189.3")
+        XCTAssertEqual(receiver.ip(for: .thunderboltBridge), "")
     }
 
     func testNetworkTransportPrefersNetworkIP() {
