@@ -185,7 +185,12 @@ final class PWESenderModel: ObservableObject {
         static let autoConnect = "pwe.autoConnect"
         static let displayMode = "pwe.displayMode"
         static let askedForScreenRecording = "pwe.askedForScreenRecording"
+        /// [receiver identity: TBDisplayCapturePreset raw value]
+        static let pictures = "pwe.pictures"
     }
+
+    /// What the Picture menu offers. A preset chosen in Advanced shows up too.
+    static let pictureChoices: [TBDisplayCapturePreset] = [.standard1440p, .native5k, .native5k60Experimental]
 
     init(service: TBDisplaySenderService, defaults: UserDefaults = .standard) {
         self.service = service
@@ -253,6 +258,7 @@ final class PWESenderModel: ObservableObject {
         heldFailure = PWEPhaseRules.heldFailure(after: heldFailure, state)
         let next = PWEPhaseRules.phase(state, held: heldFailure)
         if next != phase { phase = next }
+        rememberShowingPicture()
         watchForReplug(service)
     }
 
@@ -318,6 +324,11 @@ final class PWESenderModel: ObservableObject {
             URLQueryItem(name: "mode", value: displayMode == .extended ? "extended" : "mirror"),
             URLQueryItem(name: "retry", value: autoConnect ? "1" : "0"),
         ]
+        // The engine applies this after the receiver's saved display profile, on
+        // every attempt of this connection: reconnects, replugs and wakes alike.
+        if let preset = rememberedPicture(for: receiverKey) {
+            components.queryItems?.append(URLQueryItem(name: "preset", value: preset.rawValue))
+        }
         if let url = components.url { TBSenderAutomation.handle(url: url) }
         // The engine has started (or, with retry=0, ended) its retrying already;
         // that change is ours, not one to read as a Disconnect.
@@ -415,6 +426,61 @@ final class PWESenderModel: ObservableObject {
     }
 
     func restartForPermission() { service?.restartAfterPermissionChange() }
+
+    // MARK: - Picture
+
+    /// The receiver the Picture choice belongs to: the one on screen, or the
+    /// session's remembered one while it is briefly out of the list.
+    private var receiverKey: String? {
+        if let service, let target = current(service) { return target.id }
+        guard let id = session?.selectedReceiverID, !id.isEmpty else { return nil }
+        return id
+    }
+
+    private func rememberedPicture(for key: String?) -> TBDisplayCapturePreset? {
+        guard let key, let raw = (defaults.dictionary(forKey: Keys.pictures) as? [String: String])?[key] else { return nil }
+        return TBDisplayCapturePreset(rawValue: raw)
+    }
+
+    private func remember(_ preset: TBDisplayCapturePreset, for key: String) {
+        var pictures = defaults.dictionary(forKey: Keys.pictures) as? [String: String] ?? [:]
+        guard pictures[key] != preset.rawValue else { return }
+        pictures[key] = preset.rawValue
+        defaults.set(pictures, forKey: Keys.pictures)
+        NSLog("[pwe] remembered picture \(preset.rawValue) for \(key)")
+    }
+
+    /// Whatever showed a picture last is what this iMac gets next time, however
+    /// it was chosen: here, in Advanced, or by URL. Upstream remembers only a
+    /// display profile per receiver, and its Work 5K profile is 48 Hz, so 5K 60
+    /// came back as 48 after every reconnect (iMac18,3 baseline, 2026-10-19).
+    private func rememberShowingPicture() {
+        guard let session, session.isStreaming, case .captureActive = session.statusState,
+              let key = receiverKey else { return }
+        remember(session.capturePreset, for: key)
+    }
+
+    /// The stream preset for this iMac. Changing it while connected reconnects.
+    var picture: TBDisplayCapturePreset {
+        get { rememberedPicture(for: receiverKey) ?? session?.capturePreset ?? .standard1440p }
+        set {
+            guard let key = receiverKey, newValue != picture else { return }
+            remember(newValue, for: key)
+            objectWillChange.send()
+            guard let session else { return }
+            if session.isConnected || session.isStreaming {
+                NSLog("[pwe] picture changed to \(newValue.rawValue); reconnecting")
+                session.stopForAutomaticReconnect()
+                startConnecting()
+            } else if TBSenderAutomation.isConnectingAutomatically {
+                startConnecting()  // the retry loop holds the old preset
+            }
+        }
+    }
+
+    var pictureChoices: [TBDisplayCapturePreset] {
+        Self.pictureChoices.contains(picture) ? Self.pictureChoices : Self.pictureChoices + [picture]
+    }
 
     // MARK: - Connected controls
 

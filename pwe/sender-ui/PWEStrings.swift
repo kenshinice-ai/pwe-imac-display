@@ -48,6 +48,16 @@ struct PWEStrings {
     var modeLabel: String { t("Show", "显示方式") }
     var modeExtended: String { t("Separate display", "独立的一块屏") }
     var modeMirror: String { t("Same as this Mac", "和这台 Mac 一样") }
+    var picture: String { t("Picture", "画面") }
+    func pictureName(_ preset: TBDisplayCapturePreset) -> String {
+        switch preset {
+        case .standard1440p: return t("Standard · 1440p", "标准 · 1440p")
+        case .native5k: return t("5K · 48 Hz", "5K · 48 Hz")
+        case .native5k60Experimental: return t("5K · 60 Hz", "5K · 60 Hz")
+        default: return "\(preset.title) · \(preset.description)"
+        }
+    }
+    var pictureChangeHint: String { t("Changing it reconnects for a moment.", "更改后会重新连接一下。") }
 
     // Connecting
     func connectingTitle(_ name: String?) -> String {

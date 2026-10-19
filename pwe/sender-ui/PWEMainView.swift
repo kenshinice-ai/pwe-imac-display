@@ -161,6 +161,7 @@ struct PWEMainView: View {
             }
             .pickerStyle(.segmented)
             .fixedSize()
+            picturePicker
             // Decided when the picture starts, so it is set here, not while connected.
             if model.soundAvailable {
                 Toggle(strings.sound, isOn: $model.soundOn)
@@ -205,6 +206,10 @@ struct PWEMainView: View {
                     Image(systemName: "sun.max").foregroundStyle(.secondary).accessibilityHidden(true)
                 }
             }
+            VStack(alignment: .leading, spacing: 4) {
+                picturePicker
+                Text(strings.pictureChangeHint).font(.callout).foregroundStyle(.secondary)
+            }
             HStack(spacing: 10) {
                 Button(strings.arrange) { model.openDisplaySettings() }
                     .controlSize(.large)
@@ -239,6 +244,17 @@ struct PWEMainView: View {
                     .controlSize(.large)
             }
         }
+    }
+
+    /// Remembered per iMac; 5K 60 is clearly smoother than 48 on an iMac18,3.
+    private var picturePicker: some View {
+        Picker(strings.picture, selection: $model.picture) {
+            ForEach(model.pictureChoices) { preset in
+                Text(strings.pictureName(preset)).tag(preset)
+            }
+        }
+        .pickerStyle(.menu)
+        .fixedSize()
     }
 
     // MARK: - Preferences
