@@ -144,6 +144,11 @@ def rebrand_addons(root: Path) -> None:
     for path in sorted((root / "TargetBridge-Shared/Addons").glob("*.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
         # `author` stays "TargetBridge": it is a credit, and it is accurate.
+        # The bundled add-ons ship with the engine they belong to, so they need
+        # no minimum. Theirs ("3.0") is in upstream numbering; against the PWE
+        # version (1.x) every add-on read as Incompatible and stayed off — 1.0.0
+        # shipped that way, with no audio on the iMac (2026-10-19, iMac18,3).
+        data.pop("minimumSenderVersion", None)
         if "summary" in data:
             data["summary"] = data["summary"].replace("TargetBridge", NAME)
         if data.get("id") == "targetbridge.network-link":

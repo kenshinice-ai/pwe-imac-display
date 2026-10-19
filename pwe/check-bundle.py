@@ -16,7 +16,13 @@ in a mounted release image, to check what was actually shipped.
    `url.scheme == "targetbridge"` this way and its URL automation never matched.
    On x86_64 such a literal is a movabs immediate, its first 8 bytes in a row,
    so the x86_64 slice is searched; arm64 splits it into 16-bit pieces.
+3. Every add-on manifest bundled in the sender must be compatible with the
+   sender's own version, the test TBAddonStore.isCompatible makes. An
+   incompatible add-on is off whatever its switch says. 1.0.0 shipped upstream
+   manifests asking for sender 3.0, so audio, input sharing and Network Link
+   were all dead.
 """
+import json
 import re
 import subprocess
 import sys
@@ -35,14 +41,20 @@ OLD_SCHEME = b"targetbr"
 KEPT_PREFIXES = (b"_", b"com.")
 
 
+SENDER_ID = "com.pwegroup.pweimacdisplay"
+
+
 def run(*cmd):
     return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
 
 
-def executables(app):
+def info(app, key):
     plist = app / "Contents/Info.plist"
-    name = run("/usr/libexec/PlistBuddy", "-c", "Print :CFBundleExecutable", str(plist)).strip()
-    return [app / "Contents/MacOS" / name]
+    return run("/usr/libexec/PlistBuddy", "-c", f"Print :{key}", str(plist)).strip()
+
+
+def executables(app):
+    return [app / "Contents/MacOS" / info(app, "CFBundleExecutable")]
 
 
 def archs(binary):
@@ -90,6 +102,37 @@ def check_old_scheme(binary, scratch):
     return faults
 
 
+def add_on_version(text):
+    # TBAddonStore.compareVersion: a part that is not a number counts as 0.
+    parts = [int(part) if part.isdigit() else 0 for part in text.split(".")]
+    while parts and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts)
+
+
+def check_add_ons(app):
+    if info(app, "CFBundleIdentifier") != SENDER_ID:
+        return []
+    sender = info(app, "CFBundleShortVersionString")
+    manifests = []
+    for path in sorted((app / "Contents/Resources").rglob("*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError:
+            continue   # the store skips a file it cannot decode, too
+        if isinstance(data, dict) and "id" in data and "capabilities" in data:
+            manifests.append((path, data))
+    if not manifests:
+        return [f"{app.name}: no bundled add-on manifests found"]
+    faults = []
+    for path, data in manifests:
+        minimum = data.get("minimumSenderVersion") or ""
+        if minimum and add_on_version(sender) < add_on_version(minimum):
+            faults.append(f"{app.name}: add-on {data['id']} ({path.name}) needs sender {minimum}, "
+                          f"but this sender is {sender}, so the app turns it off as Incompatible")
+    return faults
+
+
 def main(paths):
     if not paths:
         sys.exit(__doc__.strip().splitlines()[2].strip())
@@ -101,6 +144,7 @@ def main(paths):
                 for arch in archs(binary):
                     faults += check_weak_imports(binary, arch)
                 faults += check_old_scheme(binary, scratch)
+            faults += check_add_ons(path)
     finally:
         scratch.rmdir()
     for fault in faults:
