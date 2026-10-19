@@ -118,6 +118,27 @@ enum PWEPhaseRules {
     }
 }
 
+/// When the remembered iMac's Thunderbolt Bridge address counts as a replug.
+/// The iMac can stay listed through Wi-Fi while the cable is out, so it never
+/// disappears; its bridge address leaving and coming back is the replug.
+enum PWEReplugRules {
+    enum BridgeChange: Equatable {
+        case none
+        case lost        // the bridge address went away
+        case replugged   // it came back, or changed
+    }
+
+    /// A bridge address gone for less than this is a Bonjour update, not a cable.
+    static let minimumLoss: TimeInterval = 2
+
+    static func bridgeChange(from old: String, to new: String, lostAt: Date?, now: Date) -> BridgeChange {
+        if old == new { return .none }
+        if new.isEmpty { return .lost }
+        if old.isEmpty, let lostAt, now.timeIntervalSince(lostAt) < minimumLoss { return .none }
+        return .replugged
+    }
+}
+
 enum PWEDisplayMode: String, CaseIterable, Identifiable {
     case extended, mirror
     var id: String { rawValue }
@@ -148,6 +169,9 @@ final class PWESenderModel: ObservableObject {
     /// next time the cable goes in it connects again.
     private var pausedUntilReplug = false
     private var preferredWasPresent = false
+    /// The remembered iMac's bridge address at the last look, and when it went away.
+    private var preferredBridgeIP = ""
+    private var bridgeLostAt: Date?
     /// The launch-time connection runs once per process, not once per window.
     private var didStartOnLaunch = false
     /// Sleep takes the Thunderbolt link down and wake brings it back, so the iMac
@@ -341,14 +365,34 @@ final class PWESenderModel: ObservableObject {
 
     /// The remembered iMac disappearing means the cable came out or the iMac
     /// went away; when it comes back, connect again unless the person said stop
-    /// while it was still there.
+    /// while it was still there. Its bridge address coming back or changing is
+    /// a replug too: with Wi-Fi on, the iMac stays listed while the cable is out.
     private func watchForReplug(_ service: TBDisplaySenderService) {
         guard let id = session?.selectedReceiverID, !id.isEmpty else { return }
-        let present = service.discoveredReceivers.contains { $0.matchesPersistedIdentity(id) }
-        defer { preferredWasPresent = present }
-        guard !asleep, Date().timeIntervalSince(awokeAt) >= Self.wakeSettleTime else { return }
+        let receiver = service.discoveredReceivers.first { $0.matchesPersistedIdentity(id) }
+        let present = receiver != nil
+        let bridgeIP = receiver?.thunderboltIP ?? ""
+        let bridge = PWEReplugRules.bridgeChange(from: preferredBridgeIP, to: bridgeIP, lostAt: bridgeLostAt, now: Date())
+        defer {
+            preferredWasPresent = present
+            preferredBridgeIP = bridgeIP
+        }
+        guard !asleep, Date().timeIntervalSince(awokeAt) >= Self.wakeSettleTime else {
+            bridgeLostAt = nil
+            return
+        }
         if !present, preferredWasPresent { pausedUntilReplug = false }
         if present, !preferredWasPresent { resumeIfDue(reason: "the iMac reappeared") }
+        switch bridge {
+        case .none:
+            break
+        case .lost:
+            bridgeLostAt = Date()
+        case .replugged:
+            bridgeLostAt = nil
+            pausedUntilReplug = false
+            resumeIfDue(reason: "the iMac's Thunderbolt Bridge address came back (\(bridgeIP))")
+        }
     }
 
     // MARK: - Permission
