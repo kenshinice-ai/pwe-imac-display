@@ -17,6 +17,8 @@ static const char k_prologue_label[] = "PWE iMac Display/2";
 static const char k_noise_name[] = "Noise_KK_25519_ChaChaPoly_SHA256";
 static const char k_cpace_dsi[] = "CPaceRistretto255";
 
+_Static_assert(PWE_SEC_SEAL_OVERHEAD == 5 + 1 + PWE_SEC_TAG_BYTES, "record overhead");
+
 #define NONCE_BYTES   16
 #define HELLO_BYTES   40   /* with one suite; longer is accepted */
 #define SHA512_BLOCK  128
@@ -393,6 +395,8 @@ struct pwe_sec {
     int     pairing_available;               /* initiator: flag from HELLO_REPLY */
 
     char    pending_code[PWE_SEC_CODE_DIGITS + 1];
+    int     force_pair;                      /* initiator: pair even if both sides know each other */
+    int     resume_only;                     /* initiator: never pair on this connection */
     uint8_t y[32], Ya[32];
     uint8_t k_r2s[32], k_s2r[32];
     int     attempt_open;                    /* responder: PAIR_A taken, no confirm yet */
@@ -581,6 +585,7 @@ int pwe_sec_start(struct pwe_sec *sec, const uint8_t *expected_id, const char *c
         memcpy(sec->expected_id, expected_id, PWE_SEC_ID_BYTES);
         sec->have_expected = 1;
     }
+    if (code) sec->force_pair = 1;
     if (code && valid_code(code)) snprintf(sec->pending_code, sizeof(sec->pending_code), "%s", code);
 
     uint8_t *h = sec->hello;
@@ -623,6 +628,10 @@ static int send_kk1(struct pwe_sec *sec, struct pwe_sec_out *out) {
     return PWE_SEC_EV_NONE;
 }
 
+void pwe_sec_set_resume_only(struct pwe_sec *sec) {
+    if (sec && sec->role == PWE_SEC_INITIATOR) sec->resume_only = 1;
+}
+
 int pwe_sec_submit_code(struct pwe_sec *sec, const char *code, struct pwe_sec_out *out) {
     if (!sec || sec->role != PWE_SEC_INITIATOR || sec->st != ST_I_NEED_CODE) return -1;
     if (!code) return fail(sec, out, PWE_SEC_ERR_CANCELLED, 0, 0);
@@ -650,9 +659,10 @@ static int i_on_reply(struct pwe_sec *sec, const uint8_t *p, size_t len, struct 
     if (found < 0) return fail(sec, out, PWE_SEC_ERR_STORE, 0, ev);
     sec->have_peer_pub = found == 0;
 
-    if (sec->have_peer_pub && sec->peer_status == PWE_SEC_STATUS_KNOWN && !sec->pending_code[0])
+    if (sec->have_peer_pub && sec->peer_status == PWE_SEC_STATUS_KNOWN && !sec->force_pair)
         return ev | send_kk1(sec, out);
 
+    if (sec->resume_only) return fail(sec, out, PWE_SEC_ERR_CANCELLED, 0, ev);
     if (!sec->pairing_available) return fail(sec, out, PWE_SEC_ERR_NOT_DIRECT, 0, ev);
     if (out_packet(out, PWE_PKT_SEC_PAIR_REQUEST, NULL, 0) != 0) return die(sec, PWE_SEC_ERR_PROTOCOL, ev);
     sec->st = ST_I_PAIR_REQ_SENT;
@@ -743,15 +753,17 @@ static int r_on_pair_request(struct pwe_sec *sec, struct pwe_sec_out *out, uint6
         sec->lock_seconds = (int)((g->locked_until_ms - now_ms + 999) / 1000);
         return fail(sec, out, PWE_SEC_ERR_LOCKED, sec->lock_seconds, PWE_SEC_EV_LOCKED);
     }
-    int ev = PWE_SEC_EV_SHOW_CODE;
+    int ev = PWE_SEC_EV_SHOW_CODE, fresh = 0;
     if (!g->code[0] || now_ms >= g->code_expires_ms) {
         if (g->fixed_code) snprintf(g->code, sizeof(g->code), "%s", g->fixed_code);
         else snprintf(g->code, sizeof(g->code), "%06u", (unsigned)randombytes_uniform(1000000));
         g->code_expires_ms = now_ms + PWE_SEC_CODE_LIFETIME_MS;
+        fresh = 1;
     }
-    uint8_t p[2];
+    uint8_t p[3];
     sec->code_seconds = (int)((g->code_expires_ms - now_ms) / 1000);
     put_be16(p, (uint16_t)sec->code_seconds);
+    p[2] = fresh ? 1 : 0;
     if (out_packet(out, PWE_PKT_SEC_PAIR_READY, p, sizeof(p)) != 0) return die(sec, PWE_SEC_ERR_PROTOCOL, 0);
     sec->st = ST_R_CODE_SHOWN;
     return ev;
@@ -867,7 +879,10 @@ int pwe_sec_handle(struct pwe_sec *sec, uint8_t type, const uint8_t *payload, si
         case ST_I_PAIR_REQ_SENT:
             if (type == PWE_PKT_SEC_PAIR_READY && len >= 2) {
                 sec->code_seconds = get_be16(payload);
-                if (sec->pending_code[0]) return send_pair_a(sec, out);
+                int fresh = len >= 3 && (payload[2] & 1);
+                /* A code typed before this one was made cannot be right. */
+                if (sec->pending_code[0] && !fresh) return send_pair_a(sec, out);
+                sodium_memzero(sec->pending_code, sizeof(sec->pending_code));
                 sec->st = ST_I_NEED_CODE;
                 return PWE_SEC_EV_NEED_CODE;
             }
