@@ -19,6 +19,8 @@ What it changes, and what it leaves alone on purpose:
 - The virtual display is called PWE iMac Display in System Settings › Displays.
 - PWE's window, menu bar item, Settings and About (pwe/sender-ui) replace
   upstream's; upstream's dashboard stays, as the "Full Console".
+- `pweimacdisplay://brightness` reaches PWE's brightness code, and each session
+  tells which virtual display is its own (for the brightness keys).
 
 Every edit is anchored to text that must be found exactly as often as expected.
 If upstream changes that text, the script stops instead of guessing, and the
@@ -259,6 +261,22 @@ def rebrand_sender(root: Path, version: str, build: str) -> None:
          "    /// True while the engine keeps a connection up and retries it by itself.\n"
          "    static var isConnectingAutomatically: Bool { continuousConnectTask != nil }\n"
          '    static let automaticConnectionDidChange = Notification.Name("pwe.automaticConnectionDidChange")\n')
+    # Brightness keys and pweimacdisplay://brightness (pwe/sender-ui/PWEBrightness*.swift).
+    # The URL action runs behind the scheme check above, like connect and disconnect.
+    edit(swift / "TBDisplaySenderAutomation.swift",
+         "        default:\n"
+         "            NSLog(\"[automation] unknown action '\\(action)' (expected connect|disconnect)\")\n",
+         "        case \"brightness\":\n"
+         "            PWEBrightness.shared.handleURL(params)\n"
+         "        default:\n"
+         "            NSLog(\"[automation] unknown action '\\(action)' (expected connect|disconnect|brightness)\")\n")
+    # The keys act only while the pointer is on one of this app's own virtual
+    # displays; the session keeps that display's ID private.
+    edit(swift / "TBDisplaySenderService.swift",
+         "    private var session = ReceiverBackedVirtualDisplaySession()\n",
+         "    private var session = ReceiverBackedVirtualDisplaySession()\n"
+         "    /// The virtual display this session shows, or kCGNullDirectDisplay.\n"
+         "    var virtualDisplayID: CGDirectDisplayID { session.displayID }\n")
     # "Reopen" on the permission screen only quit: opening a running app's own
     # bundle activates it rather than starting another. Relaunch once this
     # process has gone instead. (Upstream bug too; see the report on item 6.)
