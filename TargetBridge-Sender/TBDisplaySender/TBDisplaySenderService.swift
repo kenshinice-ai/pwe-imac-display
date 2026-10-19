@@ -4147,17 +4147,20 @@ extension TBDisplaySenderSession {
         if pwePendingCode == nil { pweSecurity = .negotiating }
         let expected = PWEPairingStore.shared.expectedReceiverID(forHint: pweReceiverHint)
         let step = link.start(expectedID: expected, code: pwePendingCode)
-        // An older receiver ignores HELLO (and usually speaks first, in the clear).
+        // An older receiver speaks first, in the clear (pweInbound notices that at
+        // once). This timeout is only the fallback for one that stays silent, and a
+        // reply can be late on a busy receiver: so a receiver this Mac paired with
+        // is never downgraded on silence, the attempt just fails and is retried.
         let timeout = DispatchWorkItem { [weak self, weak link] in
             Task { @MainActor [weak self, weak link] in
                 guard let self, let link, self.pweLink === link, link.mode == .negotiating,
                       !self.pweSecurity.waitsForUser else { return }
-                self.pweLegacyReceiverDetected()
+                self.pweHelloTimedOut()
             }
         }
         pweHelloTimeout?.cancel()
         pweHelloTimeout = timeout
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: timeout)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.pweHelloTimeoutSeconds, execute: timeout)
         pweHandle(step, on: link)
     }
 
@@ -4270,6 +4273,20 @@ extension TBDisplaySenderSession {
         } else {
             pweClose(.refused(.protocolError), "PWE: handshake failed (local \(step.localError), receiver \(step.peerError))")
         }
+    }
+
+    /// How long a silent receiver gets to answer HELLO.
+    static let pweHelloTimeoutSeconds: Double = 3
+
+    func pweHelloTimedOut() {
+        if PWEPairingStore.shared.expectedReceiverID(forHint: pweReceiverHint) != nil {
+            TBLog.connection.warning("pairing: \(self.receiverIP, privacy: .public) did not answer the handshake in \(Self.pweHelloTimeoutSeconds, privacy: .public) s; paired before, so retrying instead of downgrading")
+            pweSecurity = .none
+            setStatus(.connectionFailed("PWE: no handshake reply"))
+            stop(resetStatusTo: nil)
+            return
+        }
+        pweLegacyReceiverDetected()
     }
 
     func pweLegacyReceiverDetected() {

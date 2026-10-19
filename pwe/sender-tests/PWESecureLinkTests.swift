@@ -426,4 +426,94 @@ final class PWESecureLinkTests: XCTestCase {
                        "no input, input mode or clipboard: \(lines[1])")
         XCTAssertFalse(second.contains("50"), "no handshake once the user chose unencrypted: \(lines[1])")
     }
+
+    /// A receiver that accepts and stays silent (a slow or busy one looks the same).
+    /// Paired before: the attempt fails and is retried, never downgraded. Not paired:
+    /// after the timeout the user is asked, as for the original receiver.
+    @MainActor
+    func testSilentReceiverIsRetriedWhenPairedAndAskedAboutWhenNot() async throws {
+        guard ProcessInfo.processInfo.environment["PWE_SECURE_RECEIVER"] != nil else {
+            throw XCTSkip("set TEST_RUNNER_PWE_SECURE_RECEIVER to run the loopback tests")
+        }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("pwe-silent-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let logFile = dir.appendingPathComponent("silent.log")
+        FileManager.default.createFile(atPath: logFile.path, contents: nil)
+        // Accepts every connection and never answers, until the test ends.
+        let script = """
+        import socket, sys, threading
+        log = open(sys.argv[1], "a", buffering=1)
+        srv = socket.socket(); srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(("127.0.0.1", 54321)); srv.listen(8); log.write("LISTENING\\n")
+        def serve(c):
+            try:
+                c.settimeout(30)
+                while c.recv(65536): pass
+            except Exception: pass
+            c.close(); log.write("CLOSED\\n")
+        while True:
+            c, a = srv.accept(); log.write("ACCEPT %d\\n" % a[1])
+            threading.Thread(target=serve, args=(c,), daemon=True).start()
+        """
+        let receiver = Process()
+        receiver.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        receiver.arguments = ["-I", "-c", script, logFile.path]
+        receiver.environment = ["PATH": "/usr/bin:/bin"]
+        try receiver.run()
+        defer { receiver.terminate() }
+        func log() -> String { (try? String(contentsOf: logFile, encoding: .utf8)) ?? "" }
+        func until(_ seconds: Double, _ condition: () -> Bool) async -> Bool {
+            let deadline = Date().addingTimeInterval(seconds)
+            while Date() < deadline {
+                if condition() { return true }
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+            return condition()
+        }
+        guard await until(5, { log().contains("LISTENING") }) else { throw XCTSkip("port 54321 is in use") }
+
+        let ipKey = "fd.tbdisplaysender.receiverIP"
+        let savedIP = UserDefaults.standard.object(forKey: ipKey)
+        defer { UserDefaults.standard.set(savedIP, forKey: ipKey) }
+        let savedStore = PWEPairingStore.shared
+        let store = makeStore("silent")
+        PWEPairingStore.shared = store
+        defer { PWEPairingStore.shared = savedStore }
+        let savedAllow = UserDefaults.standard.object(forKey: PWEPairingStore.allowUnencryptedKey)
+        defer { UserDefaults.standard.set(savedAllow, forKey: PWEPairingStore.allowUnencryptedKey) }
+        PWEPairingStore.allowUnencrypted = true
+
+        let session = TBDisplaySenderSession(language: .english, largeCursor: false, preventDisplaySleep: false,
+                                             autoRestartOnWake: false, audioEnabled: false)
+        session.transportKind = .networkLink
+        session.receiverIP = "127.0.0.1"
+        session.localInterfaceIP = "127.0.0.1"
+        let timeout = TBDisplaySenderSession.pweHelloTimeoutSeconds
+
+        // 1. This Mac paired with this receiver before.
+        store.rememberReceiver(hint: session.pweReceiverHint, id: Data(repeating: 7, count: Int(PWE_SEC_ID_BYTES)))
+        session.connect()
+        var wasConnected = false
+        let ended = await until(timeout + 3) {
+            if session.isConnected { wasConnected = true }
+            return wasConnected && !session.isConnected
+        }
+        XCTAssertTrue(ended, "the silent attempt ends: \(session.pweSecurity) \(log())")
+        XCTAssertFalse(session.pweSecurity.waitsForUser, "paired receiver: retried, not a question: \(session.pweSecurity)")
+        if case .legacyReceiver = session.pweSecurity { XCTFail("a paired receiver was downgraded on silence") }
+
+        // 2. Never paired: after the timeout the user is asked.
+        store.forgetAll()
+        let started = Date()
+        session.connect()
+        var seen: [String] = []
+        let asked = await until(timeout + 3) {
+            let now = "\(session.pweSecurity) / \(session.statusText) / connected=\(session.isConnected)"
+            if seen.last != now { seen.append(now) }
+            return session.pweSecurity == .legacyReceiver(previouslyPaired: false)
+        }
+        XCTAssertTrue(asked, "unpaired silent receiver: asked; states: \(seen) hint=\(store.expectedReceiverID(forHint: session.pweReceiverHint) as Any)")
+        XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(started), timeout - 0.2, "not before the timeout")
+        session.stopForAutomaticReconnect()
+    }
 }
