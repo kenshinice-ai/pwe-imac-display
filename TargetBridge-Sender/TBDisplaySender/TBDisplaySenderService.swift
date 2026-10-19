@@ -2613,6 +2613,9 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                     applyReportedDisplayTweaks(tweaks)
                 }
             case .clipboard:
+                // The receiver's clipboard is taken only while the receiver
+                // controls input, and only in an encrypted session.
+                guard inputControlRole == .receiverMaster, pweLink?.mode == .secure else { break }
                 if let clipboard = TBMonitorProtocol.decodeJSON(TBMonitorClipboard.self, from: payload) {
                     let pasteboard = NSPasteboard.general
                     pasteboard.clearContents()
