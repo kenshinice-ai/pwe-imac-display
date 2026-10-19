@@ -1,8 +1,11 @@
-/* decoder.c — FFmpeg HEVC hardware decoder.
+/* decoder.c — FFmpeg H.264/HEVC decoder, VideoToolbox when available.
  *
- * Strategy: VideoToolbox HW decode → av_hwframe_transfer_data → NV12 in CPU
- * memory → upload to SDL texture (Metal renderer). Single GPU→CPU→GPU hop,
- * acceptable for ~30 fps 2560×1440. Zero ObjC at this layer.
+ * Hardware frames leave here as the CVPixelBufferRef VideoToolbox decoded
+ * into, untouched: the display either textures its IOSurface directly (Metal,
+ * no copy) or locks it and uploads the planes (OpenGL, one CPU read and one
+ * upload per frame). Software frames leave as NV12 planes in CPU memory,
+ * converted with swscale when FFmpeg's output is another format.
+ * Zero ObjC at this layer.
  */
 
 #include "decoder.h"
@@ -379,23 +382,17 @@ int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len, uin
         if (r < 0) { fprintf(stderr, "[dec] recv_frame=%d\n", r); return -1; }
 
 #if defined(__APPLE__)
-        /* Zero-copy fast path: VideoToolbox decoded frames carry a
-         * CVPixelBufferRef in data[3]. Locking its base address gives direct
-         * access to the IOSurface-backed NV12 planes without the
-         * GPU→staging→CPU copy that av_hwframe_transfer_data performs.
-         * Major win on Intel iMac + Radeon (~6× faster in practice). */
+        /* VideoToolbox frames carry their CVPixelBufferRef in data[3]: pass it
+         * on as it is, so the display can texture it without a copy. */
         if (d->hw_frame->format == d->hw_pix_fmt && d->hw_frame->data[3]) {
             CVPixelBufferRef pb = (CVPixelBufferRef)d->hw_frame->data[3];
-            if (CVPixelBufferLockBaseAddress(pb, kCVPixelBufferLock_ReadOnly) == 0) {
-                uint8_t *y   = (uint8_t *)CVPixelBufferGetBaseAddressOfPlane(pb, 0);
-                size_t   ys  =            CVPixelBufferGetBytesPerRowOfPlane(pb, 0);
-                uint8_t *uv  = (uint8_t *)CVPixelBufferGetBaseAddressOfPlane(pb, 1);
-                size_t   uvs =            CVPixelBufferGetBytesPerRowOfPlane(pb, 1);
-                int      w   = (int)CVPixelBufferGetWidth(pb);
-                int      h   = (int)CVPixelBufferGetHeight(pb);
-                d->cb(y, (int)ys, uv, (int)uvs, w, h, frame_trace_id(d->hw_frame), d->ud);
-                CVPixelBufferUnlockBaseAddress(pb, kCVPixelBufferLock_ReadOnly);
-            }
+            struct tb_frame f = {
+                .width = (int)CVPixelBufferGetWidth(pb),
+                .height = (int)CVPixelBufferGetHeight(pb),
+                .pixel_buffer = pb,
+                .trace_id = frame_trace_id(d->hw_frame),
+            };
+            d->cb(&f, d->ud);
             av_frame_unref(d->hw_frame);
             continue;
         }
@@ -414,9 +411,13 @@ int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len, uin
         }
 
         if (out->format == AV_PIX_FMT_NV12) {
-            d->cb(out->data[0], out->linesize[0],
-                  out->data[1], out->linesize[1],
-                  out->width,   out->height, frame_trace_id(d->hw_frame), d->ud);
+            struct tb_frame f = {
+                .y = out->data[0], .y_stride = out->linesize[0],
+                .uv = out->data[1], .uv_stride = out->linesize[1],
+                .width = out->width, .height = out->height,
+                .trace_id = frame_trace_id(d->hw_frame),
+            };
+            d->cb(&f, d->ud);
         } else {
             d->sws = sws_getCachedContext(d->sws,
                                           out->width, out->height, (enum AVPixelFormat)out->format,
@@ -432,9 +433,13 @@ int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len, uin
                                  0, out->height, d->nv12_frame->data, d->nv12_frame->linesize) <= 0) {
                 fprintf(stderr, "[dec] software frame conversion failed\n");
             } else {
-                d->cb(d->nv12_frame->data[0], d->nv12_frame->linesize[0],
-                      d->nv12_frame->data[1], d->nv12_frame->linesize[1],
-                      d->nv12_frame->width, d->nv12_frame->height, frame_trace_id(d->hw_frame), d->ud);
+                struct tb_frame f = {
+                    .y = d->nv12_frame->data[0], .y_stride = d->nv12_frame->linesize[0],
+                    .uv = d->nv12_frame->data[1], .uv_stride = d->nv12_frame->linesize[1],
+                    .width = d->nv12_frame->width, .height = d->nv12_frame->height,
+                    .trace_id = frame_trace_id(d->hw_frame),
+                };
+                d->cb(&f, d->ud);
             }
         }
         av_frame_unref(d->nv12_frame);

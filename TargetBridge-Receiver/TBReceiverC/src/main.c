@@ -951,11 +951,9 @@ static void tb_receiver_apply_input_control_mode(struct app *a, const uint8_t *p
 
 /* ---- Callbacks: decoder → display ------------------------------------ */
 
-static void on_frame(const uint8_t *y, int y_stride,
-                     const uint8_t *uv, int uv_stride,
-                     int w, int h, uint32_t trace_id, void *ud) {
+static void on_frame(const struct tb_frame *frame, void *ud) {
     struct app *a = (struct app *)ud;
-    tb_trace_mark_now(trace_id, TB_TRACE_DECODED);
+    tb_trace_mark_now(frame->trace_id, TB_TRACE_DECODED);
     a->have_video_frame = 1;
     tb_copy_i18n(a->status_text, sizeof(a->status_text), "receiver.status.stream_active");
     {
@@ -965,11 +963,11 @@ static void on_frame(const uint8_t *y, int y_stride,
             { "width", width_text },
             { "height", height_text }
         };
-        snprintf(width_text, sizeof(width_text), "%d", w);
-        snprintf(height_text, sizeof(height_text), "%d", h);
+        snprintf(width_text, sizeof(width_text), "%d", frame->width);
+        snprintf(height_text, sizeof(height_text), "%d", frame->height);
         tb_format_i18n(a->mode_text, sizeof(a->mode_text), "receiver.mode.receiving", pairs, 2);
     }
-    tb_disp_render_nv12(a->disp, y, y_stride, uv, uv_stride, w, h, trace_id);
+    tb_disp_show_frame(a->disp, frame);
     a->frames++;
 }
 
@@ -1011,7 +1009,13 @@ static void handle_raw_frame(struct app *a, const uint8_t *p, size_t len) {
         snprintf(height_text, sizeof(height_text), "%u", h);
         tb_format_i18n(a->mode_text, sizeof(a->mode_text), "receiver.mode.receiving", pairs, 2);
     }
-    tb_disp_render_nv12(a->disp, y, (int)ys, uv, (int)us, (int)w, (int)h, trace_id);
+    struct tb_frame frame = {
+        .y = y, .y_stride = (int)ys,
+        .uv = uv, .uv_stride = (int)us,
+        .width = (int)w, .height = (int)h,
+        .trace_id = trace_id,
+    };
+    tb_disp_show_frame(a->disp, &frame);
     a->frames++;
 }
 
@@ -2307,6 +2311,8 @@ int main(int argc, char **argv) {
             }
         }
 
+        /* A frame waiting for this refresh, or a pointer that moved. */
+        tb_disp_tick(a.disp);
         tb_trace_tick(tb_trace_now_ns());
 
         /* FPS log */

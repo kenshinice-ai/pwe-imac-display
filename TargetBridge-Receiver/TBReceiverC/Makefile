@@ -43,9 +43,13 @@ LDFLAGS  += -framework ApplicationServices -framework AppKit -framework CoreFoun
 endif
 
 C_SRC = src/main.c src/net.c src/decoder.c src/display.c src/input_queue.c src/idle_watchdog.c src/receiver_profile.c src/tb_i18n.c
-# Receiver rendering (PWE 1.1): frame timing behind TB_RECEIVER_TRACE=1.
-C_SRC += src/tb_trace.c
+# Receiver rendering (PWE 1.1): frame timing behind TB_RECEIVER_TRACE=1, Metal
+# zero-copy video paced to the display refresh.
+C_SRC += src/tb_trace.c src/tb_vsync.c
+OBJC_SRC_PWE_RENDER = src/tb_metal_video.m
+LDFLAGS += -framework Metal -framework QuartzCore
 OBJC_SRC = src/tb_gesture_bridge.m src/tb_display_tweaks.m src/tb_login_item.m
+OBJC_SRC += $(OBJC_SRC_PWE_RENDER)
 OBJ = $(C_SRC:.c=.o) $(OBJC_SRC:.m=.o)
 BIN = tbreceiver
 
@@ -89,7 +93,7 @@ $(TEST_RECEIVER_PROFILE_BIN): tests/test_receiver_profile.c src/receiver_profile
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_receiver_profile.c src/receiver_profile.c -o $@
 
 # Receiver rendering (PWE 1.1): tests for the pure-C parts.
-PWE_RENDER_TEST_BINS = test_trace
+PWE_RENDER_TEST_BINS = test_trace test_metal_video
 
 test: $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEIVER_PROFILE_BIN) $(PWE_RENDER_TEST_BINS)
 	./$(TEST_BIN)
@@ -100,6 +104,12 @@ test: $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEI
 
 test_trace: tests/test_trace.c src/tb_trace.c src/tb_trace.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_trace.c src/tb_trace.c -o $@
+
+# Needs a Metal device (any Mac), not a window; prints SKIP without one.
+test_metal_video: tests/test_metal_video.m src/tb_metal_video.m src/tb_metal_video.h src/tb_trace.c src/tb_trace.h
+	$(CC) -O2 -g -Wall -Wextra -Wno-unused-parameter -fobjc-arc -Isrc tests/test_metal_video.m src/tb_metal_video.m \
+	    src/tb_trace.c -framework Foundation -framework AppKit -framework Metal -framework QuartzCore \
+	    -framework CoreVideo -framework IOSurface -o $@
 
 # AppKit lifecycle coverage requires a logged-in macOS GUI session.
 test_monitor_shield: tests/test_monitor_shield.m src/tb_gesture_bridge.m src/tb_gesture_bridge.h

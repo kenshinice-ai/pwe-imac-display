@@ -1,4 +1,4 @@
-/* display.h — SDL2 fullscreen window + NV12 GPU texture renderer. */
+/* display.h — SDL2 fullscreen window + video renderer (Metal zero-copy or OpenGL). */
 
 #ifndef TB_DISPLAY_H
 #define TB_DISPLAY_H
@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include "decoder.h"
 #include "input_queue.h"
 
 struct tb_display;
@@ -52,12 +53,14 @@ int                tb_disp_window_on_active_space(struct tb_display *d);
 /* Resize/recreate texture when frame dimensions change. */
 int  tb_disp_ensure_texture(struct tb_display *d, int w, int h);
 
-/* Upload NV12 planes + render. Called once per decoded frame. trace_id is the
- * frame's id from tb_trace.h, or 0. */
-void tb_disp_render_nv12(struct tb_display *d,
-                         const uint8_t *y, int y_stride,
-                         const uint8_t *uv, int uv_stride,
-                         int w, int h, uint32_t trace_id);
+/* Show one decoded frame (CPU planes or a VideoToolbox pixel buffer). Called
+ * once per decoded frame. On the paced Metal path the frame may wait for the
+ * next display refresh; tb_disp_tick draws it then. */
+void tb_disp_show_frame(struct tb_display *d, const struct tb_frame *frame);
+
+/* Call every main-loop iteration: draws a waiting frame or a moved pointer
+ * when the next refresh has begun. Cheap when there is nothing to do. */
+void tb_disp_tick(struct tb_display *d);
 
 /* Update low-latency local cursor overlay in source-frame coordinates. */
 void tb_disp_set_cursor(struct tb_display *d,

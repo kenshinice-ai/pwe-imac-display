@@ -1,9 +1,16 @@
-/* display.c — SDL2 NV12 renderer.
+/* display.c — SDL2 window, status screens and the video renderer.
  *
- * On macOS we allow renderer selection/override, but keep OpenGL as the
- * default safe backend because Metal can flicker on some Tahoe-era systems.
- * SDL_PIXELFORMAT_NV12 + SDL_UpdateNVTexture lets us upload YUV planes
- * directly to GPU; the shader does YUV→RGB conversion on the GPU.
+ * Two ways to put video on screen:
+ *   - Metal zero-copy (PWE 1.1, tb_metal_video.m): VideoToolbox's IOSurface
+ *     becomes a texture with no copy, and frames are paced to the display
+ *     refresh, newest frame first. The default up to macOS 15.
+ *   - SDL's renderer (OpenGL): SDL_UpdateNVTexture copies the planes into an
+ *     NV12 texture and the frame is presented on arrival. The default on
+ *     macOS 26 and later, where upstream saw Metal flicker on Tahoe (03299cb),
+ *     and the fallback when anything on the Metal path fails.
+ * TB_RECEIVER_RENDER_DRIVER = metal | opengl | metal-sdl (SDL's own Metal
+ * renderer with the copying upload, for comparison) | any SDL driver name.
+ * TB_RECEIVER_PACING = vsync | immediate applies to the Metal path.
  */
 
 #include "display.h"
@@ -16,6 +23,8 @@
 #include "tb_i18n.h"
 #include "tb_gesture_bridge.h"
 #include "tb_trace.h"
+#include "tb_metal_video.h"
+#include "tb_vsync.h"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreGraphics/CoreGraphics.h>
@@ -26,6 +35,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #ifndef TB_RECEIVER_VERSION
 #define TB_RECEIVER_VERSION "3.6.0"
@@ -74,6 +84,26 @@ struct tb_display {
     int           last_drawable_w;
     int           last_drawable_h;
     int           status_is_connecting;
+
+    /* Receiver rendering (PWE 1.1): the Metal zero-copy path and its pacing. */
+    struct tb_mtl   *mtl;            /* non-NULL = Metal draws the video */
+    struct tb_vsync *vsync;          /* refresh ticks, when paced */
+    int              paced;          /* at most one submit per refresh, newest frame wins */
+    int              copy_frames;    /* decoder buffers cannot be textured: copy them */
+    int              logged_first_metal_frame;
+    CVPixelBufferRef pending;        /* decoded, waiting for the next refresh */
+    uint32_t         pending_trace_id;
+    CVPixelBufferRef current;        /* on screen; redrawn when the pointer moves */
+    uint64_t         last_submit_tick;
+    uint64_t         last_submit_ns;
+    uint64_t         video_submit_tick;
+    uint64_t         last_seen_tick;
+    int              new_frame_since_tick;
+    int              redraw_needed;
+    int              cursor_dirty;
+    uint32_t         last_cursor_render_time;
+    int              baked_cursor_type;
+    int              baked_cursor_size;
 };
 
 static uint16_t tb_disp_mac_keycode_for_sdl_scancode(SDL_Scancode scancode) {
@@ -189,6 +219,8 @@ static uint16_t tb_disp_mac_keycode_for_sdl_scancode(SDL_Scancode scancode) {
     default: return 0xFFFF;
     }
 }
+
+static void tb_disp_metal_release_frames(struct tb_display *d);
 
 static void tb_disp_queue_input_event(struct tb_display *d, const struct tb_input_event *event) {
     if (!d || !event) return;
@@ -784,8 +816,7 @@ static SDL_Renderer *tb_disp_try_renderer(SDL_Window *win, const char *driver) {
     return ren;
 }
 
-static SDL_Renderer *tb_disp_create_accelerated_renderer(SDL_Window *win) {
-    const char *forced_driver = getenv("TB_RECEIVER_RENDER_DRIVER");
+static SDL_Renderer *tb_disp_create_accelerated_renderer(SDL_Window *win, const char *forced_driver) {
     if (forced_driver && forced_driver[0] != '\0') {
         fprintf(stderr, "[disp] renderer override = %s\n", forced_driver);
         return tb_disp_try_renderer(win, forced_driver);
@@ -800,6 +831,71 @@ static SDL_Renderer *tb_disp_create_accelerated_renderer(SDL_Window *win) {
 #endif
 
     return tb_disp_try_renderer(win, NULL);
+}
+
+/* After every renderer (re)creation: colour conversion, logging, trace labels. */
+static void tb_disp_setup_renderer(struct tb_display *d) {
+    SDL_SetYUVConversionMode(SDL_YUV_CONVERSION_BT709);
+    SDL_RenderSetLogicalSize(d->ren, 0, 0);
+
+    /* report which backend SDL picked */
+    SDL_RendererInfo info;
+    memset(&info, 0, sizeof(info));
+    if (SDL_GetRendererInfo(d->ren, &info) == 0) {
+        fprintf(stderr, "[disp] renderer = %s%s\n", info.name,
+                d->mtl ? (d->paced ? " (zero-copy video, paced to the refresh)" : " (zero-copy video)") : "");
+    }
+    SDL_DisplayMode mode;
+    uint64_t refresh_ns = 0;
+    if (d->vsync) {
+        refresh_ns = tb_vsync_period_ns(d->vsync);
+    } else if (SDL_GetCurrentDisplayMode(0, &mode) == 0 && mode.refresh_rate > 0) {
+        refresh_ns = 1000000000ull / (uint64_t)mode.refresh_rate;
+    }
+    tb_trace_configure(d->mtl ? "metal-zero-copy" : info.name, d->paced ? "vsync" : "immediate", refresh_ns);
+}
+
+/* Choose and build the renderer. Metal zero-copy unless told otherwise or on
+ * macOS 26+; any failure on that path ends on OpenGL. */
+static int tb_disp_create_renderer(struct tb_display *d) {
+    const char *driver = getenv("TB_RECEIVER_RENDER_DRIVER");
+    if (!driver) driver = "";
+    int want_metal = 0;
+    if (strcmp(driver, "metal") == 0) {
+        want_metal = 1;
+    } else if (driver[0] == '\0') {
+        want_metal = !tb_mtl_os_defaults_to_opengl();
+        if (!want_metal) fprintf(stderr, "[disp] macOS 26 or later: OpenGL by default (TB_RECEIVER_RENDER_DRIVER=metal to try Metal)\n");
+    }
+
+    if (want_metal) {
+        const char *pacing = getenv("TB_RECEIVER_PACING");
+        const int paced = !(pacing && strcmp(pacing, "immediate") == 0);
+        d->ren = tb_disp_try_renderer(d->win, "metal");
+        char why[256] = "SDL could not create its Metal renderer";
+        if (d->ren) d->mtl = tb_mtl_create(SDL_RenderGetMetalLayer(d->ren), paced, why, sizeof(why));
+        if (d->mtl && paced) {
+            d->vsync = tb_vsync_create(CGMainDisplayID());
+            if (!d->vsync) fprintf(stderr, "[disp] no display link: frames are drawn on arrival\n");
+        }
+        if (d->mtl) {
+            d->paced = d->vsync != NULL;
+            d->last_submit_tick = UINT64_MAX;
+            d->video_submit_tick = UINT64_MAX;
+            d->baked_cursor_type = -1;
+            return 0;
+        }
+        fprintf(stderr, "[disp] Metal zero-copy unavailable (%s); falling back to OpenGL\n", why);
+        if (d->ren) SDL_DestroyRenderer(d->ren);
+        d->ren = tb_disp_create_accelerated_renderer(d->win, "opengl");
+        if (!d->ren) d->ren = tb_disp_create_accelerated_renderer(d->win, NULL);
+        return d->ren ? 0 : -1;
+    }
+
+    /* "metal-sdl": SDL's own Metal renderer with its copying NV12 upload. */
+    if (strcmp(driver, "metal-sdl") == 0) driver = "metal";
+    d->ren = tb_disp_create_accelerated_renderer(d->win, driver);
+    return d->ren ? 0 : -1;
 }
 
 struct tb_display *tb_disp_create(int fullscreen) {
@@ -826,30 +922,15 @@ struct tb_display *tb_disp_create(int fullscreen) {
         free(d); return NULL;
     }
 
-    /* No VSYNC: lets us present as fast as decode produces frames.
-     * On Intel iMac with Radeon Pro 570 + 5K display, VSYNC at 60Hz combined
-     * with GPU→CPU NV12 transfer was stalling the pipeline to ~4 fps. */
-    d->ren = tb_disp_create_accelerated_renderer(d->win);
-    if (!d->ren) {
+    /* The SDL renderer path has no VSYNC: it presents as fast as decode
+     * produces frames. On Intel iMac with Radeon Pro 570 + 5K display, VSYNC
+     * at 60Hz combined with GPU→CPU NV12 transfer was stalling the pipeline
+     * to ~4 fps. The Metal path has no transfer and paces to the refresh. */
+    if (tb_disp_create_renderer(d) < 0) {
         fprintf(stderr, "[disp] CreateRenderer: %s\n", SDL_GetError());
         SDL_DestroyWindow(d->win); free(d); return NULL;
     }
-    SDL_SetYUVConversionMode(SDL_YUV_CONVERSION_BT709);
-    SDL_RenderSetLogicalSize(d->ren, 0, 0);
-
-    /* report which backend SDL picked */
-    SDL_RendererInfo info;
-    if (SDL_GetRendererInfo(d->ren, &info) == 0) {
-        fprintf(stderr, "[disp] renderer = %s\n", info.name);
-    }
-    {
-        SDL_DisplayMode mode;
-        uint64_t refresh_ns = 0;
-        if (SDL_GetCurrentDisplayMode(0, &mode) == 0 && mode.refresh_rate > 0) {
-            refresh_ns = 1000000000ull / (uint64_t)mode.refresh_rate;
-        }
-        tb_trace_configure(info.name, "immediate", refresh_ns);
-    }
+    tb_disp_setup_renderer(d);
 
     int win_w = 0, win_h = 0, out_w = 0, out_h = 0;
     SDL_GetWindowSize(d->win, &win_w, &win_h);
@@ -889,6 +970,9 @@ void tb_disp_destroy(struct tb_display *d) {
         d->system_cursor_hidden = 0;
     }
     tb_disp_destroy_status_texture(d);
+    tb_disp_metal_release_frames(d);
+    tb_vsync_destroy(d->vsync);
+    tb_mtl_destroy(d->mtl);
     if (d->tex) SDL_DestroyTexture(d->tex);
     if (d->ren) SDL_DestroyRenderer(d->ren);
     if (d->win) SDL_DestroyWindow(d->win);
@@ -991,48 +1075,41 @@ static void draw_scaled_rect(SDL_Renderer *ren, int cx, int cy, int size, int rx
     SDL_RenderFillRect(ren, &r);
 }
 
-static void tb_disp_draw_cursor(struct tb_display *d) {
-    if (!d || !d->cursor_visible || d->cursor_source_w <= 0 || d->cursor_source_h <= 0) return;
+/* The pointer size the vector shapes are drawn at, in drawable pixels. */
+static int tb_disp_vector_cursor_size(int out_w, int large) {
+    return large ? (out_w >= 5000 ? 58 : 44) : (out_w >= 5000 ? 32 : 24);
+}
 
-    int out_w = 0, out_h = 0;
-    if (SDL_GetRendererOutputSize(d->ren, &out_w, &out_h) < 0 || out_w <= 0 || out_h <= 0) {
-        return;
-    }
-
-    const double sx = (double)out_w / (double)d->cursor_source_w;
-    const double sy = (double)out_h / (double)d->cursor_source_h;
-    const int x = (int)((double)d->cursor_x * sx);
-    const int y = (int)((double)d->cursor_y * sy);
-    const int size = d->cursor_large
-        ? (out_w >= 5000 ? 58 : 44)
-        : (out_w >= 5000 ? 32 : 24);
+/* One of the vector pointer shapes with its hot spot at (x, y), on any renderer:
+ * the window's (OpenGL path) or a software one that bakes a bitmap (Metal path). */
+static void tb_disp_draw_vector_cursor(SDL_Renderer *ren, int x, int y, int type, int size) {
     SDL_BlendMode old_blend = SDL_BLENDMODE_NONE;
-    (void)SDL_GetRenderDrawBlendMode(d->ren, &old_blend);
+    (void)SDL_GetRenderDrawBlendMode(ren, &old_blend);
 
-    SDL_SetRenderDrawBlendMode(d->ren, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
 
-    if (d->cursor_type == 1) {
+    if (type == 1) {
         /* I-Beam (Text Cursor) */
         /* Draw Shadow */
-        SDL_SetRenderDrawColor(d->ren, 0, 0, 0, 70);
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 70);
         int sx_off = 1, sy_off = 2;
-        draw_scaled_rect(d->ren, x + sx_off, y + sy_off, size, -8, -14, 8, -10);
-        draw_scaled_rect(d->ren, x + sx_off, y + sy_off, size, -8, 10, 8, 14);
-        draw_scaled_rect(d->ren, x + sx_off, y + sy_off, size, -2, -12, 2, 12);
+        draw_scaled_rect(ren, x + sx_off, y + sy_off, size, -8, -14, 8, -10);
+        draw_scaled_rect(ren, x + sx_off, y + sy_off, size, -8, 10, 8, 14);
+        draw_scaled_rect(ren, x + sx_off, y + sy_off, size, -2, -12, 2, 12);
         
         /* Draw Outline (White) */
-        SDL_SetRenderDrawColor(d->ren, 255, 255, 255, 255);
-        draw_scaled_rect(d->ren, x, y, size, -8, -14, 8, -10);
-        draw_scaled_rect(d->ren, x, y, size, -8, 10, 8, 14);
-        draw_scaled_rect(d->ren, x, y, size, -2, -12, 2, 12);
+        SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
+        draw_scaled_rect(ren, x, y, size, -8, -14, 8, -10);
+        draw_scaled_rect(ren, x, y, size, -8, 10, 8, 14);
+        draw_scaled_rect(ren, x, y, size, -2, -12, 2, 12);
         
         /* Draw Body (Black) */
-        SDL_SetRenderDrawColor(d->ren, 0, 0, 0, 255);
-        draw_scaled_rect(d->ren, x, y, size, -7, -13, 7, -11);
-        draw_scaled_rect(d->ren, x, y, size, -7, 11, 7, 13);
-        draw_scaled_rect(d->ren, x, y, size, -1, -11, 1, 11);
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+        draw_scaled_rect(ren, x, y, size, -7, -13, 7, -11);
+        draw_scaled_rect(ren, x, y, size, -7, 11, 7, 13);
+        draw_scaled_rect(ren, x, y, size, -1, -11, 1, 11);
     }
-    else if (d->cursor_type == 2) {
+    else if (type == 2) {
         /* Pointing Hand */
         const int cx = x - tb_disp_cursor_scale(size, 10);
         const int cy = y;
@@ -1054,8 +1131,8 @@ static void tb_disp_draw_cursor(struct tb_display *d) {
             tb_disp_cursor_point(cx + 2, cy + 3, size, 7, 11),
             tb_disp_cursor_point(cx + 2, cy + 3, size, 7, 2)
         };
-        SDL_SetRenderDrawColor(d->ren, 0, 0, 0, 70);
-        tb_disp_fill_poly(d->ren, shadow, (int)(sizeof(shadow) / sizeof(shadow[0])));
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 70);
+        tb_disp_fill_poly(ren, shadow, (int)(sizeof(shadow) / sizeof(shadow[0])));
 
         SDL_Point outline[] = {
             tb_disp_cursor_point(cx, cy, size, 10, 0),
@@ -1075,9 +1152,9 @@ static void tb_disp_draw_cursor(struct tb_display *d) {
             tb_disp_cursor_point(cx, cy, size, 7, 11),
             tb_disp_cursor_point(cx, cy, size, 7, 2)
         };
-        SDL_SetRenderDrawColor(d->ren, 255, 255, 255, 255);
-        tb_disp_fill_poly(d->ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
-        tb_disp_draw_poly_outline(d->ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
+        SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
+        tb_disp_fill_poly(ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
+        tb_disp_draw_poly_outline(ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
 
         SDL_Point body[] = {
             tb_disp_cursor_point(cx, cy, size, 10, 2),
@@ -1097,11 +1174,11 @@ static void tb_disp_draw_cursor(struct tb_display *d) {
             tb_disp_cursor_point(cx, cy, size, 8, 12),
             tb_disp_cursor_point(cx, cy, size, 8, 3)
         };
-        SDL_SetRenderDrawColor(d->ren, 0, 0, 0, 255);
-        tb_disp_fill_poly(d->ren, body, (int)(sizeof(body) / sizeof(body[0])));
-        tb_disp_draw_poly_outline(d->ren, body, (int)(sizeof(body) / sizeof(body[0])));
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+        tb_disp_fill_poly(ren, body, (int)(sizeof(body) / sizeof(body[0])));
+        tb_disp_draw_poly_outline(ren, body, (int)(sizeof(body) / sizeof(body[0])));
     }
-    else if (d->cursor_type == 3) {
+    else if (type == 3) {
         /* Resize Horizontal */
         const int cx = x - tb_disp_cursor_scale(size, 16);
         const int cy = y - tb_disp_cursor_scale(size, 16);
@@ -1117,8 +1194,8 @@ static void tb_disp_draw_cursor(struct tb_display *d) {
             tb_disp_cursor_point(cx + 2, cy + 3, size, 8, 19),
             tb_disp_cursor_point(cx + 2, cy + 3, size, 8, 22)
         };
-        SDL_SetRenderDrawColor(d->ren, 0, 0, 0, 70);
-        tb_disp_fill_poly(d->ren, shadow, (int)(sizeof(shadow) / sizeof(shadow[0])));
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 70);
+        tb_disp_fill_poly(ren, shadow, (int)(sizeof(shadow) / sizeof(shadow[0])));
 
         SDL_Point outline[] = {
             tb_disp_cursor_point(cx, cy, size, 2, 16),
@@ -1132,9 +1209,9 @@ static void tb_disp_draw_cursor(struct tb_display *d) {
             tb_disp_cursor_point(cx, cy, size, 8, 19),
             tb_disp_cursor_point(cx, cy, size, 8, 22)
         };
-        SDL_SetRenderDrawColor(d->ren, 255, 255, 255, 255);
-        tb_disp_fill_poly(d->ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
-        tb_disp_draw_poly_outline(d->ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
+        SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
+        tb_disp_fill_poly(ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
+        tb_disp_draw_poly_outline(ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
 
         SDL_Point body[] = {
             tb_disp_cursor_point(cx, cy, size, 5, 16),
@@ -1148,11 +1225,11 @@ static void tb_disp_draw_cursor(struct tb_display *d) {
             tb_disp_cursor_point(cx, cy, size, 8, 17),
             tb_disp_cursor_point(cx, cy, size, 8, 20)
         };
-        SDL_SetRenderDrawColor(d->ren, 0, 0, 0, 255);
-        tb_disp_fill_poly(d->ren, body, (int)(sizeof(body) / sizeof(body[0])));
-        tb_disp_draw_poly_outline(d->ren, body, (int)(sizeof(body) / sizeof(body[0])));
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+        tb_disp_fill_poly(ren, body, (int)(sizeof(body) / sizeof(body[0])));
+        tb_disp_draw_poly_outline(ren, body, (int)(sizeof(body) / sizeof(body[0])));
     }
-    else if (d->cursor_type == 4) {
+    else if (type == 4) {
         /* Resize Vertical */
         const int cx = x - tb_disp_cursor_scale(size, 16);
         const int cy = y - tb_disp_cursor_scale(size, 16);
@@ -1168,8 +1245,8 @@ static void tb_disp_draw_cursor(struct tb_display *d) {
             tb_disp_cursor_point(cx + 2, cy + 3, size, 13, 8),
             tb_disp_cursor_point(cx + 2, cy + 3, size, 10, 8)
         };
-        SDL_SetRenderDrawColor(d->ren, 0, 0, 0, 70);
-        tb_disp_fill_poly(d->ren, shadow, (int)(sizeof(shadow) / sizeof(shadow[0])));
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 70);
+        tb_disp_fill_poly(ren, shadow, (int)(sizeof(shadow) / sizeof(shadow[0])));
 
         SDL_Point outline[] = {
             tb_disp_cursor_point(cx, cy, size, 16, 2),
@@ -1183,9 +1260,9 @@ static void tb_disp_draw_cursor(struct tb_display *d) {
             tb_disp_cursor_point(cx, cy, size, 13, 8),
             tb_disp_cursor_point(cx, cy, size, 10, 8)
         };
-        SDL_SetRenderDrawColor(d->ren, 255, 255, 255, 255);
-        tb_disp_fill_poly(d->ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
-        tb_disp_draw_poly_outline(d->ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
+        SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
+        tb_disp_fill_poly(ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
+        tb_disp_draw_poly_outline(ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
 
         SDL_Point body[] = {
             tb_disp_cursor_point(cx, cy, size, 16, 5),
@@ -1199,35 +1276,35 @@ static void tb_disp_draw_cursor(struct tb_display *d) {
             tb_disp_cursor_point(cx, cy, size, 15, 8),
             tb_disp_cursor_point(cx, cy, size, 12, 8)
         };
-        SDL_SetRenderDrawColor(d->ren, 0, 0, 0, 255);
-        tb_disp_fill_poly(d->ren, body, (int)(sizeof(body) / sizeof(body[0])));
-        tb_disp_draw_poly_outline(d->ren, body, (int)(sizeof(body) / sizeof(body[0])));
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+        tb_disp_fill_poly(ren, body, (int)(sizeof(body) / sizeof(body[0])));
+        tb_disp_draw_poly_outline(ren, body, (int)(sizeof(body) / sizeof(body[0])));
     }
-    else if (d->cursor_type == 6) {
+    else if (type == 6) {
         /* Crosshair */
         /* Draw Shadow */
-        SDL_SetRenderDrawColor(d->ren, 0, 0, 0, 70);
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 70);
         int sx_off = 1, sy_off = 2;
-        draw_scaled_rect(d->ren, x + sx_off, y + sy_off, size, -15, -2, -2, 2);
-        draw_scaled_rect(d->ren, x + sx_off, y + sy_off, size, 2, -2, 15, 2);
-        draw_scaled_rect(d->ren, x + sx_off, y + sy_off, size, -2, -15, 2, -2);
-        draw_scaled_rect(d->ren, x + sx_off, y + sy_off, size, -2, 2, 2, 15);
+        draw_scaled_rect(ren, x + sx_off, y + sy_off, size, -15, -2, -2, 2);
+        draw_scaled_rect(ren, x + sx_off, y + sy_off, size, 2, -2, 15, 2);
+        draw_scaled_rect(ren, x + sx_off, y + sy_off, size, -2, -15, 2, -2);
+        draw_scaled_rect(ren, x + sx_off, y + sy_off, size, -2, 2, 2, 15);
         
         /* Draw Outline (White) */
-        SDL_SetRenderDrawColor(d->ren, 255, 255, 255, 255);
-        draw_scaled_rect(d->ren, x, y, size, -15, -2, -2, 2);
-        draw_scaled_rect(d->ren, x, y, size, 2, -2, 15, 2);
-        draw_scaled_rect(d->ren, x, y, size, -2, -15, 2, -2);
-        draw_scaled_rect(d->ren, x, y, size, -2, 2, 2, 15);
+        SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
+        draw_scaled_rect(ren, x, y, size, -15, -2, -2, 2);
+        draw_scaled_rect(ren, x, y, size, 2, -2, 15, 2);
+        draw_scaled_rect(ren, x, y, size, -2, -15, 2, -2);
+        draw_scaled_rect(ren, x, y, size, -2, 2, 2, 15);
         
         /* Draw Body (Black) */
-        SDL_SetRenderDrawColor(d->ren, 0, 0, 0, 255);
-        draw_scaled_rect(d->ren, x, y, size, -14, -1, -3, 1);
-        draw_scaled_rect(d->ren, x, y, size, 3, -1, 14, 1);
-        draw_scaled_rect(d->ren, x, y, size, -1, -14, 1, -3);
-        draw_scaled_rect(d->ren, x, y, size, -1, 3, 1, 14);
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+        draw_scaled_rect(ren, x, y, size, -14, -1, -3, 1);
+        draw_scaled_rect(ren, x, y, size, 3, -1, 14, 1);
+        draw_scaled_rect(ren, x, y, size, -1, -14, 1, -3);
+        draw_scaled_rect(ren, x, y, size, -1, 3, 1, 14);
     }
-    else if (d->cursor_type == 7) {
+    else if (type == 7) {
         /* Northwest-Southeast diagonal resize cursor (NWSE) */
         const int cx = x - tb_disp_cursor_scale(size, 16);
         const int cy = y - tb_disp_cursor_scale(size, 16);
@@ -1243,8 +1320,8 @@ static void tb_disp_draw_cursor(struct tb_display *d) {
             tb_disp_cursor_point(cx + 2, cy + 3, size, 10, 13),
             tb_disp_cursor_point(cx + 2, cy + 3, size, 4, 12)
         };
-        SDL_SetRenderDrawColor(d->ren, 0, 0, 0, 70);
-        tb_disp_fill_poly(d->ren, shadow, (int)(sizeof(shadow) / sizeof(shadow[0])));
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 70);
+        tb_disp_fill_poly(ren, shadow, (int)(sizeof(shadow) / sizeof(shadow[0])));
 
         SDL_Point outline[] = {
             tb_disp_cursor_point(cx, cy, size, 4, 4),
@@ -1258,9 +1335,9 @@ static void tb_disp_draw_cursor(struct tb_display *d) {
             tb_disp_cursor_point(cx, cy, size, 10, 13),
             tb_disp_cursor_point(cx, cy, size, 4, 12)
         };
-        SDL_SetRenderDrawColor(d->ren, 255, 255, 255, 255);
-        tb_disp_fill_poly(d->ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
-        tb_disp_draw_poly_outline(d->ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
+        SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
+        tb_disp_fill_poly(ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
+        tb_disp_draw_poly_outline(ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
 
         SDL_Point body[] = {
             tb_disp_cursor_point(cx, cy, size, 7, 7),
@@ -1274,11 +1351,11 @@ static void tb_disp_draw_cursor(struct tb_display *d) {
             tb_disp_cursor_point(cx, cy, size, 11, 12),
             tb_disp_cursor_point(cx, cy, size, 7, 12)
         };
-        SDL_SetRenderDrawColor(d->ren, 0, 0, 0, 255);
-        tb_disp_fill_poly(d->ren, body, (int)(sizeof(body) / sizeof(body[0])));
-        tb_disp_draw_poly_outline(d->ren, body, (int)(sizeof(body) / sizeof(body[0])));
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+        tb_disp_fill_poly(ren, body, (int)(sizeof(body) / sizeof(body[0])));
+        tb_disp_draw_poly_outline(ren, body, (int)(sizeof(body) / sizeof(body[0])));
     }
-    else if (d->cursor_type == 8) {
+    else if (type == 8) {
         /* Northeast-Southwest diagonal resize cursor (NESW) */
         const int cx = x - tb_disp_cursor_scale(size, 16);
         const int cy = y - tb_disp_cursor_scale(size, 16);
@@ -1294,8 +1371,8 @@ static void tb_disp_draw_cursor(struct tb_display *d) {
             tb_disp_cursor_point(cx + 2, cy + 3, size, 22, 13),
             tb_disp_cursor_point(cx + 2, cy + 3, size, 28, 12)
         };
-        SDL_SetRenderDrawColor(d->ren, 0, 0, 0, 70);
-        tb_disp_fill_poly(d->ren, shadow, (int)(sizeof(shadow) / sizeof(shadow[0])));
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 70);
+        tb_disp_fill_poly(ren, shadow, (int)(sizeof(shadow) / sizeof(shadow[0])));
 
         SDL_Point outline[] = {
             tb_disp_cursor_point(cx, cy, size, 28, 4),
@@ -1309,9 +1386,9 @@ static void tb_disp_draw_cursor(struct tb_display *d) {
             tb_disp_cursor_point(cx, cy, size, 22, 13),
             tb_disp_cursor_point(cx, cy, size, 28, 12)
         };
-        SDL_SetRenderDrawColor(d->ren, 255, 255, 255, 255);
-        tb_disp_fill_poly(d->ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
-        tb_disp_draw_poly_outline(d->ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
+        SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
+        tb_disp_fill_poly(ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
+        tb_disp_draw_poly_outline(ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
 
         SDL_Point body[] = {
             tb_disp_cursor_point(cx, cy, size, 25, 7),
@@ -1325,9 +1402,9 @@ static void tb_disp_draw_cursor(struct tb_display *d) {
             tb_disp_cursor_point(cx, cy, size, 21, 12),
             tb_disp_cursor_point(cx, cy, size, 25, 12)
         };
-        SDL_SetRenderDrawColor(d->ren, 0, 0, 0, 255);
-        tb_disp_fill_poly(d->ren, body, (int)(sizeof(body) / sizeof(body[0])));
-        tb_disp_draw_poly_outline(d->ren, body, (int)(sizeof(body) / sizeof(body[0])));
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+        tb_disp_fill_poly(ren, body, (int)(sizeof(body) / sizeof(body[0])));
+        tb_disp_draw_poly_outline(ren, body, (int)(sizeof(body) / sizeof(body[0])));
     }
     else {
         /* Default: Arrow (Type 0, 5, or fallback) */
@@ -1340,8 +1417,8 @@ static void tb_disp_draw_cursor(struct tb_display *d) {
             tb_disp_cursor_point(x + 2, y + 3, size, 14, 22),
             tb_disp_cursor_point(x + 2, y + 3, size, 24, 22)
         };
-        SDL_SetRenderDrawColor(d->ren, 0, 0, 0, 70);
-        tb_disp_fill_poly(d->ren, shadow, (int)(sizeof(shadow) / sizeof(shadow[0])));
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 70);
+        tb_disp_fill_poly(ren, shadow, (int)(sizeof(shadow) / sizeof(shadow[0])));
 
         SDL_Point outline[] = {
             tb_disp_cursor_point(x, y, size, 0, 0),
@@ -1352,9 +1429,9 @@ static void tb_disp_draw_cursor(struct tb_display *d) {
             tb_disp_cursor_point(x, y, size, 14, 22),
             tb_disp_cursor_point(x, y, size, 24, 22)
         };
-        SDL_SetRenderDrawColor(d->ren, 255, 255, 255, 255);
-        tb_disp_fill_poly(d->ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
-        tb_disp_draw_poly_outline(d->ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
+        SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
+        tb_disp_fill_poly(ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
+        tb_disp_draw_poly_outline(ren, outline, (int)(sizeof(outline) / sizeof(outline[0])));
 
         SDL_Point body[] = {
             tb_disp_cursor_point(x, y, size, 3, 5),
@@ -1365,12 +1442,27 @@ static void tb_disp_draw_cursor(struct tb_display *d) {
             tb_disp_cursor_point(x, y, size, 11, 20),
             tb_disp_cursor_point(x, y, size, 19, 20)
         };
-        SDL_SetRenderDrawColor(d->ren, 0, 0, 0, 255);
-        tb_disp_fill_poly(d->ren, body, (int)(sizeof(body) / sizeof(body[0])));
-        tb_disp_draw_poly_outline(d->ren, body, (int)(sizeof(body) / sizeof(body[0])));
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+        tb_disp_fill_poly(ren, body, (int)(sizeof(body) / sizeof(body[0])));
+        tb_disp_draw_poly_outline(ren, body, (int)(sizeof(body) / sizeof(body[0])));
     }
 
-    SDL_SetRenderDrawBlendMode(d->ren, old_blend);
+    SDL_SetRenderDrawBlendMode(ren, old_blend);
+}
+
+static void tb_disp_draw_cursor(struct tb_display *d) {
+    if (!d || !d->cursor_visible || d->cursor_source_w <= 0 || d->cursor_source_h <= 0) return;
+
+    int out_w = 0, out_h = 0;
+    if (SDL_GetRendererOutputSize(d->ren, &out_w, &out_h) < 0 || out_w <= 0 || out_h <= 0) {
+        return;
+    }
+
+    const double sx = (double)out_w / (double)d->cursor_source_w;
+    const double sy = (double)out_h / (double)d->cursor_source_h;
+    const int x = (int)((double)d->cursor_x * sx);
+    const int y = (int)((double)d->cursor_y * sy);
+    tb_disp_draw_vector_cursor(d->ren, x, y, d->cursor_type, tb_disp_vector_cursor_size(out_w, d->cursor_large));
 }
 
 static void tb_disp_render_current(struct tb_display *d, uint32_t trace_id) {
@@ -1382,24 +1474,277 @@ static void tb_disp_render_current(struct tb_display *d, uint32_t trace_id) {
     SDL_RenderPresent(d->ren);
     /* No vsync on this path: this is the hand-off to the window server. */
     tb_trace_mark_now(trace_id, TB_TRACE_PRESENTED);
+    d->last_cursor_render_time = SDL_GetTicks();
+    d->cursor_dirty = 0;
 }
 
-void tb_disp_render_nv12(struct tb_display *d,
-                         const uint8_t *y, int y_stride,
-                         const uint8_t *uv, int uv_stride,
-                         int w, int h, uint32_t trace_id) {
-    if (tb_disp_ensure_texture(d, w, h) < 0) return;
-    tb_disp_set_connection_state(d, 1);
+/* SDL renderer path (OpenGL by default; also metal-sdl for comparison): the
+ * planes go through the CPU into an SDL NV12 texture and the frame is
+ * presented as soon as it arrives, as upstream does. */
+static void tb_disp_sdl_show_frame(struct tb_display *d, const struct tb_frame *f) {
+    if (tb_disp_ensure_texture(d, f->width, f->height) < 0) return;
 
-    if (SDL_UpdateNVTexture(d->tex, NULL,
-                            y,  y_stride,
-                            uv, uv_stride) < 0) {
+    const uint8_t *y = f->y, *uv = f->uv;
+    int y_stride = f->y_stride, uv_stride = f->uv_stride;
+    CVPixelBufferRef pb = (CVPixelBufferRef)f->pixel_buffer;
+    if (pb) {
+        /* Locking the IOSurface lets the CPU read the planes in place; SDL
+         * then copies them into its texture. */
+        if (CVPixelBufferLockBaseAddress(pb, kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess) return;
+        y = (const uint8_t *)CVPixelBufferGetBaseAddressOfPlane(pb, 0);
+        y_stride = (int)CVPixelBufferGetBytesPerRowOfPlane(pb, 0);
+        uv = (const uint8_t *)CVPixelBufferGetBaseAddressOfPlane(pb, 1);
+        uv_stride = (int)CVPixelBufferGetBytesPerRowOfPlane(pb, 1);
+    }
+    int updated = y && uv && SDL_UpdateNVTexture(d->tex, NULL, y, y_stride, uv, uv_stride) == 0;
+    if (pb) CVPixelBufferUnlockBaseAddress(pb, kCVPixelBufferLock_ReadOnly);
+    if (!updated) {
         fprintf(stderr, "[disp] UpdateNVTexture: %s\n", SDL_GetError());
         return;
     }
-    tb_trace_mark_now(trace_id, TB_TRACE_TEX_READY);
+    tb_trace_mark_now(f->trace_id, TB_TRACE_TEX_READY);
     d->last_video_frame_time = SDL_GetTicks();
-    tb_disp_render_current(d, trace_id);
+    tb_disp_render_current(d, f->trace_id);
+}
+
+/* ---- Metal zero-copy path (PWE 1.1) ------------------------------------
+ *
+ * Pacing: at most one submit per display refresh, and the newest frame wins.
+ * A frame that arrives while this refresh is still free is drawn at once (it
+ * shows at the next refresh); one that arrives after waits in `pending` and is
+ * drawn at the next refresh tick, replaced if a newer one comes first. The
+ * pointer rides on video frames while video flows; when it does not, the
+ * pointer is redrawn on its own, once per refresh. */
+
+static uint64_t tb_disp_now_ns(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW); }
+
+static uint64_t tb_disp_tick_count(const struct tb_display *d) {
+    return d->vsync ? tb_vsync_count(d->vsync) : 0;
+}
+
+static int tb_disp_metal_slot_free(const struct tb_display *d) {
+    if (!d->paced) return 1;
+    if (tb_disp_tick_count(d) != d->last_submit_tick) return 1;
+    /* No refresh ticks (display link stopped, display asleep): do not stall. */
+    return tb_disp_now_ns() - d->last_submit_ns > 50000000ull;
+}
+
+static int tb_disp_metal_video_flowing(const struct tb_display *d) {
+    return d->video_submit_tick != UINT64_MAX && d->video_submit_tick + 1 >= tb_disp_tick_count(d);
+}
+
+static void tb_disp_metal_release_frames(struct tb_display *d) {
+    if (d->pending) {
+        tb_trace_frame_replaced(d->pending_trace_id);
+        CVPixelBufferRelease(d->pending);
+        d->pending = NULL;
+    }
+    d->pending_trace_id = 0;
+    if (d->current) CVPixelBufferRelease(d->current);
+    d->current = NULL;
+}
+
+/* Drop the Metal path for the rest of this run and draw with OpenGL. The SDL
+ * window is recreated by SDL for the OpenGL context; nothing caches it. */
+static void tb_disp_fall_back_to_opengl(struct tb_display *d, const char *why) {
+    fprintf(stderr, "[disp] Metal zero-copy failed (%s); falling back to OpenGL\n", why);
+    tb_disp_metal_release_frames(d);
+    tb_mtl_destroy(d->mtl);
+    d->mtl = NULL;
+    tb_vsync_destroy(d->vsync);
+    d->vsync = NULL;
+    d->paced = 0;
+    tb_disp_destroy_status_texture(d);
+    if (d->tex) SDL_DestroyTexture(d->tex);
+    d->tex = NULL;
+    d->tex_w = d->tex_h = 0;
+    d->last_drawable_w = d->last_drawable_h = 0;
+    SDL_DestroyRenderer(d->ren);
+    d->ren = tb_disp_try_renderer(d->win, "opengl");
+    if (!d->ren) d->ren = tb_disp_try_renderer(d->win, NULL);
+    if (!d->ren) {
+        fprintf(stderr, "[disp] no renderer after the fallback; quitting\n");
+        d->quit = 1;
+        return;
+    }
+    tb_disp_setup_renderer(d);
+    tb_disp_refresh_window_mode(d);
+}
+
+/* The vector pointer, rasterised once per shape and size with SDL's software
+ * renderer into a premultiplied bitmap for the Metal path. */
+static int tb_disp_metal_vector_cursor(struct tb_display *d, int type, int size, int *hot) {
+    const int canvas = size * 2 + 16;
+    *hot = size * 5 / 8 + 8;
+    if (d->baked_cursor_type == type && d->baked_cursor_size == size) return canvas;
+
+    SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormat(0, canvas, canvas, 32, SDL_PIXELFORMAT_ARGB8888);
+    SDL_Renderer *soft = surface ? SDL_CreateSoftwareRenderer(surface) : NULL;
+    if (!soft) {
+        if (surface) SDL_FreeSurface(surface);
+        return 0;
+    }
+    SDL_SetRenderDrawBlendMode(soft, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(soft, 0, 0, 0, 0);
+    SDL_RenderClear(soft);
+    tb_disp_draw_vector_cursor(soft, *hot, *hot, type, size);
+    SDL_RenderPresent(soft);
+    SDL_DestroyRenderer(soft);
+
+    /* ARGB8888 is B, G, R, A in memory; premultiply for the blend. */
+    uint8_t *px = (uint8_t *)surface->pixels;
+    for (int row = 0; row < canvas; row++) {
+        uint8_t *p = px + (size_t)row * (size_t)surface->pitch;
+        for (int col = 0; col < canvas; col++, p += 4) {
+            const unsigned a = p[3];
+            p[0] = (uint8_t)((p[0] * a + 127) / 255);
+            p[1] = (uint8_t)((p[1] * a + 127) / 255);
+            p[2] = (uint8_t)((p[2] * a + 127) / 255);
+        }
+    }
+    tb_mtl_set_cursor_bitmap(d->mtl, px, canvas, canvas, surface->pitch);
+    SDL_FreeSurface(surface);
+    d->baked_cursor_type = type;
+    d->baked_cursor_size = size;
+    return canvas;
+}
+
+/* Where the pointer goes on the drawable; 0 when it is not shown. */
+static int tb_disp_metal_cursor_rect(struct tb_display *d, struct tb_mtl_rect *rect) {
+    if (!d->cursor_visible || d->cursor_source_w <= 0 || d->cursor_source_h <= 0) return 0;
+    int out_w = 0, out_h = 0;
+    tb_mtl_drawable_size(d->mtl, &out_w, &out_h);
+    if (out_w <= 0 || out_h <= 0) return 0;
+    const double sx = (double)out_w / (double)d->cursor_source_w;
+    const double sy = (double)out_h / (double)d->cursor_source_h;
+    const int x = (int)((double)d->cursor_x * sx);
+    const int y = (int)((double)d->cursor_y * sy);
+    int hot = 0;
+    const int canvas = tb_disp_metal_vector_cursor(d, d->cursor_type,
+                                                   tb_disp_vector_cursor_size(out_w, d->cursor_large), &hot);
+    if (canvas <= 0) return 0;
+    rect->x = (float)(x - hot);
+    rect->y = (float)(y - hot);
+    rect->w = (float)canvas;
+    rect->h = (float)canvas;
+    return 1;
+}
+
+static void tb_disp_metal_render(struct tb_display *d) {
+    uint32_t trace_id = 0;
+    const int new_frame = d->pending != NULL;
+    if (new_frame) {
+        if (d->current) CVPixelBufferRelease(d->current);
+        d->current = d->pending;
+        trace_id = d->pending_trace_id;
+        d->pending = NULL;
+        d->pending_trace_id = 0;
+    }
+    if (!d->current) return;
+
+    struct tb_mtl_rect cursor;
+    const int has_cursor = tb_disp_metal_cursor_rect(d, &cursor);
+    enum tb_mtl_draw_result r = tb_mtl_draw(d->mtl, d->current, has_cursor ? &cursor : NULL, trace_id);
+    if (r == TB_MTL_TEXTURE_FAILED && !d->copy_frames) {
+        /* This Mac's decoder buffers cannot be textured: copy each one into a
+         * Metal-compatible buffer instead (one memcpy, like the OpenGL path). */
+        CVPixelBufferRef copy = tb_mtl_copy_buffer(d->mtl, d->current);
+        if (copy) {
+            fprintf(stderr, "[disp] decoder buffers are not Metal textures here; copying each frame\n");
+            d->copy_frames = 1;
+            CVPixelBufferRelease(d->current);
+            d->current = copy;
+            r = tb_mtl_draw(d->mtl, d->current, has_cursor ? &cursor : NULL, trace_id);
+        }
+    }
+    if (r == TB_MTL_TEXTURE_FAILED) {
+        tb_disp_fall_back_to_opengl(d, "a decoded frame did not become a Metal texture");
+        return;
+    }
+    if (r == TB_MTL_NO_DRAWABLE) {
+        tb_trace_frame_replaced(trace_id);   /* never reached the screen */
+        d->redraw_needed = 1;
+        return;
+    }
+    d->last_submit_tick = tb_disp_tick_count(d);
+    d->last_submit_ns = tb_disp_now_ns();
+    if (new_frame) {
+        d->video_submit_tick = d->last_submit_tick;
+        d->new_frame_since_tick = 1;
+    }
+    d->cursor_dirty = 0;
+    d->redraw_needed = 0;
+}
+
+/* Take a decoded frame for the Metal path. On return d->mtl is NULL if the
+ * path fell back to OpenGL and the caller must show `f` there. */
+static void tb_disp_metal_take_frame(struct tb_display *d, const struct tb_frame *f) {
+    CVPixelBufferRef pb = NULL;
+    if (f->pixel_buffer && !d->copy_frames) {
+        pb = CVPixelBufferRetain((CVPixelBufferRef)f->pixel_buffer);
+    } else if (f->pixel_buffer) {
+        pb = tb_mtl_copy_buffer(d->mtl, (CVPixelBufferRef)f->pixel_buffer);
+    } else {
+        pb = tb_mtl_copy_planes(d->mtl, f->y, f->y_stride, f->uv, f->uv_stride, f->width, f->height);
+    }
+    if (!pb) {
+        tb_disp_fall_back_to_opengl(d, "a frame could not be put into an IOSurface buffer");
+        return;
+    }
+    if (d->pending) {
+        tb_trace_frame_replaced(d->pending_trace_id);
+        CVPixelBufferRelease(d->pending);
+    }
+    d->pending = pb;
+    d->pending_trace_id = f->trace_id;
+    d->last_video_frame_time = SDL_GetTicks();
+    if (!d->logged_first_metal_frame) {
+        d->logged_first_metal_frame = 1;
+        fprintf(stderr, "[disp] Metal zero-copy: first frame %dx%d %s\n", f->width, f->height,
+                f->pixel_buffer && !d->copy_frames ? "(IOSurface, no copy)" : "(copied into an IOSurface)");
+    }
+    if (tb_disp_metal_slot_free(d)) tb_disp_metal_render(d);
+}
+
+void tb_disp_show_frame(struct tb_display *d, const struct tb_frame *f) {
+    if (!d || !f || f->width <= 0 || f->height <= 0) return;
+    tb_disp_set_connection_state(d, 1);
+    if (d->mtl) {
+        tb_disp_metal_take_frame(d, f);
+        if (d->mtl) return;
+    }
+    tb_disp_sdl_show_frame(d, f);
+}
+
+void tb_disp_tick(struct tb_display *d) {
+    if (!d || !d->is_connected) return;
+    if (d->mtl) {
+        const uint64_t n = tb_disp_tick_count(d);
+        if (d->vsync && n != d->last_seen_tick) {
+            /* Refreshes during a stream that brought no new frame. */
+            if (d->last_seen_tick != 0 && n > d->last_seen_tick &&
+                SDL_GetTicks() - d->last_video_frame_time < 250) {
+                uint64_t missed = n - d->last_seen_tick - (d->new_frame_since_tick ? 1 : 0);
+                tb_trace_repeat((unsigned)missed);
+            }
+            d->last_seen_tick = n;
+            d->new_frame_since_tick = 0;
+        }
+        if (!tb_disp_metal_slot_free(d)) return;
+        if (d->pending ||
+            d->redraw_needed ||
+            (d->cursor_dirty && !tb_disp_metal_video_flowing(d))) {
+            tb_disp_metal_render(d);
+        }
+        return;
+    }
+    /* SDL path: a pointer that moved while no video arrived, at most once a refresh. */
+    if (d->cursor_dirty && d->tex) {
+        const uint32_t now = SDL_GetTicks();
+        if (now - d->last_video_frame_time > 40 && now - d->last_cursor_render_time >= 16) {
+            tb_disp_render_current(d, 0);
+        }
+    }
 }
 
 void tb_disp_set_cursor(struct tb_display *d,
@@ -1416,9 +1761,17 @@ void tb_disp_set_cursor(struct tb_display *d,
     d->cursor_visible = visible;
     d->cursor_type = type;
     d->cursor_large = large;
+    d->cursor_dirty = 1;
+
+    if (d->mtl) {
+        if (d->is_connected && !tb_disp_metal_video_flowing(d) && tb_disp_metal_slot_free(d)) {
+            tb_disp_metal_render(d);
+        }
+        return;
+    }
 
     uint32_t now = SDL_GetTicks();
-    if (now - d->last_video_frame_time > 40) {
+    if (now - d->last_video_frame_time > 40 && now - d->last_cursor_render_time >= 16) {
         if (d->is_connected && d->tex) {
             tb_disp_render_current(d, 0);
         }
@@ -1645,6 +1998,18 @@ static void tb_disp_set_stream_state(struct tb_display *d, int connected, int co
     if (d->is_connected == connected && d->is_connecting == connecting) return;
     d->is_connected = connected;
     d->is_connecting = connecting;
+    if (connected) {
+        if (d->vsync) {
+            tb_vsync_set_display(d->vsync, d->mtl ? tb_mtl_display_id(d->mtl) : 0);
+            tb_vsync_start(d->vsync);
+        }
+    } else {
+        tb_vsync_stop(d->vsync);
+        tb_disp_metal_release_frames(d);
+        d->cursor_dirty = 0;
+        d->redraw_needed = 0;
+        d->last_seen_tick = 0;
+    }
     /* A session starts: the next idle screen opens on the calm view again. */
     if (connected || connecting) d->show_details = 0;
     tb_disp_refresh_window_mode(d);
@@ -1746,6 +2111,8 @@ void tb_disp_render_status(struct tb_display *d,
     snprintf(title, sizeof(title), "%s %s — %s — %s", tb_i18n_get("common.app_name"), TB_RECEIVER_VERSION, ip, status);
     SDL_SetWindowTitle(d->win, title);
 
+    /* On the Metal layer a covered window may wait a second for a drawable. */
+    if (d->mtl && !tb_mtl_window_visible(d->mtl)) return;
     SDL_RenderClear(d->ren);
     if (d->status_tex) SDL_RenderCopy(d->ren, d->status_tex, NULL, NULL);
     SDL_RenderPresent(d->ren);
@@ -1776,6 +2143,7 @@ void tb_disp_render_connecting(struct tb_display *d) {
     }
 
     SDL_SetWindowTitle(d->win, "TargetBridge Receiver — Connecting");
+    if (d->mtl && !tb_mtl_window_visible(d->mtl)) return;
     SDL_RenderClear(d->ren);
     if (d->status_tex) SDL_RenderCopy(d->ren, d->status_tex, NULL, NULL);
     tb_disp_draw_connecting_spinner(d, drawable_w, drawable_h);
