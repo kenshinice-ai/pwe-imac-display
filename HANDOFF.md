@@ -2,7 +2,9 @@
 
 > 状态（2026-10-19）：1.0.0 已发布（GitHub 标签 `pwe-1.0.0`，Homebrew `kenshinice-ai/tap/pwe-imac-display`）；2026-10-16 给它的 release 补上了 FFmpeg 源码包。
 > 1.0.1（接收端加固）在本地分支 `security-1.0.1` 上，已合入 `main` 的打包和许可修正，计划 2026-10-22 发布。
-> 1.1（PWE 自己的界面、自动连接、登录时打开、接收端安静画面）在分支 `pwe-1.1` 上；2026-10-16 按三路评审修了发送端 11 处、接收端 8 处，并打出本地包。等 Lee 试用和 iMac 基线。路线见 `docs/pwe/PLAN-2026-10-15.md`（未入库）。
+> 1.1 在本地分支 `pwe-1.1`（8bfcfcf，2026-10-19 集成，未推送）：基线问题的修复、菜单栏优先的设置重设计、亮度键、Metal 零拷贝渲染、iMac 自己画指针、配对与加密。
+> 接收端 8 组单元测试、发送端 247 个测试、本地无签名打包都通过（2026-10-19，这台 M1）；**全部未在真机上验证**。测试清单 `docs/pwe/TEST-1.1-2026-10-19.md`。
+> 方案和决定：`docs/pwe/PLAN-1.1-2026-10-19.md`、`DESIGN-pairing-2026-10-19.md`、`RESEARCH-Metal-2026-10-19.md`（三份都不入库）。
 > pwestudio.site 产品页冻结中（Lee），方案在 `docs/pwe/SITE-PLAN.md`。
 > 2026-10-19 在真机 iMac18,3（macOS 13.7.8）上做了基线：画面、真 5K（48 和 60 帧）、拔线和睡眠恢复都能用；声音不工作。
 > 结果和证据在 `docs/pwe/BASELINE-iMac18,3.md`（未入库），本文件「八」节是摘要。
@@ -13,6 +15,10 @@
 
 ## 等 Lee
 
+- **[动手] 把给 Marco 的补充安全报告发出去** — 草稿 `docs/pwe/DRAFT-upstream-report-2026-10-19.md`（不入库），用你的 Gmail 回 10-14 那封 · 不发则 `pwe-1.1` 推不了，剪贴板那条修复（`claude/pwe-pairing-1.1-clipboard-check`）也合不进去 · 自 2026-10-19
+- **[动手] 用 Developer ID 打 1.1 的包，按 `docs/pwe/TEST-1.1-2026-10-19.md` 在 iMac 上测** — A–F 六组，F 组的清单不入库 · 不测则 1.1 的所有改动都没有真机证据 · 自 2026-10-19
+- **[决定] `TEST-1.1-2026-10-19.md`「G」节的六件事** — 画面默认值、指针默认由谁画、配对文字、重设计里替你定的几条、登录时弹不弹窗口、iMac 上的 Network Link 开关 · 不定则按现在的默认值发 · 自 2026-10-19
+- **[决定] 解冻 pwestudio.site 并加 `imacdisplay`** — 1.1 已带检查更新，产品名 `imacdisplay` · 不定则「检查更新」只会说「已是最新版本」 · 自 2026-10-19
 - **[动手] 在有 Developer ID 的 Mac 上重打 1.0.1 和 1.1 的测试包** — 步骤见「八」节「在另一台 Mac 上打包」。2026-10-19 这台 MacBook Pro 没有 Developer ID，只能打 ad hoc 包（`pwe/dist/local/adhoc-2026-10-19/`）· 不打则带声音修复的包没有正式签名，没法给别人试 · 自 2026-10-19
 - **[动手] 用 Developer ID 的包在 iMac 上补测** — 键鼠共享、1.0.1 过真线、5K 60 下的解码、延迟、两小时办公（声音和 5K 48 解码已在 ad hoc 包上测过）。接收端升级方法见「八」节 · 不测则 1.0.1 的发布说明和 1.1 的默认档位都没有依据 · 自 2026-10-19
 - **[动手] 1.0.1 发布说明写上：声音、键鼠共享、Network Link 现在能用了** — 1.0.0 正式版里这三个附加功能全被判「不兼容」，开关开着也不起作用（2026-10-19 发现）。修复已在 `security-1.0.1`（d4b4598）和 `pwe-1.1`（436247f）本地提交，未推送 · 不写则 1.0.0 用户不知道升级能修好声音 · 自 2026-10-19
@@ -27,8 +33,9 @@
 - `package.sh` 的接收端 make 行合并后要同时带 `DIRECT_LINK_ONLY=1 COMPACT_IDLE=1 OFFER_LOGIN_ITEM=1`。
 - cask 的 `zap` 加上 `~/Library/LaunchAgents/com.pwegroup.pweimacdisplay.receiver.plist`。
 - 给上游提 PR：发送端「重新打开」按钮只退出不重开（PWE 已在 `rebrand.py` 里修）。
-- 修完 `BASELINE-iMac18,3.md`「发现的问题」里的发送端问题：拨错 Wi‑Fi 地址、5K 60 不被记住、连着时 Mac 睡不着、发现断开慢、显示器名字。另一个会话 2026-10-19 起在做（分支 `claude/zealous-mclean-92c96c`，完成后合进 `pwe-1.1`）。
-- 默认档位改成 5K 60：Lee 在 iMac18,3 上看 60 明显比 48 流畅（2026-10-19）。2014、2015 款的默认档位等那两款的实测。
+- 基线里发送端的问题已在 `pwe-1.1` 修完（2026-10-19），新 2017 款 iMac 默认 5K 60。等真机复测。
+- Lumen Bar 的交接在它自己仓库的分支 `claude/imac-display-handoff-8e14dc`（e27f28a），未合并。和 1.1 一起发。
+- 上游 PR 草稿在 `docs/pwe/notes-2026-10-19/upstream-pr*.md`，都没开。配对相关的要等披露之后。
 
 ## 仓库规矩
 
@@ -51,6 +58,9 @@
 
 > ⚠️ 不要推送本地分支 `security-1.0.1`，等 Lee 批准或到 2026-10-22。否则发布前就公开了它的内容。
 > 原因：按负责任披露的惯例，先给上游维护者一周时间。
+
+> ⚠️ 不要推送 `pwe-1.1`，等 Lee 把补充安全报告发给上游、并且 1.0.1 已发布。否则配对代码会先于报告公开新发现的问题。
+> 原因：负责任披露；2026-10-14 起算的 90 天到 2027-01-12。
 
 > ⚠️ 不要执行 `git push --tags`，也不要推送任何 `v*` 标签。否则上游的 `release.yml` 会在本仓库发出 TargetBridge 的版本。
 > 原因：本地有上游全部 `v*` 标签，而 `release.yml` 由 `v*` 标签触发。
@@ -184,9 +194,9 @@ C 函数 `CGVirtualDisplayCreate` 不存在，但用不到它。
 > ⚠️ 不要在两台 Mac 上同时跑 git 或打包。否则 iCloud 会生成「… 2」这样的冲突副本，弄坏 `.git`。
 > 原因：iCloud 同步不懂 git 的锁。
 
-1. 等 iCloud 同步完。成功判据：`git log --oneline -1 security-1.0.1` 显示 `d4b4598`，`git log --oneline -1 pwe-1.1` 显示 `436247f` 或更新。
+1. 等 iCloud 同步完。成功判据：`git log --oneline -1 security-1.0.1` 显示 `d4b4598`，`git log --oneline -1 pwe-1.1` 显示 `8bfcfcf` 或更新。
 2. 运行 `security find-identity -v -p codesigning`。成功判据：列出 `Developer ID Application: Li Liu (2SQV3H5MH9)`。
-3. 如果要打 1.1 测试包，先确认修问题的会话已经把它的提交合进 `pwe-1.1`。没合就只打 1.0.1。
+3. 打 1.1 的包前，先在那台 Mac 上运行 `pwe/receiver-deps.sh "$TMPDIR/pwe-imacdisplay-deps"`。成功判据：生成 `universal/lib/libsodium.a`（1.1 起要它，没有它 `package.sh` 会停下）。
 4. 切到要打的分支，运行 `pwe/package.sh`。成功判据：最后打印 `pwe/dist/local/PWE-iMac-Display-<版本>.dmg` 和 sha256，`bundle checks passed`。
 5. 挂载 DMG，运行 `codesign -dv "<挂载点>/PWE iMac Display.app"`。成功判据：`Authority=Developer ID Application: Li Liu (2SQV3H5MH9)`。
 6. 正式发 1.0.1 时按「仓库规矩」的发版打包和发版步骤走（`--notarize`，只推一个标签）。
