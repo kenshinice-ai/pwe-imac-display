@@ -40,6 +40,8 @@ struct TBLocalLinkInterface: Identifiable, Hashable {
 
 @MainActor
 final class TBDisplaySenderService: ObservableObject {
+    /// PWE: language last pushed to each idle paired receiver (by Bonjour identity).
+    private var pweLanguagePushed: [String: String] = [:]
     static let shared = TBDisplaySenderService()
 
     @Published var sessions: [TBDisplaySenderSession] = []
@@ -900,41 +902,29 @@ final class TBDisplaySenderService: ObservableObject {
         let languageCode = language.fileStem
         for receiver in receivers {
             let candidateIPs = [receiver.preferredIP, receiver.thunderboltIP, receiver.networkIP]
+            // PWE: a receiver showing this Mac gets the language inside its session;
+            // the others only when paired, over a short encrypted connection, once
+            // per language (discovery updates arrive often).
+            if sessions.contains(where: { $0.isConnected && candidateIPs.contains($0.receiverIP) }) { continue }
+            let hint = receiver.stableIdentity
+            guard let expectedID = PWEPairingStore.shared.expectedReceiverID(forHint: hint),
+                  pweLanguagePushed[hint] != languageCode else { continue }
+            pweLanguagePushed[hint] = languageCode
             var sentTo = Set<String>()
             for ip in candidateIPs where !ip.isEmpty && sentTo.insert(ip).inserted {
-                sendLanguageUpdate(to: ip, languageCode: languageCode)
+                sendLanguageUpdate(to: ip, languageCode: languageCode, expectedID: expectedID)
             }
         }
     }
 
-    private func sendLanguageUpdate(to receiverIP: String, languageCode: String) {
+    private func sendLanguageUpdate(to receiverIP: String, languageCode: String, expectedID: Data) {
         guard !receiverIP.isEmpty,
               let packet = TBMonitorProtocol.makeJSONPacket(
                 type: .uiLanguage,
                 value: TBMonitorUILanguageUpdate(uiLanguage: languageCode)
               )
         else { return }
-
-        let connection = NWConnection(
-            host: NWEndpoint.Host(receiverIP),
-            port: NWEndpoint.Port(rawValue: TBMonitorProtocol.port)!,
-            using: .tcp
-        )
-
-        connection.stateUpdateHandler = { state in
-            switch state {
-            case .ready:
-                connection.send(content: packet, completion: .contentProcessed { _ in
-                    connection.cancel()
-                })
-            case .failed, .cancelled:
-                connection.cancel()
-            default:
-                break
-            }
-        }
-
-        connection.start(queue: DispatchQueue.global(qos: .utility))
+        PWESecureOneShot.send(packet, to: receiverIP, expectedID: expectedID)
     }
 
     private func detectLocalInterfaces() -> [TBLocalLinkInterface] {

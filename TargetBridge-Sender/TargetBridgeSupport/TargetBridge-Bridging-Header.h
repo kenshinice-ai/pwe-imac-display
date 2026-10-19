@@ -82,4 +82,9 @@ extern IOReturn IOAVServiceWriteI2C(IOAVServiceRef service,
                                     void *inputBuffer,
                                     uint32_t inputBufferSize);
 
+// MARK: - PWE: pairing and encrypted sessions (TargetBridge-Shared/secure)
+
+#include "pwe_secure.h"
+#include "pwe_keystore.h"
+
 #endif /* TargetBridge_Bridging_Header_h */
