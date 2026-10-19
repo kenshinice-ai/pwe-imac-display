@@ -37,6 +37,17 @@ CFLAGS   += -DTB_RECEIVER_OFFER_LOGIN_ITEM=$(OFFER_LOGIN_ITEM)
 
 LDFLAGS  += $(shell $(PKG) --libs libavcodec libavutil libswscale sdl2)
 
+# ---- PWE: pairing and encrypted sessions -----------------------------------
+# libsodium (ISC, static in release builds: pwe/receiver-deps.sh). The secure
+# layer is shared with the sender and lives in TargetBridge-Shared/secure/.
+SEC_DIR  := ../../TargetBridge-Shared/secure
+SODIUM_CFLAGS = $(shell $(PKG) --cflags libsodium)
+SODIUM_LIBS   = $(shell $(PKG) --libs libsodium)
+CFLAGS   += -I$(SEC_DIR) $(SODIUM_CFLAGS)
+LDFLAGS  += $(SODIUM_LIBS) -framework Security
+SEC_OBJ  = src/tb_conn.o src/pwe_secure.o src/pwe_keystore.o
+# ---- end PWE ---------------------------------------------------------------
+
 UNAME_S  := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
 LDFLAGS  += -framework ApplicationServices -framework AppKit -framework CoreFoundation -framework CoreGraphics -framework CoreText -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework IOSurface -framework CoreServices -framework CoreAudio -framework SystemConfiguration -framework ServiceManagement
@@ -52,7 +63,7 @@ OBJC_SRC_PWE_RENDER = src/tb_metal_video.m
 LDFLAGS += -framework Metal -framework QuartzCore
 OBJC_SRC = src/tb_gesture_bridge.m src/tb_display_tweaks.m src/tb_login_item.m
 OBJC_SRC += $(OBJC_SRC_PWE_RENDER)
-OBJ = $(C_SRC:.c=.o) $(OBJC_SRC:.m=.o)
+OBJ = $(C_SRC:.c=.o) $(OBJC_SRC:.m=.o) $(SEC_OBJ)
 BIN = tbreceiver
 
 all: $(BIN)
@@ -66,9 +77,15 @@ $(BIN): $(OBJ)
 %.o: %.m
 	$(CC) $(CFLAGS) -fobjc-arc -c -o $@ $<
 
+# PWE: shared sources build their objects here, not in TargetBridge-Shared/.
+src/pwe_%.o: $(SEC_DIR)/pwe_%.c $(SEC_DIR)/pwe_secure.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 clean:
 	rm -f $(OBJ) $(BIN) $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEIVER_PROFILE_BIN) test_monitor_shield
 	rm -f $(PWE_RENDER_TEST_BINS)
+	rm -f $(TEST_SECURE_BIN) bench_secure secure_receiver secure_peer
+	rm -rf *.dSYM
 
 # Unit tests for the packet parser. net.c is pure POSIX, so this needs no
 # ffmpeg/SDL/pkgconf — it runs anywhere, including CI, with no hardware.
@@ -97,12 +114,44 @@ $(TEST_RECEIVER_PROFILE_BIN): tests/test_receiver_profile.c src/receiver_profile
 # Receiver rendering (PWE 1.1): tests for the pure-C parts.
 PWE_RENDER_TEST_BINS = test_trace test_metal_video test_cursor_image
 
-test: $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEIVER_PROFILE_BIN) $(PWE_RENDER_TEST_BINS)
+
+# ---- PWE: secure layer tests (need libsodium; AddressSanitizer on) -----------
+TEST_SECURE_BIN = test_secure
+SEC_TEST_FLAGS = $(TEST_CFLAGS) -O1 -fsanitize=address,undefined -fno-omit-frame-pointer \
+                 -D_DARWIN_C_SOURCE -Isrc -I$(SEC_DIR) $(SODIUM_CFLAGS)
+SEC_TEST_LIBS  = $(SODIUM_LIBS) $(TEST_LDFLAGS) -framework Security
+SEC_TEST_SRC   = $(SEC_DIR)/pwe_secure.c $(SEC_DIR)/pwe_keystore.c src/tb_conn.c src/net.c
+
+$(TEST_SECURE_BIN): tests/test_secure.c $(SEC_TEST_SRC) $(SEC_DIR)/pwe_secure.h src/net.h src/proto.h
+	$(CC) $(SEC_TEST_FLAGS) tests/test_secure.c $(SEC_TEST_SRC) $(SEC_TEST_LIBS) -o $@
+
+secure_receiver: tests/secure_receiver.c $(SEC_TEST_SRC) $(SEC_DIR)/pwe_keystore.h
+	$(CC) $(SEC_TEST_FLAGS) tests/secure_receiver.c $(SEC_TEST_SRC) $(SEC_TEST_LIBS) -o $@
+
+secure_peer: tests/secure_peer.c $(SEC_TEST_SRC) $(SEC_DIR)/pwe_keystore.h
+	$(CC) $(SEC_TEST_FLAGS) tests/secure_peer.c $(SEC_TEST_SRC) $(SEC_TEST_LIBS) -o $@
+
+# Pairing + encrypted stream between two processes over loopback, with the
+# login keychain. A test hook until main.c uses tb_conn (step R2).
+test-loopback: secure_receiver secure_peer
+	zsh tests/secure_loopback.sh
+
+# Without sanitizers, optimised as the apps are.
+bench_secure: tests/test_secure.c $(SEC_TEST_SRC)
+	$(CC) $(TEST_CFLAGS) -D_DARWIN_C_SOURCE -Isrc -I$(SEC_DIR) $(SODIUM_CFLAGS) \
+	  tests/test_secure.c $(SEC_TEST_SRC) $(SEC_TEST_LIBS) -o $@
+
+bench-secure: bench_secure
+	./bench_secure --bench
+# ---- end PWE ---------------------------------------------------------------
+
+test: $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEIVER_PROFILE_BIN) $(PWE_RENDER_TEST_BINS) $(TEST_SECURE_BIN)
 	./$(TEST_BIN)
 	./$(TEST_INPUT_QUEUE_BIN)
 	./$(TEST_IDLE_WATCHDOG_BIN)
 	./$(TEST_RECEIVER_PROFILE_BIN)
 	for t in $(PWE_RENDER_TEST_BINS); do ./$$t || exit 1; done
+	./$(TEST_SECURE_BIN)
 
 test_trace: tests/test_trace.c src/tb_trace.c src/tb_trace.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_trace.c src/tb_trace.c -o $@
@@ -123,4 +172,4 @@ test_monitor_shield: tests/test_monitor_shield.m src/tb_gesture_bridge.m src/tb_
 test-monitor-shield: test_monitor_shield
 	./test_monitor_shield
 
-.PHONY: all clean test test-monitor-shield
+.PHONY: all clean test test-monitor-shield test-loopback bench-secure

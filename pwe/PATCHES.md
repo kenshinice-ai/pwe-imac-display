@@ -24,6 +24,8 @@
 | `c7abb3c`（同上） | 接收端自己画指针：接收端配置里 `cursorImage`；新包 `0x39` 带真实指针图像；`0x32` 加 `image`；发送端只对声明了的接收端关掉 `showsCursor`，位置由后台线程的事件 tap 发出（至多 240 Hz）；镜像模式按内容矩形换算（大光标路径也改了） | 指针只跟着视频帧动，约 40–70 ms 延迟（研究文档第 4 节） | 待提，收发两端一起 | 未合并；隐藏指针的判断（`CGCursorIsVisible`）未验证 |
 | `2420e30`、`81850ee`（同上） | 回环冒烟测试加第 5–7 段：Metal + 本地指针、拷贝回退、OpenGL 回退；测试用的接收端不进 Bonjour、用 54399 端口（`TB_RECEIVER_NO_BONJOUR`、`TB_RECEIVER_TEST_PORT`，只供测试） | 回退路径要有测试；测试机上开着的发送端会抢走接收端唯一的连接 | 随上两条一起提 | 未合并 |
 | `00a2d89`（同上） | 渲染、出帧节奏、本地指针三个开关在没有环境变量时读 `defaults`（`TBReceiverRenderDriver`、`TBReceiverPacing`、`TBReceiverCursorImage`） | iMac 上 Metal 出问题时，一行命令就能回到 OpenGL | 随 `7c300b4` 一起提 | 未合并 |
+| `46d303d`、`70f7119`（`claude/pwe-pairing-1.1`） | 接收端：`proto.h` 新增包类型 0x50–0x5F；`net.h` 声明 `tb_conn`（实现在新文件 `src/tb_conn.c`）；`Makefile` 加 libsodium 链接块和 `test_secure`、`test-loopback`、`bench-secure`；`.gitignore` 加测试产物。共用：新目录 `TargetBridge-Shared/secure/`（`pwe_secure`、`pwe_keystore`）。测试：`tests/test_secure.c`、`secure_receiver.c`、`secure_peer.c`、`secure_loopback.sh` | 1.1 配对与加密（Lee 2026-10-19 定方案）。`main.c` 尚未接入（R2，等 Metal 线合入） | upstream PR after disclosure：披露后再提，作为可选模块 | 本地提交，未推 |
+| `7fdeeea`（`claude/pwe-pairing-1.1`） | 发送端：`TBDisplaySenderService.swift` 连接先握手、所有发送经 `PWESecureLink`、接收先解密；`TBDisplaySenderManager.swift` 语言推送改走加密会话；`TBDisplaySenderAutomation.swift` 等用户回答时不重连；`TBMonitorProtocol.swift` 新增包类型；新文件 `TBDisplayShared/PWESecureLink.swift`；桥接头引入 `pwe_secure.h`；`project.yml` 和工程文件加 libsodium | 同上 | upstream PR after disclosure | 本地提交，未推 |
 | `3055222` | 删除 `.github/FUNDING.yml` | Lee 2026-10-14 定：本仓库不显示上游的赞助按钮 | 不提交（只属于 PWE） | 保留 |
 
 打包时的改名（`pwe/rebrand.py`）不改仓库里的文件，所以不在这张表里。它的锚点由脚本自己检查：上游改了对应的文字，脚本就会停下。

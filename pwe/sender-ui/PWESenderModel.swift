@@ -17,6 +17,8 @@ struct PWEReceiver: Equatable, Identifiable {
     /// What the receiver reports: hardware HEVC decode and its panel's width.
     var supportsHEVC = false
     var panelWidth: Int?
+    /// A PWE iMac Display receiver (any version), not upstream's TargetBridge.
+    var runsPWE = true
 }
 
 enum PWEStage: Equatable {
@@ -40,6 +42,8 @@ enum PWEPhase: Equatable {
     case connecting(PWEReceiver?, PWEStage)
     case connected(PWEReceiver?)
     case interrupted(PWEReceiver?, PWEReason, retrying: Bool)
+    /// Pairing, or a question about an unencrypted connection: the next step is the person's.
+    case security(PWEReceiver?, PWESecurityState)
 }
 
 /// Everything the window's phase depends on, read from the engine in one go.
@@ -53,6 +57,8 @@ struct PWEEngineState {
     var retrying = false
     var receivers: [PWEReceiver] = []
     var target: PWEReceiver?
+    /// The session's pairing and encryption state.
+    var security: PWESecurityState = .none
 }
 
 /// Engine state in, phase out: no engine, no clock, so every rule has a test
@@ -75,7 +81,8 @@ enum PWEPhaseRules {
     /// the engine resets the session to "stopped" and starts over; without this
     /// the window would flash Ready and Connecting every two seconds.
     static func heldFailure(after previous: PWEReason?, _ state: PWEEngineState) -> PWEReason? {
-        guard state.retrying, !state.isStreaming else { return nil }
+        // A pairing step ends a connection on purpose; it is not a failure to hold.
+        guard state.retrying, !state.isStreaming, !asksPerson(state.security) else { return nil }
         if let status = state.status {
             if case .captureActive = status { return nil }
             if let reason = failure(status) { return reason }
@@ -83,9 +90,17 @@ enum PWEPhaseRules {
         return previous
     }
 
+    /// Security states the window answers: a code to type, a question, a refusal.
+    static func asksPerson(_ security: PWESecurityState) -> Bool {
+        security.waitsForUser || security == .checkingCode
+    }
+
     static func phase(_ state: PWEEngineState, held: PWEReason?) -> PWEPhase {
         guard state.hasPermission else { return .needsPermission }
         let target = state.target
+        // The engine closes the connection to ask, so its status reads as a failure;
+        // the security state says what really happened.
+        if asksPerson(state.security) { return .security(target, state.security) }
 
         if let status = state.status {
             switch status {
@@ -249,6 +264,9 @@ final class PWESenderModel: ObservableObject {
     private var noticeTask: Task<Void, Never>?
     /// Snapshot values, for a model without an engine.
     private var previewSound: PWESound = .onlyIMac
+    private var previewSecurity: PWESecurityState = .none
+    /// The iMacs this Mac has paired with (keychain), read when Settings asks.
+    @Published private(set) var pairedIMacs: [PWEPairedReceiver] = []
 
     enum Keys {
         static let autoConnect = "pwe.autoConnect"
@@ -320,7 +338,10 @@ final class PWESenderModel: ObservableObject {
     }
 
     /// A fixed phase for snapshots: no engine, nothing changes.
-    init(preview phase: PWEPhase, setupFinished: Bool = true, inputRole: PWEInputRole = .off) {
+    init(preview phase: PWEPhase, setupFinished: Bool = true, inputRole: PWEInputRole = .off,
+         security: PWESecurityState = .none, paired: [PWEPairedReceiver] = []) {
+        self.previewSecurity = security
+        self.pairedIMacs = paired
         self.service = nil
         self.defaults = UserDefaults(suiteName: "pwe.preview") ?? .standard
         self.autoConnect = true
@@ -379,7 +400,8 @@ final class PWESenderModel: ObservableObject {
             isStreaming: session?.isStreaming ?? false,
             retrying: retrying,
             receivers: receivers(service),
-            target: current(service))
+            target: current(service),
+            security: session?.pweSecurity ?? .none)
     }
 
     private func receivers(_ service: TBDisplaySenderService) -> [PWEReceiver] {
@@ -389,7 +411,8 @@ final class PWESenderModel: ObservableObject {
                                                              hostName: $0.hostName),
                         detail: PWEReceiverNaming.friendlyDetail(panelSummary: $0.panelSummary),
                         supportsHEVC: $0.supportsHEVCDecode,
-                        panelWidth: PWEReceiverNaming.panelSize($0.panelSummary)?.width)
+                        panelWidth: PWEReceiverNaming.panelSize($0.panelSummary)?.width,
+                        runsPWE: PWEReceiverNaming.isPWE(receiverName: $0.receiverName, serviceName: $0.serviceName))
         }
     }
 
@@ -410,6 +433,8 @@ final class PWESenderModel: ObservableObject {
         guard let session = service.sessions.first,
               let discovered = service.discoveredReceivers.first(where: { $0.stableIdentity == receiver.id })
         else { return }
+        // A pairing question left over from before would hold the engine's retry loop.
+        if session.pweSecurity.waitsForUser { session.pweCancelPairing() }
         service.applyDiscoveredReceiver(discovered, to: session)
         startConnecting()
     }
@@ -443,7 +468,9 @@ final class PWESenderModel: ObservableObject {
     func disconnect() {
         pausedUntilReplug = true
         heldFailure = nil
-        session?.stop()  // the engine's Stop also ends its retrying
+        // The engine's Stop also ends its retrying. While it asks a pairing
+        // question, Cancel also tells the iMac to hide its code.
+        if let session, session.pweSecurity.waitsForUser { session.pweCancelPairing() } else { session?.stop() }
         wasRetrying = TBSenderAutomation.isConnectingAutomatically
         refresh()
     }
@@ -690,7 +717,8 @@ final class PWESenderModel: ObservableObject {
     var knownReceiverName: String? {
         switch phase {
         case .ready(let receiver): return receiver.name
-        case .connecting(let receiver, _), .connected(let receiver), .interrupted(let receiver, _, _): return receiver?.name
+        case .connecting(let receiver, _), .connected(let receiver), .interrupted(let receiver, _, _),
+             .security(let receiver, _): return receiver?.name
         case .needsPermission, .searching, .choose: return nil
         }
     }
@@ -712,7 +740,7 @@ final class PWESenderModel: ObservableObject {
     /// Something is in progress that Disconnect (or Cancel) would end.
     var canDisconnect: Bool {
         switch phase {
-        case .connecting, .connected: return true
+        case .connecting, .connected, .security: return true
         case .interrupted(_, _, let retrying): return retrying
         default: return false
         }
@@ -742,6 +770,75 @@ final class PWESenderModel: ObservableObject {
     }
 
     func openLoginItemsSettings() { SMAppService.openSystemSettingsLoginItems() }
+
+    // MARK: - Pairing and encryption (the engine's PWESecureLink)
+
+    var security: PWESecurityState {
+        if case .security(_, let state) = phase { return state }
+        return session?.pweSecurity ?? previewSecurity
+    }
+
+    /// The picture is up without encryption (Lee's D1: allowed, with a warning).
+    var isUnencrypted: Bool { isShowing && security == .unencrypted }
+
+    func submitCode(_ code: String) {
+        heldFailure = nil
+        pausedUntilReplug = false
+        session?.pweSubmitPairingCode(code)
+        refresh()
+    }
+
+    func retrySecurely() {
+        heldFailure = nil
+        pausedUntilReplug = false
+        session?.pweRetry()
+        refresh()
+    }
+
+    func connectUnencrypted() {
+        heldFailure = nil
+        pausedUntilReplug = false
+        session?.pweConnectUnencrypted()
+        refresh()
+    }
+
+    /// For an iMac paired before that now offers only an unencrypted connection:
+    /// forget it here, then ask again (the question then offers to connect).
+    func forgetThisIMac() {
+        guard let session else { return }
+        if let id = PWEPairingStore.shared.expectedReceiverID(forHint: session.pweReceiverHint) {
+            PWEPairingStore.shared.forget(receiverID: PWEPairingStore.hex(id))
+            NSLog("[pwe] forgot the paired iMac \(session.pweReceiverHint)")
+        }
+        refreshPairedIMacs()
+        retrySecurely()
+    }
+
+    /// The compatibility switch: unencrypted connections allowed, with a warning.
+    var allowUnencrypted: Bool {
+        get { service == nil ? true : PWEPairingStore.allowUnencrypted }
+        set {
+            guard service != nil, newValue != allowUnencrypted else { return }
+            PWEPairingStore.allowUnencrypted = newValue
+            objectWillChange.send()
+            NSLog("[pwe] unencrypted connections \(newValue ? "allowed" : "turned off")")
+            if !newValue, session?.pweSecurity == .unencrypted { disconnect() }
+        }
+    }
+
+    func turnOffUnencrypted() { allowUnencrypted = false }
+
+    func refreshPairedIMacs() {
+        guard service != nil else { return }
+        pairedIMacs = PWEPairingStore.shared.pairedReceivers().sorted { $0.pairedAt > $1.pairedAt }
+    }
+
+    func forget(_ receiver: PWEPairedReceiver) {
+        guard service != nil else { return }
+        PWEPairingStore.shared.forget(receiverID: receiver.id)
+        NSLog("[pwe] forgot the paired iMac \(receiver.name)")
+        refreshPairedIMacs()
+    }
 
     // MARK: - Settings: display
 

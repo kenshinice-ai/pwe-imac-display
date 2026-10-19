@@ -69,6 +69,11 @@ struct PWEMainView: View {
         case .connecting: return "connecting"
         case .connected: return model.setupFinished ? "connected" : "setup"
         case .interrupted: return "interrupted"
+        case .security(_, let security):
+            switch security {
+            case .needsCode, .wrongCode, .codeExpired, .checkingCode: return "code"
+            default: return "question"
+            }
         }
     }
 
@@ -81,6 +86,8 @@ struct PWEMainView: View {
         case .connecting(let receiver, let stage): connectingView(receiver, stage)
         case .connected(let receiver): connectedView(receiver)
         case .interrupted(let receiver, let reason, let retrying): interruptedView(receiver, reason, retrying)
+        case .security(let receiver, let security): PWEPairingView(model: model, strings: strings,
+                                                                   receiver: receiver, security: security)
         }
     }
 
@@ -179,6 +186,7 @@ struct PWEMainView: View {
         if model.setupFinished {
             VStack(alignment: .leading, spacing: 16) {
                 connectedHeader(receiver)
+                if model.isUnencrypted { unencryptedWarning }
                 brightnessSlider
                 HStack(spacing: 10) {
                     Button(strings.arrange) { model.openDisplaySettings() }
@@ -200,6 +208,7 @@ struct PWEMainView: View {
     private func setupView(_ receiver: PWEReceiver?) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             connectedHeader(receiver)
+            if model.isUnencrypted { unencryptedWarning }
             VStack(alignment: .leading, spacing: 12) {
                 Text(strings.setupTitle).font(.headline)
                 preference(strings.launchAtLogin, isOn: Binding(
@@ -236,6 +245,19 @@ struct PWEMainView: View {
                 .accessibilityHidden(true)
             Text(strings.connectedTitle(receiver?.name)).font(.title3.weight(.semibold))
         }
+    }
+
+    /// D1: an unencrypted session is allowed, and always says so, with the way out.
+    private var unencryptedWarning: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(strings.unencryptedBanner, systemImage: "lock.open.fill")
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(strings.turnOffUnencrypted) { model.turnOffUnencrypted() }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
     }
 
     private var brightnessSlider: some View {

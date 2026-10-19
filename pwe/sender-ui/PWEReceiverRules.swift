@@ -28,6 +28,12 @@ enum PWEReceiverNaming {
         return name.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// PWE's receiver advertises its own name; upstream's says TargetBridge. Used
+    /// only to word a message (update to 1.1, or the original receiver), never to trust.
+    static func isPWE(receiverName: String, serviceName: String) -> Bool {
+        receiverName.hasPrefix("PWE iMac Display") || serviceName.hasPrefix("PWE iMac Display")
+    }
+
     /// The receiver's "iMac (5120x2880)" becomes "5120 × 2880": the panel always
     /// calls itself iMac, so the name adds nothing next to the iMac's own name.
     static func friendlyDetail(panelSummary: String) -> String {

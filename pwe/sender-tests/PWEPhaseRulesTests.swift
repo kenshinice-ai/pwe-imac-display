@@ -14,7 +14,8 @@ final class PWEPhaseRulesTests: XCTestCase {
         streaming: Bool = false,
         receivers: [PWEReceiver]? = nil,
         target: PWEReceiver?? = nil,
-        permission: Bool = true
+        permission: Bool = true,
+        security: PWESecurityState = .none
     ) -> PWEEngineState {
         PWEEngineState(
             hasPermission: permission,
@@ -23,7 +24,8 @@ final class PWEPhaseRulesTests: XCTestCase {
             isStreaming: streaming,
             retrying: retrying,
             receivers: receivers ?? [imac],
-            target: target ?? imac)
+            target: target ?? imac,
+            security: security)
     }
 
     /// Runs a sequence of engine states through the rules the way the model does.
@@ -131,5 +133,49 @@ final class PWEPhaseRulesTests: XCTestCase {
 
     func testFirstAttemptWhileRetryingShowsConnecting() {
         XCTAssertEqual(PWEPhaseRules.phase(state(.ready, retrying: true), held: nil), .connecting(imac, .reaching))
+    }
+
+    // MARK: - Pairing
+
+    func testACodeToTypeBeatsTheConnectingStatus() {
+        // The iMac shows its code while the TCP connection is up.
+        let waiting = state(.waitingDisplayProfile, retrying: true, connected: true,
+                            security: .needsCode(secondsLeft: 60, identityChanged: false))
+        XCTAssertEqual(PWEPhaseRules.phase(waiting, held: nil),
+                       .security(imac, .needsCode(secondsLeft: 60, identityChanged: false)))
+        XCTAssertEqual(PWEPhaseRules.phase(state(.connecting("x"), security: .checkingCode), held: nil),
+                       .security(imac, .checkingCode))
+    }
+
+    func testAClosedPairingStepIsNotACableFailure() {
+        // The engine closes the connection after a wrong code and reports "connection failed".
+        let wrong = state(.connectionFailed("PWE: wrong pairing code"), retrying: true, security: .wrongCode)
+        XCTAssertNil(PWEPhaseRules.heldFailure(after: nil, wrong))
+        XCTAssertEqual(PWEPhaseRules.phase(wrong, held: nil), .security(imac, .wrongCode))
+        // The next code goes out: connecting, with no old failure held over it.
+        var held = PWEPhaseRules.heldFailure(after: nil, wrong)
+        let next = state(.connecting("x"), retrying: true)
+        held = PWEPhaseRules.heldFailure(after: held, next)
+        XCTAssertEqual(PWEPhaseRules.phase(next, held: held), .connecting(imac, .reaching))
+    }
+
+    func testQuestionsAndRefusalsWaitForThePerson() {
+        for security in [PWESecurityState.legacyReceiver(previouslyPaired: false), .legacyReceiver(previouslyPaired: true),
+                         .refused(.notOnCable), .locked(seconds: 60), .codeExpired] {
+            XCTAssertEqual(PWEPhaseRules.phase(state(.stopped, retrying: true, security: security), held: nil),
+                           .security(imac, security))
+        }
+    }
+
+    func testEncryptedOrUnencryptedSessionsAreJustConnected() {
+        let live = state(.captureActive("x", "y", .extendedDesktop), connected: true, streaming: true,
+                         security: .unencrypted)
+        XCTAssertEqual(PWEPhaseRules.phase(live, held: nil), .connected(imac))
+        XCTAssertEqual(PWEPhaseRules.phase(state(.connecting("x"), security: .negotiating), held: nil),
+                       .connecting(imac, .reaching))
+    }
+
+    func testPermissionStillComesFirst() {
+        XCTAssertEqual(PWEPhaseRules.phase(state(permission: false, security: .wrongCode), held: nil), .needsPermission)
     }
 }

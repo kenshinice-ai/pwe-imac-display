@@ -745,7 +745,7 @@ private final class TBVideoPipeline: @unchecked Sendable {
 
     private let preset: TBDisplayCapturePreset
     private let codecType: CMVideoCodecType
-    private let connection: NWConnection
+    private let connection: PWESecureLink   // PWE: seals once the session is encrypted
     private let displayName: String
     private let displayID: CGDirectDisplayID
     private let usesRawNV12: Bool
@@ -773,7 +773,7 @@ private final class TBVideoPipeline: @unchecked Sendable {
 
     init(preset: TBDisplayCapturePreset,
          codecType: CMVideoCodecType,
-         connection: NWConnection,
+         connection: PWESecureLink,
          displayName: String,
          displayID: CGDirectDisplayID,
          usesRawNV12: Bool,
@@ -1447,6 +1447,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     @Published var language: TBDisplaySenderLanguage {
         didSet {
             refreshLocalizedText()
+            pweSendLanguageUpdate()   // PWE: inside the encrypted session
         }
     }
     @Published var largeCursor: Bool
@@ -1524,6 +1525,13 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     @Published var inputBindings: [TBInputBinding] = []
 
     private var connection: NWConnection?
+    // PWE: pairing and encrypted sessions (TBDisplayShared/PWESecureLink.swift).
+    private var pweLink: PWESecureLink?
+    @Published private(set) var pweSecurity: PWESecurityState = .none
+    private var pwePendingCode: String?
+    private var pweAllowUnencrypted = false
+    private var pweIdentityChanged = false
+    private var pweHelloTimeout: DispatchWorkItem?
     private let connectionQueue = DispatchQueue(label: "fd.tbmonitor.sender.connection", qos: .userInteractive)
     private var recvBuffer = Data()
 
@@ -1861,6 +1869,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             using: params
         )
         connection = conn
+        pweLink = PWESecureLink(connection: conn, plaintext: pweAllowUnencrypted)
 
         conn.stateUpdateHandler = { [weak self, weak conn] state in
             Task { @MainActor [weak self, weak conn] in
@@ -1872,12 +1881,9 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                     self.isConnected = true
                     TBLog.connection.info("connect: ready — \(self.receiverIP, privacy: .public) via \(self.connectInterfaceName ?? "?", privacy: .public)")
                     self.setStatus(.waitingDisplayProfile)
-                    self.startHeartbeat()
-                    self.sendHello()
-                    self.sendInputControlModeUpdate()
-                    self.sendBrightnessUpdate()
-                    self.sendVolumeUpdate()
                     self.receiveLoop(on: conn)
+                    // PWE: pair or authenticate first; pweSessionReady() starts the session.
+                    self.pweBeginSession()
                 case .waiting(let error):
                     // The dial cannot proceed yet (no route, host down, cable
                     // unplugged, firewall drop, …). Record and log the real
@@ -1953,7 +1959,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     }
 
     private func performCableTest() async throws -> Double {
-        guard let conn = connection else {
+        guard let conn = pweLink else {
             throw NSError(domain: "TBDisplaySenderService", code: -1, userInfo: [NSLocalizedDescriptionKey: "No connection"])
         }
 
@@ -2067,6 +2073,9 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         completion: (@MainActor @Sendable () -> Void)? = nil
     ) {
         TBSenderAutomation.suspendAutomaticReconnectAfterUserStop()
+        // PWE: a Stop ends any consent to an unencrypted session.
+        pweAllowUnencrypted = false
+        if !pweSecurity.waitsForUser { pweSecurity = .none }
         stop(
             resetStatusTo: .stopped,
             persistArrangement: persistArrangement,
@@ -2096,6 +2105,10 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         teardownCompletion: (@MainActor @Sendable () -> Void)? = nil
     ) {
         let connectionToClose = connection
+        let linkToClose = pweLink
+        pweHelloTimeout?.cancel()
+        pweHelloTimeout = nil
+        if !pweSecurity.waitsForUser, pweSecurity != .checkingCode { pweSecurity = .none }
         captureRestartGeneration &+= 1
         isRestartingCaptureAfterWake = false
         if persistArrangement {
@@ -2135,11 +2148,13 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         suppressedTriggerKeyCode = nil
         connectionToClose?.stateUpdateHandler = nil
         connection = nil
+        pweLink = nil
         sendTeardownAndClose(
             reason: teardownReason,
-            over: connectionToClose,
+            over: linkToClose,
             completion: teardownCompletion
         )
+        linkToClose?.close()
         let currentSession = session
         Task { @MainActor in
             currentSession.destroy()
@@ -2360,7 +2375,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
 
     private func sendTeardownAndClose(
         reason: String,
-        over connection: NWConnection?,
+        over connection: PWESecureLink?,
         completion: (@MainActor @Sendable () -> Void)? = nil
     ) {
         guard let connection else {
@@ -2431,7 +2446,12 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     }
 
     private func drainPacketsOrThrow() throws {
-        while let (type, payload) = try TBMonitorProtocol.drainPacket(from: &recvBuffer) {
+        while let (packetType, packetPayload) = try TBMonitorProtocol.drainPacket(from: &recvBuffer) {
+            // PWE: handshake packets and sealed records first; nil = handled here.
+            guard case let (type, payload)? = pweInbound(packetType, packetPayload) else {
+                if pweLink == nil { return }
+                continue
+            }
             switch type {
             case .displayProfile:
                 handleDisplayProfile(payload)
@@ -3027,7 +3047,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                     "capture: codec fallback preference=\(self.codecPreference.rawValue, privacy: .public) selected=\(codecName, privacy: .public)"
                 )
             }
-            guard let connection else { return false }
+            guard let connection = pweLink else { return false }
 
             // The encode/send pipeline runs entirely on its own serial queue,
             // off the main thread, so SwiftUI layout can never stall frame
@@ -4202,7 +4222,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     }
 
     private func send(_ packet: Data) {
-        connection?.send(content: packet, completion: .contentProcessed({ _ in }))
+        pweLink?.send(content: packet, completion: .contentProcessed({ _ in }))
     }
 
     func sendInputEvent(_ event: TBMonitorInputEvent) {
@@ -4343,5 +4363,256 @@ private final class SBAudioConverter: Sendable {
 
     func convert(sampleBuffer: CMSampleBuffer) -> Data? {
         return converterState.convert(sampleBuffer: sampleBuffer)
+    }
+}
+
+// MARK: - PWE: pairing and encrypted sessions
+//
+// connect() opens the TCP connection; on .ready, pweBeginSession() runs the
+// handshake (TBDisplayShared/PWESecureLink.swift). Only when it ends secure, or
+// the user chose an unencrypted session, does pweSessionReady() start the
+// usual protocol (hello, input mode, brightness, volume, heartbeat).
+
+extension TBDisplaySenderSession {
+    /// The user typed the code shown on the iMac. Works while the connection
+    /// waits for it, and after a wrong or expired code (it reconnects).
+    func pweSubmitPairingCode(_ code: String) {
+        let digits = code.filter(\.isNumber)
+        guard digits.count == Int(PWE_SEC_CODE_DIGITS) else { return }
+        if let link = pweLink, link.mode == .negotiating, case .needsCode = pweSecurity {
+            pweSecurity = .checkingCode
+            pweHandle(link.submit(code: digits), on: link)
+            return
+        }
+        pwePendingCode = digits
+        pweSecurity = .checkingCode
+        if connection == nil { connect() }
+    }
+
+    /// The user closed the code dialog or a question without going on.
+    func pweCancelPairing() {
+        pwePendingCode = nil
+        if let link = pweLink, link.mode == .negotiating, case .needsCode = pweSecurity {
+            _ = link.submit(code: nil)   // tells the iMac to hide its code
+        }
+        pweSecurity = .none
+        stop()   // also holds automatic reconnect, as a Stop does
+    }
+
+    /// Try again after a refusal or a lock (the cable is back, the minute is up).
+    func pweRetry() {
+        pweSecurity = .negotiating
+        if connection == nil { connect() }
+    }
+
+    /// The user agreed to an unencrypted session with this receiver (after
+    /// `.legacyReceiver(previouslyPaired: false)`). Holds until Stop.
+    func pweConnectUnencrypted() {
+        guard PWEPairingStore.allowUnencrypted else {
+            pweSecurity = .refused(.unencryptedNotAllowed)
+            return
+        }
+        pweAllowUnencrypted = true
+        pweSecurity = .negotiating
+        if connection == nil { connect() }
+    }
+
+    /// Ask the iMac for a code and pair again, although both sides have keys.
+    func pwePairAgain() {
+        pwePendingCode = ""
+        if connection != nil { stopForAutomaticReconnect() }
+        pweSecurity = .negotiating
+        connect()
+    }
+
+    /// Bonjour identity of the receiver this session dials: only a hint, used
+    /// to notice a changed key and to never downgrade a paired iMac.
+    var pweReceiverHint: String {
+        if let receiver = TBDisplaySenderService.shared.discoveredReceivers.first(where: {
+            $0.matchesPersistedIdentity(selectedReceiverID) ||
+            $0.preferredIP == receiverIP ||
+            $0.thunderboltIP == receiverIP ||
+            $0.networkIP == receiverIP
+        }) {
+            return receiver.stableIdentity
+        }
+        let selected = selectedReceiverID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return selected.isEmpty ? receiverIP : selected
+    }
+
+    func pweBeginSession() {
+        guard let link = pweLink else { return }
+        pweIdentityChanged = false
+        if link.mode == .plaintext {
+            pweSecurity = .unencrypted
+            TBLog.connection.warning("pairing: unencrypted session with \(self.receiverIP, privacy: .public): picture, sound, brightness and volume only")
+            pweSessionReady()
+            return
+        }
+        guard link.hasKeys else {
+            pweSecurity = .refused(.senderKeychain)
+            setStatus(.connectionFailed("PWE: this Mac's keychain is unavailable"))
+            stop(resetStatusTo: nil)
+            return
+        }
+        if pwePendingCode == nil { pweSecurity = .negotiating }
+        let expected = PWEPairingStore.shared.expectedReceiverID(forHint: pweReceiverHint)
+        let step = link.start(expectedID: expected, code: pwePendingCode)
+        // An older receiver speaks first, in the clear (pweInbound notices that at
+        // once). This timeout is only the fallback for one that stays silent, and a
+        // reply can be late on a busy receiver: so a receiver this Mac paired with
+        // is never downgraded on silence, the attempt just fails and is retried.
+        let timeout = DispatchWorkItem { [weak self, weak link] in
+            Task { @MainActor [weak self, weak link] in
+                guard let self, let link, self.pweLink === link, link.mode == .negotiating,
+                      !self.pweSecurity.waitsForUser else { return }
+                self.pweHelloTimedOut()
+            }
+        }
+        pweHelloTimeout?.cancel()
+        pweHelloTimeout = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.pweHelloTimeoutSeconds, execute: timeout)
+        pweHandle(step, on: link)
+    }
+
+    /// The handshake is done (or the user chose unencrypted): start the session.
+    func pweSessionReady() {
+        pweHelloTimeout?.cancel()
+        pweHelloTimeout = nil
+        startHeartbeat()
+        sendHello()
+        sendInputControlModeUpdate()
+        sendBrightnessUpdate()
+        sendVolumeUpdate()
+    }
+
+    /// Language changes reach a running session inside it.
+    func pweSendLanguageUpdate() {
+        guard let link = pweLink, link.mode == .secure,
+              let packet = TBMonitorProtocol.makeJSONPacket(
+                type: .uiLanguage,
+                value: TBMonitorUILanguageUpdate(uiLanguage: language.fileStem)
+              )
+        else { return }
+        link.send(content: packet, completion: .contentProcessed({ _ in }))
+    }
+
+    /// One packet from the receiver, before the switch in drainPacketsOrThrow.
+    /// Returns the packet to handle there, or nil when it was handled (or dropped) here.
+    func pweInbound(_ type: TBMonitorPacketType, _ payload: Data) -> (TBMonitorPacketType, Data)? {
+        guard let link = pweLink else { return nil }
+        let raw = type.rawValue
+        if type == .secSealed {
+            guard let (innerRaw, inner) = link.open(payload) else {
+                pweClose(.refused(.protocolError), "PWE: a record failed authentication")
+                return nil
+            }
+            guard !(0x50...0x5F).contains(innerRaw), let innerType = TBMonitorPacketType(rawValue: innerRaw) else {
+                return nil
+            }
+            return (innerType, inner)
+        }
+        if (0x50...0x5E).contains(raw) {
+            pweHelloTimeout?.cancel()
+            pweHelloTimeout = nil
+            pweHandle(link.handle(type: raw, payload: payload), on: link)
+            return nil
+        }
+        switch link.mode {
+        case .plaintext:
+            return link.allowsInbound(plaintextType: raw) ? (type, payload) : nil
+        case .negotiating:
+            // Only a receiver that does not know the handshake talks before it ends.
+            pweLegacyReceiverDetected()
+            return nil
+        case .secure, .closed:
+            pweClose(.refused(.protocolError), "PWE: an unsealed packet in an encrypted session")
+            return nil
+        }
+    }
+
+    func pweHandle(_ step: PWESecureLink.Step, on link: PWESecureLink) {
+        guard pweLink === link else { return }
+        let store = PWEPairingStore.shared
+        if step.has(PWE_SEC_EV_IDENTITY_CHANGED) {
+            pweIdentityChanged = true
+            TBLog.connection.warning("pairing: \(self.receiverIP, privacy: .public) has a different key than when it was paired")
+        }
+        if step.has(PWE_SEC_EV_PAIRED), let id = step.peerID {
+            store.rememberReceiver(hint: pweReceiverHint, id: id)
+            TBLog.connection.info("pairing: paired with \(step.peerName, privacy: .public)")
+        }
+        if step.has(PWE_SEC_EV_SECURE) {
+            pwePendingCode = nil
+            if let id = step.peerID { store.rememberReceiver(hint: pweReceiverHint, id: id) }
+            pweSecurity = .encrypted(receiverName: step.peerName)
+            TBLog.connection.info("pairing: encrypted session with \(step.peerName, privacy: .public)")
+            pweSessionReady()
+            return
+        }
+        if step.has(PWE_SEC_EV_NEED_CODE) {
+            pweSecurity = .needsCode(secondsLeft: step.codeSeconds, identityChanged: pweIdentityChanged)
+            return
+        }
+        guard step.closes else { return }
+
+        pwePendingCode = nil
+        let peer = pwe_sec_error(rawValue: UInt32(bitPattern: step.peerError))
+        let local = pwe_sec_error(rawValue: UInt32(bitPattern: step.localError))
+        if step.has(PWE_SEC_EV_WRONG_CODE) {
+            pweClose(.wrongCode, "PWE: wrong pairing code")
+        } else if step.has(PWE_SEC_EV_LOCKED) {
+            pweClose(.locked(seconds: max(step.lockSeconds, 1)), "PWE: pairing locked")
+        } else if peer == PWE_SEC_ERR_EXPIRED {
+            pweClose(.codeExpired, "PWE: pairing code expired")
+        } else if peer == PWE_SEC_ERR_NEED_PAIRING {
+            // The iMac no longer knows this Mac: ask it for a code right away.
+            TBLog.connection.warning("pairing: \(self.receiverIP, privacy: .public) does not know this Mac any more; pairing again")
+            pweClose(.negotiating, "PWE: pairing needed")
+            pwePendingCode = ""
+            connect()
+        } else if local == PWE_SEC_ERR_NOT_DIRECT || peer == PWE_SEC_ERR_NOT_DIRECT {
+            pweClose(.refused(.notOnCable), "PWE: pairing needs the cable")
+        } else if peer == PWE_SEC_ERR_STORE {
+            pweClose(.refused(.receiverKeychain), "PWE: the iMac cannot read its keychain")
+        } else if local == PWE_SEC_ERR_STORE {
+            pweClose(.refused(.senderKeychain), "PWE: this Mac's keychain is unavailable")
+        } else if peer == PWE_SEC_ERR_VERSION || local == PWE_SEC_ERR_VERSION {
+            pweClose(.refused(.version), "PWE: protocol version mismatch")
+        } else if local == PWE_SEC_ERR_CANCELLED || peer == PWE_SEC_ERR_CANCELLED {
+            pweClose(.none, "PWE: pairing cancelled")
+        } else {
+            pweClose(.refused(.protocolError), "PWE: handshake failed (local \(step.localError), receiver \(step.peerError))")
+        }
+    }
+
+    /// How long a silent receiver gets to answer HELLO.
+    static let pweHelloTimeoutSeconds: Double = 3
+
+    func pweHelloTimedOut() {
+        if PWEPairingStore.shared.expectedReceiverID(forHint: pweReceiverHint) != nil {
+            TBLog.connection.warning("pairing: \(self.receiverIP, privacy: .public) did not answer the handshake in \(Self.pweHelloTimeoutSeconds, privacy: .public) s; paired before, so retrying instead of downgrading")
+            pweSecurity = .none
+            setStatus(.connectionFailed("PWE: no handshake reply"))
+            stop(resetStatusTo: nil)
+            return
+        }
+        pweLegacyReceiverDetected()
+    }
+
+    func pweLegacyReceiverDetected() {
+        let previouslyPaired = PWEPairingStore.shared.expectedReceiverID(forHint: pweReceiverHint) != nil
+        TBLog.connection.warning("pairing: \(self.receiverIP, privacy: .public) does not support encrypted connections (previously paired: \(previouslyPaired, privacy: .public))")
+        if !PWEPairingStore.allowUnencrypted {
+            pweClose(.refused(.unencryptedNotAllowed), "PWE: unencrypted connections are turned off")
+        } else {
+            pweClose(.legacyReceiver(previouslyPaired: previouslyPaired), "PWE: the receiver does not support encrypted connections")
+        }
+    }
+
+    private func pweClose(_ state: PWESecurityState, _ detail: String) {
+        pweSecurity = state
+        setStatus(.connectionFailed(detail))
+        stop(resetStatusTo: nil)
     }
 }
