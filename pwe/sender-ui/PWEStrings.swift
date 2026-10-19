@@ -79,8 +79,14 @@ struct PWEStrings {
         return t("\(name) is a display", "\(name) 正在用作显示器")
     }
     var brightness: String { t("Brightness", "亮度") }
-    var sound: String { t("Play sound on the iMac", "用 iMac 的扬声器播放声音") }
-    var soundOnlyOnIMac: String { t("Mute this Mac's speakers meanwhile", "同时让这台 Mac 静音") }
+    var sound: String { t("Sound", "声音") }
+    func soundName(_ sound: PWESound) -> String {
+        switch sound {
+        case .onlyIMac: return t("Only on the iMac", "只在 iMac 播放")
+        case .both: return t("On both", "两边都播放")
+        case .onlyThisMac: return t("Only on this Mac", "只在这台 Mac 播放")
+        }
+    }
     var arrange: String { t("Arrange Displays…", "排列显示器…") }
     var disconnect: String { t("Disconnect", "断开") }
 

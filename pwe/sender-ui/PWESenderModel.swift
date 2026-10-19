@@ -139,6 +139,12 @@ enum PWEReplugRules {
     }
 }
 
+/// Where this Mac's sound plays while the iMac is its display.
+enum PWESound: String, CaseIterable, Identifiable {
+    case onlyIMac, both, onlyThisMac
+    var id: String { rawValue }
+}
+
 enum PWEDisplayMode: String, CaseIterable, Identifiable {
     case extended, mirror
     var id: String { rawValue }
@@ -152,12 +158,10 @@ final class PWESenderModel: ObservableObject {
     @Published var displayMode: PWEDisplayMode {
         didSet { defaults.set(displayMode.rawValue, forKey: Keys.displayMode) }
     }
-    /// While the iMac plays this Mac's sound, keep the Mac's own speakers muted.
-    @Published var soundOnlyOnIMac: Bool {
-        didSet {
-            defaults.set(soundOnlyOnIMac, forKey: Keys.soundOnlyOnIMac)
-            refresh()
-        }
+    /// While the iMac plays this Mac's sound, keep the Mac's own speakers muted
+    /// (PWESound.onlyIMac rather than .both).
+    @Published private var soundOnlyOnIMac: Bool {
+        didSet { defaults.set(soundOnlyOnIMac, forKey: Keys.soundOnlyOnIMac) }
     }
     @Published private(set) var launchAtLogin = false
     @Published private(set) var launchAtLoginNeedsApproval = false
@@ -491,14 +495,19 @@ final class PWESenderModel: ObservableObject {
             guard let key = receiverKey, newValue != picture else { return }
             remember(newValue, for: key)
             objectWillChange.send()
-            guard let session else { return }
-            if session.isConnected || session.isStreaming {
-                NSLog("[pwe] picture changed to \(newValue.rawValue); reconnecting")
-                session.stopForAutomaticReconnect()
-                startConnecting()
-            } else if TBSenderAutomation.isConnectingAutomatically {
-                startConnecting()  // the retry loop holds the old preset
-            }
+            reconnectIfShowing(because: "picture changed to \(newValue.rawValue)")
+        }
+    }
+
+    /// A choice the engine reads only when a connection starts: start it again.
+    private func reconnectIfShowing(because reason: String) {
+        guard let session else { return }
+        if session.isConnected || session.isStreaming {
+            NSLog("[pwe] \(reason); reconnecting")
+            session.stopForAutomaticReconnect()
+            startConnecting()
+        } else if TBSenderAutomation.isConnectingAutomatically {
+            startConnecting()  // the retry loop holds the old settings
         }
     }
 
@@ -513,13 +522,28 @@ final class PWESenderModel: ObservableObject {
         set { session?.brightness = newValue; objectWillChange.send() }
     }
 
-    /// Sound is relayed only if it was on when the picture started, so the
-    /// switch is offered before connecting, and only with the audio add-on.
+    /// Offered only with the audio add-on; without it the sound stays on this Mac.
     var soundAvailable: Bool { service?.audioRelayAvailable ?? true }
 
-    var soundOn: Bool {
-        get { session?.audioEnabled ?? true }
-        set { session?.audioEnabled = newValue; objectWillChange.send() }
+    /// Relay on or off is the engine's `audioEnabled`; muting this Mac is PWE's.
+    var sound: PWESound {
+        get {
+            guard session?.audioEnabled ?? true else { return .onlyThisMac }
+            return soundOnlyOnIMac ? .onlyIMac : .both
+        }
+        set {
+            guard newValue != sound else { return }
+            let relayWasOn = session?.audioEnabled ?? true
+            if newValue != .onlyThisMac { soundOnlyOnIMac = newValue == .onlyIMac }
+            session?.audioEnabled = newValue != .onlyThisMac
+            objectWillChange.send()
+            refresh()
+            // The engine opens its audio capture only if relay was on when the
+            // picture started; turning relay off takes effect at once.
+            if !relayWasOn, newValue != .onlyThisMac {
+                reconnectIfShowing(because: "sound now relayed to the iMac")
+            }
+        }
     }
 
     func openDisplaySettings() {
