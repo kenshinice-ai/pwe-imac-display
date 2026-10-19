@@ -17,6 +17,8 @@ What it changes, and what it leaves alone on purpose:
 - The About text credits TargetBridge and its authors.
 - Network Link is off by default; the sender's language follows the system.
 - The virtual display is called PWE iMac Display in System Settings › Displays.
+- PWE's window, menu bar item, Settings and About (pwe/sender-ui) replace
+  upstream's; upstream's dashboard stays, as the "Full Console".
 
 Every edit is anchored to text that must be found exactly as often as expected.
 If upstream changes that text, the script stops instead of guessing, and the
@@ -175,6 +177,14 @@ def rebrand_sender(root: Path, version: str, build: str) -> None:
                          .replace("<string>TargetBridge connects", f"<string>{NAME} connects"),
                      encoding="utf-8")
 
+    # Without declared localizations macOS offers no per-app language for the
+    # sender (System Settings › General › Language & Region › Applications), and
+    # PWE has no language choice of its own: it follows that setting.
+    edit(plist, "    <key>CFBundleDisplayName</key>\n",
+         "    <key>CFBundleLocalizations</key>\n    <array>\n"
+         + "".join(f"        <string>{code}</string>\n" for code in ("en", "zh-Hans", "it", "de", "fr"))
+         + "    </array>\n    <key>CFBundleDisplayName</key>\n")
+
     project = sender / "project.yml"
     edit(project, "bundleIdPrefix: com.targetbridge", "bundleIdPrefix: com.pwegroup")
     # The Swift module keeps its upstream name: the tests `@testable import TargetBridge`,
@@ -287,6 +297,21 @@ def rebrand_sender(root: Path, version: str, build: str) -> None:
     edit(virtual, 'displayNamePrefix: "TB Extend",', f'displayNamePrefix: "{NAME}",')
     edit(virtual, 'descriptor.name = "\\(identity.displayNamePrefix) - \\(profile.receiverName)"',
          "descriptor.name = identity.displayNamePrefix")
+
+    # The Full Console is upstream's dashboard inside PWE's app: PWE's About is
+    # the only About (UX review 2026-10-19), and its settings button opens PWE's
+    # Settings because PWEApp's Settings scene is PWE's.
+    edit(swift / "TBDisplaySenderContentView.swift",
+         "                Button {\n"
+         "                    showingAbout = true\n"
+         "                } label: {\n"
+         "                    Label(aboutToolbarTitle, systemImage: \"info.circle\")\n"
+         "                }\n\n", "")
+    # Its session sheet printed every setting's name twice ("Transport Transport"):
+    # the row's own label, then the control's. Upstream bug too.
+    edit(swift / "TBDisplaySenderContentView.swift",
+         "                content()\n                    .frame(maxWidth: 310, alignment: .trailing)",
+         "                content()\n                    .labelsHidden()\n                    .frame(maxWidth: 310, alignment: .trailing)")
 
     pwe_ui = swift / "PWE"
     pwe_ui.mkdir()

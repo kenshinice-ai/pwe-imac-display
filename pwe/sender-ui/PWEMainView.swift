@@ -1,15 +1,15 @@
 import AppKit
 import SwiftUI
 
-/// The PWE window: one question answered at a time, one primary action.
+/// The PWE window: first setup, and the iMac's status at a glance. One question
+/// answered at a time, one primary action.
 ///
-/// Everything TargetBridge offers is still one click away in the advanced window;
-/// this window shows only what someone needs to turn an iMac into a display and
-/// to know, at a glance, whether it is one.
+/// Day-to-day controls live in the menu bar (PWEStatusMenu) and every setting in
+/// Settings (PWESettingsView); this window shows only what someone needs to turn
+/// an iMac into a display and to know whether it is one.
 struct PWEMainView: View {
     @ObservedObject var model: PWESenderModel
     let strings: PWEStrings
-    var openAdvanced: () -> Void = {}
     var openAbout: () -> Void = {}
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -33,12 +33,6 @@ struct PWEMainView: View {
             .frame(maxWidth: .infinity, minHeight: 250, alignment: .leading)
             .padding(24)
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: phaseKey)
-
-            Divider()
-
-            preferences
-                .padding(.horizontal, 24)
-                .padding(.vertical, 16)
         }
         .frame(width: 440)
     }
@@ -60,8 +54,6 @@ struct PWEMainView: View {
             .buttonStyle(.borderless)
             .help(strings.about)
             .accessibilityLabel(strings.about)
-            Button(strings.advanced, action: openAdvanced)
-                .buttonStyle(.borderless)
         }
     }
 
@@ -75,7 +67,7 @@ struct PWEMainView: View {
         case .choose: return "choose"
         case .ready: return "ready"
         case .connecting: return "connecting"
-        case .connected: return "connected"
+        case .connected: return model.setupFinished ? "connected" : "setup"
         case .interrupted: return "interrupted"
         }
     }
@@ -161,8 +153,6 @@ struct PWEMainView: View {
             }
             .pickerStyle(.segmented)
             .fixedSize()
-            picturePicker
-            if model.soundAvailable { soundPicker }
             Button(strings.useAsDisplay) { model.connect(to: receiver) }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
@@ -185,34 +175,77 @@ struct PWEMainView: View {
         }
     }
 
-    private func connectedView(_ receiver: PWEReceiver?) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 10) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(.green)
-                    .accessibilityHidden(true)
-                Text(strings.connectedTitle(receiver?.name)).font(.title3.weight(.semibold))
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                Text(strings.brightness).font(.callout).foregroundStyle(.secondary)
-                HStack(spacing: 8) {
-                    Image(systemName: "sun.min").foregroundStyle(.secondary).accessibilityHidden(true)
-                    Slider(value: $model.brightness, in: 0...1)
-                        .accessibilityLabel(strings.brightness)
-                    Image(systemName: "sun.max").foregroundStyle(.secondary).accessibilityHidden(true)
+    @ViewBuilder private func connectedView(_ receiver: PWEReceiver?) -> some View {
+        if model.setupFinished {
+            VStack(alignment: .leading, spacing: 16) {
+                connectedHeader(receiver)
+                brightnessSlider
+                HStack(spacing: 10) {
+                    Button(strings.arrange) { model.openDisplaySettings() }
+                        .controlSize(.large)
+                    Button(strings.disconnect) { model.disconnect() }
+                        .controlSize(.large)
                 }
+                Text(strings.menuBarHint)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
-            VStack(alignment: .leading, spacing: 4) {
-                picturePicker
-                Text(strings.pictureChangeHint).font(.callout).foregroundStyle(.secondary)
+        } else {
+            setupView(receiver)
+        }
+    }
+
+    /// The last setup screen, shown the first time an iMac becomes a display:
+    /// the two questions that decide what happens next time, asked once.
+    private func setupView(_ receiver: PWEReceiver?) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            connectedHeader(receiver)
+            VStack(alignment: .leading, spacing: 12) {
+                Text(strings.setupTitle).font(.headline)
+                preference(strings.launchAtLogin, isOn: Binding(
+                    get: { model.launchAtLogin },
+                    set: { model.setLaunchAtLogin($0) }))
+                if model.launchAtLoginNeedsApproval {
+                    Button(strings.launchAtLoginApproval) { model.openLoginItemsSettings() }
+                        .buttonStyle(.link)
+                        .font(.callout)
+                }
+                preference(strings.autoConnect, isOn: $model.autoConnect)
+                Text(strings.setupBody)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            if model.soundAvailable { soundPicker }
-            HStack(spacing: 10) {
-                Button(strings.arrange) { model.openDisplaySettings() }
-                    .controlSize(.large)
-                Button(strings.disconnect) { model.disconnect() }
-                    .controlSize(.large)
+            .padding(14)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+            Text(strings.menuBarHint)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Button(strings.setupDone) { model.setupFinished = true }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .keyboardShortcut(.defaultAction)
+        }
+    }
+
+    private func connectedHeader(_ receiver: PWEReceiver?) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.title2)
+                .foregroundStyle(.green)
+                .accessibilityHidden(true)
+            Text(strings.connectedTitle(receiver?.name)).font(.title3.weight(.semibold))
+        }
+    }
+
+    private var brightnessSlider: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(strings.brightness).font(.callout).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Image(systemName: "sun.min").foregroundStyle(.secondary).accessibilityHidden(true)
+                Slider(value: $model.brightness, in: 0...1)
+                    .accessibilityLabel(strings.brightness)
+                Image(systemName: "sun.max").foregroundStyle(.secondary).accessibilityHidden(true)
             }
         }
     }
@@ -244,42 +277,7 @@ struct PWEMainView: View {
         }
     }
 
-    /// Remembered per iMac; 5K 60 is clearly smoother than 48 on an iMac18,3.
-    private var picturePicker: some View {
-        Picker(strings.picture, selection: $model.picture) {
-            ForEach(model.pictureChoices) { preset in
-                Text(strings.pictureName(preset)).tag(preset)
-            }
-        }
-        .pickerStyle(.menu)
-        .fixedSize()
-    }
-
-    private var soundPicker: some View {
-        Picker(strings.sound, selection: $model.sound) {
-            ForEach(PWESound.allCases) { sound in
-                Text(strings.soundName(sound)).tag(sound)
-            }
-        }
-        .pickerStyle(.menu)
-        .fixedSize()
-    }
-
-    // MARK: - Preferences
-
-    private var preferences: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            preference(strings.autoConnect, isOn: $model.autoConnect)
-            preference(strings.launchAtLogin, isOn: Binding(
-                get: { model.launchAtLogin },
-                set: { model.setLaunchAtLogin($0) }))
-            if model.launchAtLoginNeedsApproval {
-                Button(strings.launchAtLoginApproval) { model.openLoginItemsSettings() }
-                    .buttonStyle(.link)
-                    .font(.callout)
-            }
-        }
-    }
+    // MARK: - Pieces
 
     /// Label on the leading edge, switch on the trailing edge, as in System Settings.
     private func preference(_ title: String, isOn: Binding<Bool>) -> some View {
@@ -292,8 +290,6 @@ struct PWEMainView: View {
                 .controlSize(.small)
         }
     }
-
-    // MARK: - Pieces
 
     private func symbol(_ name: String) -> some View {
         Image(systemName: name)
@@ -322,14 +318,15 @@ struct PWEMainView: View {
     }
 }
 
-/// Version, credit, source, support and the update check — the one place the app
-/// mentions support (PWE Tools handoff §0.9).
+/// Version, credit, source, support and the update check — the app's one About,
+/// and the one place it mentions support (PWE Tools handoff §0.9). The daily
+/// check is switched in Settings › General.
 struct PWEAboutView: View {
     @ObservedObject var updates: UpdateCheck
     let strings: PWEStrings
-    var dismiss: () -> Void = {}
+    /// A Done button, for a sheet; the About window closes like any window.
+    var dismiss: (() -> Void)?
 
-    @AppStorage("pwe.updateChecks") private var dailyChecks = false
     @State private var checking = false
     @State private var lastResult: String?
 
@@ -354,14 +351,6 @@ struct PWEAboutView: View {
                 Link(strings.support, destination: URL(string: "https://pwestudio.site/support")!)
             }
             Divider()
-            HStack {
-                Text(strings.checkUpdatesDaily)
-                Spacer()
-                Toggle(strings.checkUpdatesDaily, isOn: $dailyChecks)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-            }
             HStack(spacing: 10) {
                 Button(strings.checkUpdates) {
                     checking = true
@@ -382,9 +371,11 @@ struct PWEAboutView: View {
                     Link(strings.download, destination: UpdateCheck.downloadPage)
                 }
             }
-            HStack {
-                Spacer()
-                Button(strings.done, action: dismiss).keyboardShortcut(.defaultAction)
+            if let dismiss {
+                HStack {
+                    Spacer()
+                    Button(strings.done, action: dismiss).keyboardShortcut(.defaultAction)
+                }
             }
         }
         .padding(24)

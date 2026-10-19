@@ -14,6 +14,9 @@ struct PWEReceiver: Equatable, Identifiable {
     let id: String
     let name: String
     let detail: String
+    /// What the receiver reports: hardware HEVC decode and its panel's width.
+    var supportsHEVC = false
+    var panelWidth: Int?
 }
 
 enum PWEStage: Equatable {
@@ -149,6 +152,29 @@ enum PWEDisplayMode: String, CaseIterable, Identifiable {
     case extended, mirror
     var id: String { rawValue }
 }
+
+/// Keyboard and mouse sharing (the engine's Input Dockstation add-on).
+enum PWEInputRole: String, CaseIterable, Identifiable {
+    case off
+    case macControlsIMac     // TBInputControlRole.senderMaster
+    case iMacControlsMac     // TBInputControlRole.receiverMaster
+    var id: String { rawValue }
+
+    var engineRole: TBInputControlRole {
+        switch self {
+        case .off: return .off
+        case .macControlsIMac: return .senderMaster
+        case .iMacControlsMac: return .receiverMaster
+        }
+    }
+}
+
+/// Network Link: which way the picture travels.
+enum PWEConnection: String, CaseIterable, Identifiable {
+    case thunderbolt, network
+    var id: String { rawValue }
+}
+
 @MainActor
 final class PWESenderModel: ObservableObject {
     @Published private(set) var phase: PWEPhase = .searching
@@ -156,8 +182,34 @@ final class PWESenderModel: ObservableObject {
         didSet { defaults.set(autoConnect, forKey: Keys.autoConnect) }
     }
     @Published var displayMode: PWEDisplayMode {
-        didSet { defaults.set(displayMode.rawValue, forKey: Keys.displayMode) }
+        didSet {
+            defaults.set(displayMode.rawValue, forKey: Keys.displayMode)
+            if displayMode != oldValue { reconnectIfShowing(because: "display mode changed to \(displayMode.rawValue)") }
+        }
     }
+    /// PWE's own status item in the menu bar (PWEStatusMenu).
+    @Published var showsMenuBarIcon: Bool {
+        didSet { defaults.set(showsMenuBarIcon, forKey: Keys.showsMenuBarIcon) }
+    }
+    /// The last setup screen asks about login and automatic connection once.
+    @Published var setupFinished: Bool {
+        didSet { defaults.set(setupFinished, forKey: Keys.setupFinished) }
+    }
+    /// Keyboard and mouse sharing, applied each time a connection comes up.
+    @Published var inputRole: PWEInputRole {
+        didSet {
+            defaults.set(inputRole.rawValue, forKey: Keys.inputRole)
+            guard inputRole != oldValue else { return }
+            if inputRole != .off, !(service?.inputDockstationAvailable ?? true) {
+                // Upstream switches add-ons only between connections.
+                reconnectIfShowing(because: "keyboard and mouse sharing on") { enableAddon(.inputDockstation) }
+            } else {
+                applyInputRole(force: true)
+            }
+        }
+    }
+    /// A one-line notice while a changed setting reconnects ("Reconnecting to apply…").
+    @Published private(set) var reconnectNotice = false
     /// While the iMac plays this Mac's sound, keep the Mac's own speakers muted
     /// (PWESound.onlyIMac rather than .both).
     @Published private var soundOnlyOnIMac: Bool {
@@ -192,6 +244,11 @@ final class PWESenderModel: ObservableObject {
     private var asleep = false
     private var awokeAt = Date.distantPast
     private static let wakeSettleTime: TimeInterval = 15
+    /// The input role has been applied to the current connection.
+    private var inputRoleApplied = false
+    private var noticeTask: Task<Void, Never>?
+    /// Snapshot values, for a model without an engine.
+    private var previewSound: PWESound = .onlyIMac
 
     enum Keys {
         static let autoConnect = "pwe.autoConnect"
@@ -200,6 +257,11 @@ final class PWESenderModel: ObservableObject {
         /// [receiver identity: TBDisplayCapturePreset raw value]
         static let pictures = "pwe.pictures"
         static let soundOnlyOnIMac = "pwe.soundOnlyOnIMac"
+        static let showsMenuBarIcon = "pwe.showsMenuBarIcon"
+        static let setupFinished = "pwe.setupFinished"
+        static let inputRole = "pwe.inputRole"
+        /// Upstream's per-receiver display profile, a second memory for the picture.
+        static let upstreamDisplayProfiles = "fd.tbdisplaysender.receiverDisplayProfiles.v1"
     }
 
     /// What the Picture menu offers. A preset chosen in Advanced shows up too.
@@ -211,6 +273,11 @@ final class PWESenderModel: ObservableObject {
         self.autoConnect = defaults.object(forKey: Keys.autoConnect) as? Bool ?? true
         self.displayMode = PWEDisplayMode(rawValue: defaults.string(forKey: Keys.displayMode) ?? "") ?? .extended
         self.soundOnlyOnIMac = defaults.object(forKey: Keys.soundOnlyOnIMac) as? Bool ?? true
+        self.showsMenuBarIcon = defaults.object(forKey: Keys.showsMenuBarIcon) as? Bool ?? true
+        // Someone who used 1.1 before this screen existed has already chosen.
+        self.setupFinished = defaults.object(forKey: Keys.setupFinished) as? Bool
+            ?? (defaults.object(forKey: Keys.pictures) != nil)
+        self.inputRole = PWEInputRole(rawValue: defaults.string(forKey: Keys.inputRole) ?? "") ?? .off
         self.localMute = PWELocalAudioMute(defaults: defaults)
         refreshLaunchAtLogin()
 
@@ -253,12 +320,15 @@ final class PWESenderModel: ObservableObject {
     }
 
     /// A fixed phase for snapshots: no engine, nothing changes.
-    init(preview phase: PWEPhase) {
+    init(preview phase: PWEPhase, setupFinished: Bool = true, inputRole: PWEInputRole = .off) {
         self.service = nil
         self.defaults = UserDefaults(suiteName: "pwe.preview") ?? .standard
         self.autoConnect = true
         self.displayMode = .extended
         self.soundOnlyOnIMac = true
+        self.showsMenuBarIcon = true
+        self.setupFinished = setupFinished
+        self.inputRole = inputRole
         self.phase = phase
     }
 
@@ -281,6 +351,7 @@ final class PWESenderModel: ObservableObject {
         if next != phase { phase = next }
         rememberShowingPicture()
         localMute?.update(mute: soundOnlyOnIMac && isRelayingSound)
+        applyInputRole(force: false)
         watchForReplug(service)
     }
 
@@ -313,8 +384,12 @@ final class PWESenderModel: ObservableObject {
 
     private func receivers(_ service: TBDisplaySenderService) -> [PWEReceiver] {
         service.discoveredReceivers.map {
-            PWEReceiver(id: $0.stableIdentity, name: $0.receiverName.isEmpty ? $0.serviceName : $0.receiverName,
-                        detail: $0.panelSummary)
+            PWEReceiver(id: $0.stableIdentity,
+                        name: PWEReceiverNaming.friendlyName(receiverName: $0.receiverName, serviceName: $0.serviceName,
+                                                             hostName: $0.hostName),
+                        detail: PWEReceiverNaming.friendlyDetail(panelSummary: $0.panelSummary),
+                        supportsHEVC: $0.supportsHEVCDecode,
+                        panelWidth: PWEReceiverNaming.panelSize($0.panelSummary)?.width)
         }
     }
 
@@ -344,6 +419,7 @@ final class PWESenderModel: ObservableObject {
     private func startConnecting() {
         pausedUntilReplug = false
         heldFailure = nil
+        inputRoleApplied = false
         var components = URLComponents()
         components.scheme = "pweimacdisplay"
         components.host = "connect"
@@ -354,7 +430,7 @@ final class PWESenderModel: ObservableObject {
         ]
         // The engine applies this after the receiver's saved display profile, on
         // every attempt of this connection: reconnects, replugs and wakes alike.
-        if let preset = rememberedPicture(for: receiverKey) {
+        if let preset = rememberedPicture(for: receiverKey) ?? defaultPicture {
             components.queryItems?.append(URLQueryItem(name: "preset", value: preset.rawValue))
         }
         if let url = components.url { TBSenderAutomation.handle(url: url) }
@@ -476,6 +552,26 @@ final class PWESenderModel: ObservableObject {
         pictures[key] = preset.rawValue
         defaults.set(pictures, forKey: Keys.pictures)
         NSLog("[pwe] remembered picture \(preset.rawValue) for \(key)")
+        forgetUpstreamDisplayProfile(for: key)
+    }
+
+    /// Upstream re-applies a display profile chosen in its console on every
+    /// connection (Work 5K also turns on render matching). Once PWE remembers this
+    /// iMac's picture, that second memory only fights the first: drop it.
+    private func forgetUpstreamDisplayProfile(for key: String) {
+        guard var profiles = defaults.dictionary(forKey: Keys.upstreamDisplayProfiles) as? [String: String],
+              profiles.removeValue(forKey: "id:\(key)") != nil else { return }
+        defaults.set(profiles, forKey: Keys.upstreamDisplayProfiles)
+        NSLog("[pwe] dropped the console's display profile for \(key)")
+    }
+
+    /// The picture for an iMac with nothing remembered yet (PWEPictureRules).
+    private var defaultPicture: TBDisplayCapturePreset? {
+        guard let service, let target = current(service) else { return nil }
+        let engineDefault = session?.capturePreset ?? .standard1440p
+        let preset = PWEPictureRules.defaultPicture(supportsHEVC: target.supportsHEVC, panelWidth: target.panelWidth,
+                                                    engineDefault: engineDefault)
+        return preset == engineDefault ? nil : preset
     }
 
     /// Whatever showed a picture last is what this iMac gets next time, however
@@ -490,7 +586,7 @@ final class PWESenderModel: ObservableObject {
 
     /// The stream preset for this iMac. Changing it while connected reconnects.
     var picture: TBDisplayCapturePreset {
-        get { rememberedPicture(for: receiverKey) ?? session?.capturePreset ?? .standard1440p }
+        get { rememberedPicture(for: receiverKey) ?? defaultPicture ?? session?.capturePreset ?? .native5k60Experimental }
         set {
             guard let key = receiverKey, newValue != picture else { return }
             remember(newValue, for: key)
@@ -500,14 +596,31 @@ final class PWESenderModel: ObservableObject {
     }
 
     /// A choice the engine reads only when a connection starts: start it again.
-    private func reconnectIfShowing(because reason: String) {
-        guard let session else { return }
+    /// `change` runs between the stop and the new start, for the engine's setters
+    /// that refuse to change a live connection.
+    private func reconnectIfShowing(because reason: String, change: () -> Void = {}) {
+        guard let session else { change(); return }
         if session.isConnected || session.isStreaming {
             NSLog("[pwe] \(reason); reconnecting")
             session.stopForAutomaticReconnect()
+            change()
+            showReconnectNotice()
             startConnecting()
-        } else if TBSenderAutomation.isConnectingAutomatically {
-            startConnecting()  // the retry loop holds the old settings
+        } else {
+            change()
+            if TBSenderAutomation.isConnectingAutomatically {
+                startConnecting()  // the retry loop holds the old settings
+            }
+        }
+    }
+
+    private func showReconnectNotice() {
+        reconnectNotice = true
+        noticeTask?.cancel()
+        noticeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(6))
+            guard !Task.isCancelled else { return }
+            self?.reconnectNotice = false
         }
     }
 
@@ -522,27 +635,86 @@ final class PWESenderModel: ObservableObject {
         set { session?.brightness = newValue; objectWillChange.send() }
     }
 
-    /// Offered only with the audio add-on; without it the sound stays on this Mac.
-    var soundAvailable: Bool { service?.audioRelayAvailable ?? true }
-
-    /// Relay on or off is the engine's `audioEnabled`; muting this Mac is PWE's.
+    /// Relay on or off is the engine's `audioEnabled` together with its audio
+    /// add-on; muting this Mac is PWE's. Choosing the iMac turns the add-on on.
     var sound: PWESound {
         get {
-            guard session?.audioEnabled ?? true else { return .onlyThisMac }
+            guard let service else { return previewSound }
+            guard service.audioRelayAvailable, session?.audioEnabled ?? service.audioEnabled else { return .onlyThisMac }
             return soundOnlyOnIMac ? .onlyIMac : .both
         }
         set {
             guard newValue != sound else { return }
-            let relayWasOn = session?.audioEnabled ?? true
-            if newValue != .onlyThisMac { soundOnlyOnIMac = newValue == .onlyIMac }
-            session?.audioEnabled = newValue != .onlyThisMac
+            guard let service else { previewSound = newValue; objectWillChange.send(); return }
+            let relayWasOn = service.audioRelayAvailable && (session?.audioEnabled ?? service.audioEnabled)
+            let relayOn = newValue != .onlyThisMac
+            if relayOn { soundOnlyOnIMac = newValue == .onlyIMac }
             objectWillChange.send()
-            refresh()
-            // The engine opens its audio capture only if relay was on when the
-            // picture started; turning relay off takes effect at once.
-            if !relayWasOn, newValue != .onlyThisMac {
-                reconnectIfShowing(because: "sound now relayed to the iMac")
+            if relayOn, !relayWasOn {
+                // The engine opens its audio capture only if relay was on when the
+                // picture started, and its add-on switch refuses a live connection.
+                reconnectIfShowing(because: "sound now relayed to the iMac") {
+                    enableAddon(.audioRelay)
+                    session?.audioEnabled = true
+                    service.audioEnabled = true
+                }
+            } else {
+                // Turning relay off, or moving between iMac-only and both, takes effect at once.
+                session?.audioEnabled = relayOn
+                service.audioEnabled = relayOn
             }
+            refresh()
+        }
+    }
+
+    var nightShiftAvailable: Bool { session?.receiverSupportsNightShift ?? (service == nil) }
+    var trueToneAvailable: Bool { session?.receiverSupportsTrueTone ?? (service == nil) }
+
+    var nightShift: Bool {
+        get { session?.nightShiftEnabled ?? false }
+        set { session?.nightShiftEnabled = newValue; objectWillChange.send() }
+    }
+
+    var trueTone: Bool {
+        get { session?.trueToneEnabled ?? false }
+        set { session?.trueToneEnabled = newValue; objectWillChange.send() }
+    }
+
+    /// The iMac's own speaker volume, while the picture is up.
+    var volume: Double {
+        get { session?.volume ?? 0.5 }
+        set { session?.volume = newValue; objectWillChange.send() }
+    }
+
+    /// The iMac the Picture setting belongs to, if one is known.
+    var knownReceiverName: String? {
+        switch phase {
+        case .ready(let receiver): return receiver.name
+        case .connecting(let receiver, _), .connected(let receiver), .interrupted(let receiver, _, _): return receiver?.name
+        case .needsPermission, .searching, .choose: return nil
+        }
+    }
+
+    var isShowing: Bool {
+        if case .connected = phase { return true }
+        return false
+    }
+
+    /// The iMac the menu's Connect item would use: the one on screen, ready.
+    var connectableReceiver: PWEReceiver? {
+        switch phase {
+        case .ready(let receiver): return receiver
+        case .interrupted(let receiver, _, retrying: false): return receiver
+        default: return nil
+        }
+    }
+
+    /// Something is in progress that Disconnect (or Cancel) would end.
+    var canDisconnect: Bool {
+        switch phase {
+        case .connecting, .connected: return true
+        case .interrupted(_, _, let retrying): return retrying
+        default: return false
         }
     }
 
@@ -570,4 +742,184 @@ final class PWESenderModel: ObservableObject {
     }
 
     func openLoginItemsSettings() { SMAppService.openSystemSettingsLoginItems() }
+
+    // MARK: - Settings: display
+
+    /// The engine's large cursor changes how the cursor is captured: reconnect.
+    var largeCursor: Bool {
+        get { service?.largeCursor ?? false }
+        set {
+            guard let service, newValue != service.largeCursor else { return }
+            objectWillChange.send()
+            reconnectIfShowing(because: "large cursor \(newValue ? "on" : "off")") { service.largeCursor = newValue }
+        }
+    }
+
+    var keepAwake: Bool {
+        get { service?.preventDisplaySleep ?? true }
+        set { service?.preventDisplaySleep = newValue; objectWillChange.send() }
+    }
+
+    // MARK: - Settings: advanced
+
+    var codec: TBDisplayCodecPreference {
+        get { session?.codecPreference ?? .automatic }
+        set {
+            guard let service, let session, newValue != session.codecPreference else { return }
+            objectWillChange.send()
+            reconnectIfShowing(because: "video compression \(newValue.rawValue)") {
+                service.setCodecPreference(newValue, for: session)
+            }
+        }
+    }
+
+    /// Render matching does anything only for a picture smaller than the panel.
+    var renderMatchingApplies: Bool { !picture.rendersAtNativeScale }
+
+    var renderMatching: Bool {
+        get { session?.matchRenderToStream ?? false }
+        set {
+            guard let session, newValue != session.matchRenderToStream else { return }
+            if let key = receiverKey { forgetUpstreamDisplayProfile(for: key) }
+            objectWillChange.send()
+            reconnectIfShowing(because: "render matching \(newValue ? "on" : "off")") {
+                session.matchRenderToStream = newValue
+            }
+        }
+    }
+
+    var networkLinkEnabled: Bool {
+        get { service?.availableTransportKinds.contains(.networkLink) ?? false }
+        set {
+            guard let service, newValue != networkLinkEnabled else { return }
+            objectWillChange.send()
+            let usesNetwork = session?.transportKind == .networkLink
+            let apply = {
+                self.setAddon(.networkLink, enabled: newValue)
+                if !newValue, let session = self.session { service.transportDidChange(for: session) }
+            }
+            // Turning it off while the picture travels over the network ends that connection.
+            if !newValue, usesNetwork { reconnectIfShowing(because: "Network Link off", change: apply) } else { apply() }
+        }
+    }
+
+    var connection: PWEConnection {
+        get { session?.transportKind == .networkLink ? .network : .thunderbolt }
+        set {
+            guard let service, let session, newValue != connection else { return }
+            objectWillChange.send()
+            reconnectIfShowing(because: "connection over \(newValue.rawValue)") {
+                session.transportKind = newValue == .network ? .networkLink : .thunderboltBridge
+                service.transportDidChange(for: session)
+            }
+        }
+    }
+
+    var detailedLogging: Bool {
+        get { service?.verboseDisplayLogging ?? false }
+        set { service?.verboseDisplayLogging = newValue; objectWillChange.send() }
+    }
+
+    // MARK: - Settings: keyboard and mouse
+
+    var inputSharingAvailable: Bool { service?.inputDockstationAvailable ?? true }
+    var thisMacInputMonitoring: Bool { service?.localInputMonitoringTrusted ?? false }
+    var thisMacAccessibility: Bool { service?.localInputInjectionTrusted ?? false }
+    /// What the iMac reported on the last connection; nil before one.
+    var iMacAccessibility: Bool? { session?.receiverAccessibilityTrustedHint }
+    var iMacInputMonitoring: Bool? { session?.receiverInputMonitoringTrustedHint }
+
+    func openInputMonitoringSettings() { service?.openInputMonitoringSettings() }
+    func openAccessibilitySettings() { service?.openAccessibilitySettings() }
+
+    /// The engine sets a role only on a live connection, and can drop it itself
+    /// (Control-Option-Command-K on the iMac). Apply it once per connection, so
+    /// that shortcut is not undone a second later; a change in Settings re-applies.
+    private func applyInputRole(force: Bool) {
+        guard let service, let session else { return }
+        guard session.isConnected else { inputRoleApplied = false; return }
+        guard force || !inputRoleApplied else { return }
+        inputRoleApplied = true
+        let wanted = service.inputDockstationAvailable ? inputRole.engineRole : .off
+        if session.inputControlRole != wanted {
+            NSLog("[pwe] keyboard and mouse: \(inputRole.rawValue)")
+            service.setInputControlRole(wanted, for: session)
+        }
+    }
+
+    // MARK: - Add-ons
+
+    private func addon(_ capability: TBAddonCapability) -> TBAddonRecord? {
+        service?.addons.first { $0.manifest.capabilities.contains(capability) && $0.origin == .bundled }
+            ?? service?.addons.first { $0.manifest.capabilities.contains(capability) }
+    }
+
+    private func enableAddon(_ capability: TBAddonCapability) { setAddon(capability, enabled: true) }
+
+    private func setAddon(_ capability: TBAddonCapability, enabled: Bool) {
+        guard let service, let addon = addon(capability), service.isAddonEnabled(addon) != enabled else { return }
+        service.setAddonEnabled(enabled, for: addon)
+    }
+
+    // MARK: - Diagnostics
+
+    struct Check: Identifiable {
+        let id: String
+        let passed: Bool?    // nil: needs a connection first
+        let title: String
+        let detail: String
+    }
+
+    func configurationChecks() -> [Check] {
+        guard let service, let session else { return [] }
+        return service.configurationChecks(for: session).map {
+            Check(id: $0.id,
+                  passed: $0.state == .pending ? nil : $0.state == .passed,
+                  title: TBDisplaySenderL10n.text($0.titleKey, service.language, $0.values),
+                  detail: TBDisplaySenderL10n.text($0.detailKey, service.language, $0.values))
+        }
+    }
+
+    /// The engine measures the cable over its own connection, so only while idle.
+    var canTestCable: Bool {
+        guard let session else { return false }
+        return !session.isConnected && !session.isStreaming && !session.isCableTesting
+            && !session.receiverIP.isEmpty && !session.localInterfaceIP.isEmpty
+    }
+    var isTestingCable: Bool { session?.isCableTesting ?? false }
+    /// Gbit/s from the last test.
+    var cableRate: Double? { session?.cableTestResult }
+    func testCable() { session?.startCableTest() }
+
+    var canRestartPicture: Bool { session?.canRestartCapture ?? false }
+    func restartPicture() { session?.restartCaptureNow() }
+
+    /// A plain-text report for support: versions, the iMacs, the settings and the
+    /// last half hour of this app's own log. Nothing leaves the Mac unless the
+    /// person sends the file.
+    func diagnosticReport() -> String {
+        var lines: [String] = []
+        let info = Bundle.main.infoDictionary ?? [:]
+        lines.append("PWE iMac Display \(info["CFBundleShortVersionString"] as? String ?? "?") (\(info["CFBundleVersion"] as? String ?? "?"))")
+        lines.append("macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
+        lines.append("Date \(ISO8601DateFormatter().string(from: Date()))")
+        lines.append("")
+        lines.append("Phase: \(phase)")
+        if let service {
+            for receiver in service.discoveredReceivers {
+                lines.append("Receiver: \(receiver.receiverName) version=\(receiver.version) hevc=\(receiver.supportsHEVCDecode) panel=\(receiver.panelSummary) tb=\(receiver.thunderboltIP.isEmpty ? "no" : "yes")")
+            }
+            lines.append("Network Link add-on: \(networkLinkEnabled), audio add-on: \(service.audioRelayAvailable), input add-on: \(service.inputDockstationAvailable)")
+        }
+        if let session {
+            lines.append("Session: status=\(session.statusText) transport=\(session.transportKind.rawValue) preset=\(session.capturePreset.rawValue) source=\(session.captureSource.rawValue) codec=\(session.codecPreference.rawValue) renderMatching=\(session.matchRenderToStream)")
+            lines.append("Capture: \(session.captureDisplayText) · \(session.displayStateText)")
+            if let rate = session.cableTestResult { lines.append(String(format: "Cable test: %.2f Gbit/s", rate)) }
+        }
+        lines.append("PWE: picture=\(picture.rawValue) sound=\(sound.rawValue) mode=\(displayMode.rawValue) autoConnect=\(autoConnect) login=\(launchAtLogin) input=\(inputRole.rawValue)")
+        lines.append("")
+        lines.append("Log (last 30 minutes):")
+        lines.append(contentsOf: PWELogExport.recentLines(minutes: 30))
+        return lines.joined(separator: "\n")
+    }
 }
