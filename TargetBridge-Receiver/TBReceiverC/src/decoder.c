@@ -17,8 +17,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tb_trace.h"
+
 #if defined(__APPLE__)
 #  include <CoreVideo/CoreVideo.h>
+#  include <VideoToolbox/VideoToolbox.h>
 #endif
 
 #define ANNEXB_START   "\x00\x00\x00\x01"
@@ -98,6 +101,16 @@ struct tb_decoder *tb_dec_create(tb_frame_cb cb, void *ud) {
     if (!d->hw_frame || !d->sw_frame || !d->nv12_frame || !d->pkt) {
         tb_dec_destroy(d); return NULL;
     }
+#if defined(__APPLE__)
+    /* FFmpeg only allows hardware HEVC, it does not require it: without a
+     * hardware decoder VideoToolbox decodes in software and the log still
+     * says videotoolbox_vld. The trace says which one this Mac has. */
+    if (tb_trace_enabled()) {
+        fprintf(stderr, "[trace] VTIsHardwareDecodeSupported HEVC=%d H.264=%d\n",
+                (int)VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC),
+                (int)VTIsHardwareDecodeSupported(kCMVideoCodecType_H264));
+    }
+#endif
     return d;
 }
 
@@ -339,7 +352,11 @@ static int avcc_to_annexb(struct tb_decoder *d,
     return 0;
 }
 
-int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len) {
+static uint32_t frame_trace_id(const AVFrame *f) {
+    return (f->pts != AV_NOPTS_VALUE && f->pts > 0 && f->pts <= UINT32_MAX) ? (uint32_t)f->pts : 0;
+}
+
+int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len, uint32_t trace_id) {
     if (!d->opened) return -1;
 
     uint8_t *anb = NULL;
@@ -348,6 +365,7 @@ int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len) {
 
     d->pkt->data = anb;
     d->pkt->size = (int)anb_len;
+    d->pkt->pts  = trace_id ? (int64_t)trace_id : AV_NOPTS_VALUE;
 
     int r = avcodec_send_packet(d->ctx, d->pkt);
     if (r < 0 && r != AVERROR(EAGAIN)) {
@@ -375,7 +393,7 @@ int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len) {
                 size_t   uvs =            CVPixelBufferGetBytesPerRowOfPlane(pb, 1);
                 int      w   = (int)CVPixelBufferGetWidth(pb);
                 int      h   = (int)CVPixelBufferGetHeight(pb);
-                d->cb(y, (int)ys, uv, (int)uvs, w, h, d->ud);
+                d->cb(y, (int)ys, uv, (int)uvs, w, h, frame_trace_id(d->hw_frame), d->ud);
                 CVPixelBufferUnlockBaseAddress(pb, kCVPixelBufferLock_ReadOnly);
             }
             av_frame_unref(d->hw_frame);
@@ -398,7 +416,7 @@ int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len) {
         if (out->format == AV_PIX_FMT_NV12) {
             d->cb(out->data[0], out->linesize[0],
                   out->data[1], out->linesize[1],
-                  out->width,   out->height, d->ud);
+                  out->width,   out->height, frame_trace_id(d->hw_frame), d->ud);
         } else {
             d->sws = sws_getCachedContext(d->sws,
                                           out->width, out->height, (enum AVPixelFormat)out->format,
@@ -416,7 +434,7 @@ int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len) {
             } else {
                 d->cb(d->nv12_frame->data[0], d->nv12_frame->linesize[0],
                       d->nv12_frame->data[1], d->nv12_frame->linesize[1],
-                      d->nv12_frame->width, d->nv12_frame->height, d->ud);
+                      d->nv12_frame->width, d->nv12_frame->height, frame_trace_id(d->hw_frame), d->ud);
             }
         }
         av_frame_unref(d->nv12_frame);

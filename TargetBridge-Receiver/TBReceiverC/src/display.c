@@ -15,6 +15,7 @@
 #endif
 #include "tb_i18n.h"
 #include "tb_gesture_bridge.h"
+#include "tb_trace.h"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreGraphics/CoreGraphics.h>
@@ -841,6 +842,14 @@ struct tb_display *tb_disp_create(int fullscreen) {
     if (SDL_GetRendererInfo(d->ren, &info) == 0) {
         fprintf(stderr, "[disp] renderer = %s\n", info.name);
     }
+    {
+        SDL_DisplayMode mode;
+        uint64_t refresh_ns = 0;
+        if (SDL_GetCurrentDisplayMode(0, &mode) == 0 && mode.refresh_rate > 0) {
+            refresh_ns = 1000000000ull / (uint64_t)mode.refresh_rate;
+        }
+        tb_trace_configure(info.name, "immediate", refresh_ns);
+    }
 
     int win_w = 0, win_h = 0, out_w = 0, out_h = 0;
     SDL_GetWindowSize(d->win, &win_w, &win_h);
@@ -1364,18 +1373,21 @@ static void tb_disp_draw_cursor(struct tb_display *d) {
     SDL_SetRenderDrawBlendMode(d->ren, old_blend);
 }
 
-static void tb_disp_render_current(struct tb_display *d) {
+static void tb_disp_render_current(struct tb_display *d, uint32_t trace_id) {
     if (!d || !d->tex) return;
     SDL_RenderClear(d->ren);
     SDL_RenderCopy(d->ren, d->tex, NULL, NULL);
     tb_disp_draw_cursor(d);
+    tb_trace_mark_now(trace_id, TB_TRACE_SUBMITTED);
     SDL_RenderPresent(d->ren);
+    /* No vsync on this path: this is the hand-off to the window server. */
+    tb_trace_mark_now(trace_id, TB_TRACE_PRESENTED);
 }
 
 void tb_disp_render_nv12(struct tb_display *d,
                          const uint8_t *y, int y_stride,
                          const uint8_t *uv, int uv_stride,
-                         int w, int h) {
+                         int w, int h, uint32_t trace_id) {
     if (tb_disp_ensure_texture(d, w, h) < 0) return;
     tb_disp_set_connection_state(d, 1);
 
@@ -1385,8 +1397,9 @@ void tb_disp_render_nv12(struct tb_display *d,
         fprintf(stderr, "[disp] UpdateNVTexture: %s\n", SDL_GetError());
         return;
     }
+    tb_trace_mark_now(trace_id, TB_TRACE_TEX_READY);
     d->last_video_frame_time = SDL_GetTicks();
-    tb_disp_render_current(d);
+    tb_disp_render_current(d, trace_id);
 }
 
 void tb_disp_set_cursor(struct tb_display *d,
@@ -1407,7 +1420,7 @@ void tb_disp_set_cursor(struct tb_display *d,
     uint32_t now = SDL_GetTicks();
     if (now - d->last_video_frame_time > 40) {
         if (d->is_connected && d->tex) {
-            tb_disp_render_current(d);
+            tb_disp_render_current(d, 0);
         }
     }
 }

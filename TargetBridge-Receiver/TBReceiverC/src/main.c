@@ -23,6 +23,7 @@
 #include "tb_display_tweaks.h"
 #include "tb_i18n.h"
 #include "tb_login_item.h"
+#include "tb_trace.h"
 
 #ifndef TB_RECEIVER_OFFER_LOGIN_ITEM
 #define TB_RECEIVER_OFFER_LOGIN_ITEM 0
@@ -952,8 +953,9 @@ static void tb_receiver_apply_input_control_mode(struct app *a, const uint8_t *p
 
 static void on_frame(const uint8_t *y, int y_stride,
                      const uint8_t *uv, int uv_stride,
-                     int w, int h, void *ud) {
+                     int w, int h, uint32_t trace_id, void *ud) {
     struct app *a = (struct app *)ud;
+    tb_trace_mark_now(trace_id, TB_TRACE_DECODED);
     a->have_video_frame = 1;
     tb_copy_i18n(a->status_text, sizeof(a->status_text), "receiver.status.stream_active");
     {
@@ -967,7 +969,7 @@ static void on_frame(const uint8_t *y, int y_stride,
         snprintf(height_text, sizeof(height_text), "%d", h);
         tb_format_i18n(a->mode_text, sizeof(a->mode_text), "receiver.mode.receiving", pairs, 2);
     }
-    tb_disp_render_nv12(a->disp, y, y_stride, uv, uv_stride, w, h);
+    tb_disp_render_nv12(a->disp, y, y_stride, uv, uv_stride, w, h, trace_id);
     a->frames++;
 }
 
@@ -993,6 +995,8 @@ static void handle_raw_frame(struct app *a, const uint8_t *p, size_t len) {
     if (y_size > payload_size || uv_size > payload_size - y_size) return;
     const uint8_t *y  = p + 17;
     const uint8_t *uv = y + y_size;
+    const uint32_t trace_id = tb_trace_frame_arrived();
+    tb_trace_mark_now(trace_id, TB_TRACE_DECODED);   /* nothing to decode */
 
     a->have_video_frame = 1;
     tb_copy_i18n(a->status_text, sizeof(a->status_text), "receiver.status.stream_active");
@@ -1007,7 +1011,7 @@ static void handle_raw_frame(struct app *a, const uint8_t *p, size_t len) {
         snprintf(height_text, sizeof(height_text), "%u", h);
         tb_format_i18n(a->mode_text, sizeof(a->mode_text), "receiver.mode.receiving", pairs, 2);
     }
-    tb_disp_render_nv12(a->disp, y, (int)ys, uv, (int)us, (int)w, (int)h);
+    tb_disp_render_nv12(a->disp, y, (int)ys, uv, (int)us, (int)w, (int)h, trace_id);
     a->frames++;
 }
 
@@ -1208,7 +1212,7 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
         break;
     case TB_PKT_FRAME:
         a->session_active = 1;
-        tb_dec_feed_frame(a->dec, payload, len);
+        tb_dec_feed_frame(a->dec, payload, len, tb_trace_frame_arrived());
         break;
     case TB_PKT_RAW_FRAME:
         a->session_active = 1;
@@ -2302,6 +2306,8 @@ int main(int argc, char **argv) {
                 }
             }
         }
+
+        tb_trace_tick(tb_trace_now_ns());
 
         /* FPS log */
         if (t - a.last_fps_tick_ms >= 1000) {

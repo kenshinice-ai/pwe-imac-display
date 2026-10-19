@@ -12,9 +12,11 @@
  *   Y plane  : (width * height) bytes,            stride = y_stride
  *   UV plane : (width * height / 2) bytes,        stride = uv_stride
  */
+/* trace_id: the id passed to tb_dec_feed_frame for the packet that produced
+ * this frame (tb_trace.h), carried through FFmpeg as the packet's pts. */
 typedef void (*tb_frame_cb)(const uint8_t *y, int y_stride,
                             const uint8_t *uv, int uv_stride,
-                            int width, int height, void *ud);
+                            int width, int height, uint32_t trace_id, void *ud);
 
 struct tb_decoder;
 
@@ -34,7 +36,7 @@ void               tb_dec_reset  (struct tb_decoder *d);
 int  tb_dec_set_param_sets(struct tb_decoder *d, const uint8_t *payload, size_t len);
 
 /* Feed one AVCC-formatted frame (4-byte length prefixed NAL units).
- * Converts to Annex B and dispatches to FFmpeg. */
-int  tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len);
+ * Converts to Annex B and dispatches to FFmpeg. trace_id may be 0. */
+int  tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len, uint32_t trace_id);
 
 #endif

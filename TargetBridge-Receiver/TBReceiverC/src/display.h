@@ -52,11 +52,12 @@ int                tb_disp_window_on_active_space(struct tb_display *d);
 /* Resize/recreate texture when frame dimensions change. */
 int  tb_disp_ensure_texture(struct tb_display *d, int w, int h);
 
-/* Upload NV12 planes + render. Called once per decoded frame. */
+/* Upload NV12 planes + render. Called once per decoded frame. trace_id is the
+ * frame's id from tb_trace.h, or 0. */
 void tb_disp_render_nv12(struct tb_display *d,
                          const uint8_t *y, int y_stride,
                          const uint8_t *uv, int uv_stride,
-                         int w, int h);
+                         int w, int h, uint32_t trace_id);
 
 /* Update low-latency local cursor overlay in source-frame coordinates. */
 void tb_disp_set_cursor(struct tb_display *d,
