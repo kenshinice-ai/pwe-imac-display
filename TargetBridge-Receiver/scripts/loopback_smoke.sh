@@ -9,6 +9,9 @@
 #   3. hang          -> idle watchdog reaps a silent sender (~10s)
 #   4. stream        -> real H.264 decode (skipped without ffmpeg CLI or
 #                       with --no-stream)
+#   5-7. renderers   -> Metal zero-copy with the receiver-drawn pointer, then
+#                       the copy fallback and the OpenGL fallback, each in a
+#                       fresh receiver (also skipped without ffmpeg)
 #
 # Needs a GUI session (SDL window) and the receiver build deps
 # (brew install ffmpeg sdl2 pkgconf). Exits non-zero on any failed phase.
@@ -85,6 +88,37 @@ else
     python3 "$MOCK" --mode stream --duration 4 || fail "mock stream exited non-zero"
     expect_log "param sets changed, opening decoder" "decoder accepted param sets"
     expect_log "[disp] texture " "receiver rendered decoded video"
+fi
+
+# A fresh receiver per renderer phase: the renderer is chosen at start-up.
+relaunch() {
+    [[ -n "$RECEIVER_PID" ]] && kill "$RECEIVER_PID" 2>/dev/null
+    wait "$RECEIVER_PID" 2>/dev/null
+    LOG="$(mktemp -t tb_smoke_receiver.err)"
+    env TB_LANG=en TB_RECEIVER_TRACE=1 "$@" "$SRC/tbreceiver" --windowed 2>"$LOG" &
+    RECEIVER_PID=$!
+    sleep 2
+}
+
+if (( ! NO_STREAM )) && command -v ffmpeg >/dev/null; then
+    phase "Phase 5: Metal zero-copy + receiver-drawn pointer"
+    relaunch TB_RECEIVER_RENDER_DRIVER=metal
+    expect_log "[metal] zero-copy video on" "Metal path passed its start-up checks"
+    python3 "$MOCK" --mode pointer --fps 60 --duration 4 || fail "mock pointer exited non-zero (no cursorImage in the profile?)"
+    expect_log "Metal zero-copy: first frame" "Metal path took a decoded frame"
+    expect_log "pointer picture arrived" "receiver took the pointer picture"
+    expect_log "[trace] in=" "trace summary lines"
+
+    phase "Phase 6: decoder buffers refused -> copy fallback"
+    relaunch TB_RECEIVER_RENDER_DRIVER=metal TB_RECEIVER_METAL_FAIL=wrap
+    python3 "$MOCK" --mode stream --duration 3 || fail "mock stream exited non-zero"
+    expect_log "copying each frame" "Metal path copies frames it cannot texture"
+
+    phase "Phase 7: Metal unusable -> OpenGL fallback"
+    relaunch TB_RECEIVER_RENDER_DRIVER=metal TB_RECEIVER_METAL_FAIL=texture
+    python3 "$MOCK" --mode stream --duration 3 || fail "mock stream exited non-zero"
+    expect_log "falling back to OpenGL" "renderer fell back to OpenGL"
+    expect_log "[disp] texture " "OpenGL rendered decoded video after the fallback"
 fi
 
 print ""
