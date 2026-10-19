@@ -236,6 +236,47 @@ int tb_net_is_link_local_ipv4(const char *host) {
     return a == 169 && b == 254 && c <= 255 && d <= 255;
 }
 
+int tb_net_is_direct_link(const char *ifname, const char *local_host, int is_wifi) {
+    if (!ifname || !*ifname) return 0;
+    if (strncmp(ifname, "lo", 2) == 0) return 1;
+    if (strncmp(ifname, "bridge", 6) == 0) return 1;
+    if (is_wifi) return 0;
+    return is_likely_lan_interface_name(ifname) && tb_net_is_link_local_ipv4(local_host);
+}
+
+int tb_net_client_is_direct_link(int fd, char *ifname, size_t ifname_size) {
+    if (ifname && ifname_size > 0) ifname[0] = '\0';
+
+    struct sockaddr_in local;
+    socklen_t local_len = sizeof(local);
+    memset(&local, 0, sizeof(local));
+    if (getsockname(fd, (struct sockaddr *)&local, &local_len) != 0) return 0;
+    if (local.sin_family != AF_INET) return 0;
+
+    char host[INET_ADDRSTRLEN] = {0};
+    if (!inet_ntop(AF_INET, &local.sin_addr, host, sizeof(host))) return 0;
+
+    struct ifaddrs *ifap = NULL;
+    if (getifaddrs(&ifap) != 0) return 0;
+    const char *name = NULL;
+    for (struct ifaddrs *p = ifap; p; p = p->ifa_next) {
+        if (!p->ifa_addr || p->ifa_addr->sa_family != AF_INET) continue;
+        const struct sockaddr_in *candidate = (const struct sockaddr_in *)p->ifa_addr;
+        if (candidate->sin_addr.s_addr == local.sin_addr.s_addr) {
+            name = p->ifa_name;
+            break;
+        }
+    }
+    int direct = 0;
+    if (name) {
+        if (ifname && ifname_size > 0) snprintf(ifname, ifname_size, "%s", name);
+        direct = tb_net_is_direct_link(name, host,
+                                       interface_matches_kind(name, TB_LAN_INTERFACE_WIFI));
+    }
+    freeifaddrs(ifap);
+    return direct;
+}
+
 int tb_net_get_tb_ip(char *buf, size_t bufsz) {
     struct ifaddrs *ifap = NULL;
     if (getifaddrs(&ifap) != 0) return -1;
