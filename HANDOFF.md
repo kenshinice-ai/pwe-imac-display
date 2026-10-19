@@ -1,9 +1,11 @@
 # PWE iMac Display — 交接
 
-> 状态（2026-10-16）：1.0.0 已发布（GitHub 标签 `pwe-1.0.0`，Homebrew `kenshinice-ai/tap/pwe-imac-display`）；2026-10-16 给它的 release 补上了 FFmpeg 源码包。
+> 状态（2026-10-19）：1.0.0 已发布（GitHub 标签 `pwe-1.0.0`，Homebrew `kenshinice-ai/tap/pwe-imac-display`）；2026-10-16 给它的 release 补上了 FFmpeg 源码包。
 > 1.0.1（接收端加固）在本地分支 `security-1.0.1` 上，已合入 `main` 的打包和许可修正，计划 2026-10-22 发布。
 > 1.1（PWE 自己的界面、自动连接、登录时打开、接收端安静画面）在分支 `pwe-1.1` 上；2026-10-16 按三路评审修了发送端 11 处、接收端 8 处，并打出本地包。等 Lee 试用和 iMac 基线。路线见 `docs/pwe/PLAN-2026-10-15.md`（未入库）。
-> pwestudio.site 产品页冻结中（Lee），方案在 `docs/pwe/SITE-PLAN.md`。还没在真实的 Intel iMac 上试过。
+> pwestudio.site 产品页冻结中（Lee），方案在 `docs/pwe/SITE-PLAN.md`。
+> 2026-10-19 在真机 iMac18,3（macOS 13.7.8）上做了基线：画面、真 5K（48 和 60 帧）、拔线和睡眠恢复都能用；声音不工作。
+> 结果和证据在 `docs/pwe/BASELINE-iMac18,3.md`（未入库），本文件「八」节是摘要。
 > 仓库：`kenshinice-ai/pwe-imac-display`，公开，是 `swellweb/targetBridge` 的 fork。`main` 从上游 3.6.0 起。
 > 方向（Lee，2026-10-14）：PWE 自己签名的 app，同时给上游贡献。下游发行版还是彻底分叉待定。见 `docs/pwe/RESEARCH-TargetBridge.md`。
 > `main` = 上游基线 + `pwe/PATCHES.md` 登记的补丁 + PWE 自己的文件（本文件、`docs/pwe/`、`pwe/`、`.github/README.md`、`.github/SECURITY.md`）。
@@ -11,8 +13,9 @@
 
 ## 等 Lee
 
-- **[动手] 试用 1.1** — 打开 `pwe/dist/local/PWE-iMac-Display-1.1.0.dmg`（2026-10-16 本机构建，未公证，只在这台 Mac 上用）。重点看：主窗口的说法、首次设置、自动连接是否符合预期 · 不试则 1.1 的界面没人拍板，发不了 · 自 2026-10-15
-- **[动手] iMac 2026-10-19（周一）到货后按 `docs/pwe/PLAN-2026-10-15.md` 第三节做真机基线** — 用 1.1 的包；同时用 `pwe/dist/local/PWE-iMac-Display-1.0.1.dmg` 确认真实雷雳线能连上（1.0.1 的接收端改动只在本机回环上测过）；带 40 Gbps 雷雳 3 线，2014、2015 款另带转换器 · 不做则默认码流配置定不下来，1.1 发不了 · 自 2026-10-15
+- **[动手] 在有 Developer ID 的 Mac 上重打 1.0.1 和 1.1 的测试包** — 步骤见「八」节「在另一台 Mac 上打包」。2026-10-19 这台 MacBook Pro 没有 Developer ID，只能打 ad hoc 包（`pwe/dist/local/adhoc-2026-10-19/`）· 不打则带声音修复的包没有正式签名，没法给别人试 · 自 2026-10-19
+- **[动手] 用 Developer ID 的包在 iMac 上补测** — 键鼠共享、1.0.1 过真线、5K 60 下的解码、延迟、两小时办公（声音和 5K 48 解码已在 ad hoc 包上测过）。接收端升级方法见「八」节 · 不测则 1.0.1 的发布说明和 1.1 的默认档位都没有依据 · 自 2026-10-19
+- **[动手] 1.0.1 发布说明写上：声音、键鼠共享、Network Link 现在能用了** — 1.0.0 正式版里这三个附加功能全被判「不兼容」，开关开着也不起作用（2026-10-19 发现）。修复已在 `security-1.0.1`（d4b4598）和 `pwe-1.1`（436247f）本地提交，未推送 · 不写则 1.0.0 用户不知道升级能修好声音 · 自 2026-10-19
 - **[决定] 2026-10-22 发布 1.0.1 吗** — 推荐发；先在 10-19 用真线试一次 1.0.1 的包再发；Marco 若要求推迟就等他。发布前把 `security-1.0.1` 合进 `main` · 不定则接收端加固留在本地 · 自 2026-10-15
 - **[决定] 解冻 pwestudio.site** — 产品页方案在 `docs/pwe/SITE-PLAN.md`；1.1 的更新检查还要在 `functions/_release.js` 加一条 `imacdisplay` · 不定则网站上没有这个产品，1.1 的「检查更新」只会回答「已经是最新版本」 · 自 2026-10-14
 - **[决定] 本仓库 Sponsor 按钮** — 组规矩 §0.9 要求放 `custom: [pwestudio.site/support]`，并由 Lee 同意打开 Sponsorships 开关；1.1 的「关于」里已有「支持 PWE…」 · 不定则仓库页没有支持入口 · 自 2026-10-15
@@ -24,6 +27,8 @@
 - `package.sh` 的接收端 make 行合并后要同时带 `DIRECT_LINK_ONLY=1 COMPACT_IDLE=1 OFFER_LOGIN_ITEM=1`。
 - cask 的 `zap` 加上 `~/Library/LaunchAgents/com.pwegroup.pweimacdisplay.receiver.plist`。
 - 给上游提 PR：发送端「重新打开」按钮只退出不重开（PWE 已在 `rebrand.py` 里修）。
+- 修完 `BASELINE-iMac18,3.md`「发现的问题」里的发送端问题：拨错 Wi‑Fi 地址、5K 60 不被记住、连着时 Mac 睡不着、发现断开慢、显示器名字。另一个会话 2026-10-19 起在做（分支 `claude/zealous-mclean-92c96c`，完成后合进 `pwe-1.1`）。
+- 默认档位改成 5K 60：Lee 在 iMac18,3 上看 60 明显比 48 流畅（2026-10-19）。2014、2015 款的默认档位等那两款的实测。
 
 ## 仓库规矩
 
@@ -152,3 +157,49 @@ C 函数 `CGVirtualDisplayCreate` 不存在，但用不到它。
 
 跟 PWE 免费工具一致：免费、开源（MIT，名称和标识保留，同 PWE Monitor 和 Lumen Bar）。
 支持走 `https://pwestudio.site/support`，所有免费 PWE 工具共用一页。
+
+## 八、2026-10-19 真机基线（摘要）
+
+详细数据和证据：`docs/pwe/BASELINE-iMac18,3.md`。设备：发送端 MacBook Pro M1（macOS 27.2），接收端 iMac18,3（macOS 13.7.8），1.1.0 本地包。
+
+| 项 | 结果 |
+|---|---|
+| 安装与首次连接 | 通过，不用终端，不绕过安全机制 |
+| 真 5K | 默认是 1440p，不是 5K。「Work 5K」= 5120×2880 @ 48；`preset=5k60` = @ 60，Lee 觉得 60 明显更流畅 |
+| MacBook 负载（5K 60） | 发送端 CPU 7–14%，GPU 42–51%，不是瓶颈 |
+| 只用 iMac 一块屏 | 合盖、不合盖（Lumen Bar 熄内建屏）都能用 |
+| 拔线 6 次 | 全部自动恢复，但插回后 22.6–35.8 秒才出画面；5 次先拨了 Wi‑Fi 地址 |
+| 睡眠 5 轮 | 画面 1.2–2.8 秒回来；但 Mac 睡不着，3 次是本 App 叫醒的 |
+| 声音（修复前） | 不工作：附加功能被判「不兼容」。修复已提交（436247f、d4b4598） |
+| 全屏视频的菜单栏和灰边 | 是这台 Mac「全屏也显示菜单栏」的设置，不是本 App |
+| iMac 解码（5K 48） | 硬件解码，接收端 CPU 平均 19%，整机平均空闲 85%，有余量 |
+| 声音（修复后） | iMac 出声；但 MacBook 也同时响，iMac 稍慢。要加「声音只在 iMac 播放」的选项（Lee 同意） |
+| 设置界面 | 分在三个窗口、规则矛盾、术语多。审查和建议结构在 `docs/pwe/UX-REVIEW-2026-10-19.md`（未入库） |
+| 未测 | 5K 60 下的 iMac 解码、延迟、两小时办公、1.0.1 过真线、键鼠共享 |
+
+### 在另一台 Mac 上打包
+
+仓库在 iCloud 里，两台 Mac 看到的是同一个 `.git`。
+
+> ⚠️ 不要在两台 Mac 上同时跑 git 或打包。否则 iCloud 会生成「… 2」这样的冲突副本，弄坏 `.git`。
+> 原因：iCloud 同步不懂 git 的锁。
+
+1. 等 iCloud 同步完。成功判据：`git log --oneline -1 security-1.0.1` 显示 `d4b4598`，`git log --oneline -1 pwe-1.1` 显示 `436247f` 或更新。
+2. 运行 `security find-identity -v -p codesigning`。成功判据：列出 `Developer ID Application: Li Liu (2SQV3H5MH9)`。
+3. 如果要打 1.1 测试包，先确认修问题的会话已经把它的提交合进 `pwe-1.1`。没合就只打 1.0.1。
+4. 切到要打的分支，运行 `pwe/package.sh`。成功判据：最后打印 `pwe/dist/local/PWE-iMac-Display-<版本>.dmg` 和 sha256，`bundle checks passed`。
+5. 挂载 DMG，运行 `codesign -dv "<挂载点>/PWE iMac Display.app"`。成功判据：`Authority=Developer ID Application: Li Liu (2SQV3H5MH9)`。
+6. 正式发 1.0.1 时按「仓库规矩」的发版打包和发版步骤走（`--notarize`，只推一个标签）。
+
+### 升级 iMac 上的接收端
+
+iMac 开了文件共享。访客登录被拒绝（2026-10-19 实测），要用 iMac 的账号登录。
+
+1. 在 MacBook 的 Finder 里，点侧栏「网络」里的 LL-iMac-2017，点「连接身份」，用 iMac 的账号登录（Lee 输密码）。成功判据：`ls /Volumes` 里出现 iMac 的共享。
+2. 把新的「PWE iMac Display Receiver.app」拷到共享里 iMac 用户的「桌面」。
+3. 在 iMac 上退出接收端（`⌘Q`）。
+4. 在 iMac 上把桌面上的 App 拖进「应用程序」，选「替换」。
+5. 在 iMac 上打开接收端。成功判据：发送端几秒内自动连上；「关于」里显示新的构建号。
+
+> ⚠️ 换成别的签名（ad hoc ↔ Developer ID）后，要在 iMac 上重新给接收端授权辅助功能和输入监控。否则键鼠共享不工作。
+> 原因：这两项权限绑定 App 的签名。发送端的录屏权限同理。
