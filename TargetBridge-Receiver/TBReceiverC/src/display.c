@@ -102,8 +102,15 @@ struct tb_display {
     int              redraw_needed;
     int              cursor_dirty;
     uint32_t         last_cursor_render_time;
-    int              baked_cursor_type;
-    int              baked_cursor_size;
+    uint64_t         metal_cursor_key;  /* which picture the Metal path has uploaded */
+
+    /* Receiver-drawn pointer: the sender's picture (0x39), premultiplied BGRA. */
+    uint8_t         *cursor_pixels;
+    int              cursor_img_w, cursor_img_h;
+    int              cursor_hot_x, cursor_hot_y;
+    int              cursor_frame_w, cursor_frame_h;
+    uint32_t         cursor_img_id;
+    SDL_Texture     *cursor_tex;       /* the picture on the SDL renderer */
 };
 
 static uint16_t tb_disp_mac_keycode_for_sdl_scancode(SDL_Scancode scancode) {
@@ -882,7 +889,7 @@ static int tb_disp_create_renderer(struct tb_display *d) {
             d->paced = d->vsync != NULL;
             d->last_submit_tick = UINT64_MAX;
             d->video_submit_tick = UINT64_MAX;
-            d->baked_cursor_type = -1;
+            d->metal_cursor_key = 0;
             return 0;
         }
         fprintf(stderr, "[disp] Metal zero-copy unavailable (%s); falling back to OpenGL\n", why);
@@ -973,6 +980,8 @@ void tb_disp_destroy(struct tb_display *d) {
     tb_disp_metal_release_frames(d);
     tb_vsync_destroy(d->vsync);
     tb_mtl_destroy(d->mtl);
+    if (d->cursor_tex) SDL_DestroyTexture(d->cursor_tex);
+    free(d->cursor_pixels);
     if (d->tex) SDL_DestroyTexture(d->tex);
     if (d->ren) SDL_DestroyRenderer(d->ren);
     if (d->win) SDL_DestroyWindow(d->win);
@@ -1450,11 +1459,54 @@ static void tb_disp_draw_vector_cursor(SDL_Renderer *ren, int x, int y, int type
     SDL_SetRenderDrawBlendMode(ren, old_blend);
 }
 
+/* Where the sender's pointer picture goes on an out_w x out_h drawable: its
+ * hot spot on the pointer position, its size as on the video frame, twice that
+ * with "Large cursor". 0 when there is no picture. */
+static int tb_disp_cursor_image_rect(const struct tb_display *d, int out_w, int out_h,
+                                     float *x, float *y, float *w, float *h) {
+    if (!d->cursor_pixels || d->cursor_img_w <= 0 || d->cursor_img_h <= 0) return 0;
+    const double sx = (double)out_w / (double)d->cursor_source_w;
+    const double sy = (double)out_h / (double)d->cursor_source_h;
+    const double scale = d->cursor_large ? 2.0 : 1.0;
+    const double dw = (double)d->cursor_frame_w * sx * scale;
+    const double dh = (double)d->cursor_frame_h * sy * scale;
+    *w = (float)dw;
+    *h = (float)dh;
+    *x = (float)((double)d->cursor_x * sx - (double)d->cursor_hot_x * dw / (double)d->cursor_img_w);
+    *y = (float)((double)d->cursor_y * sy - (double)d->cursor_hot_y * dh / (double)d->cursor_img_h);
+    return 1;
+}
+
+/* The picture on the SDL renderer, as a premultiplied-alpha texture. */
+static void tb_disp_draw_cursor_image(struct tb_display *d, int out_w, int out_h) {
+    if (!d->cursor_tex) {
+        d->cursor_tex = SDL_CreateTexture(d->ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC,
+                                          d->cursor_img_w, d->cursor_img_h);
+        if (!d->cursor_tex) return;
+        SDL_UpdateTexture(d->cursor_tex, NULL, d->cursor_pixels, d->cursor_img_w * 4);
+        SDL_BlendMode premultiplied = SDL_ComposeCustomBlendMode(
+            SDL_BLENDFACTOR_ONE, SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, SDL_BLENDOPERATION_ADD,
+            SDL_BLENDFACTOR_ONE, SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, SDL_BLENDOPERATION_ADD);
+        if (SDL_SetTextureBlendMode(d->cursor_tex, premultiplied) < 0) {
+            SDL_SetTextureBlendMode(d->cursor_tex, SDL_BLENDMODE_BLEND);
+        }
+        SDL_SetTextureScaleMode(d->cursor_tex, SDL_ScaleModeLinear);
+    }
+    SDL_FRect dst;
+    if (tb_disp_cursor_image_rect(d, out_w, out_h, &dst.x, &dst.y, &dst.w, &dst.h)) {
+        SDL_RenderCopyF(d->ren, d->cursor_tex, NULL, &dst);
+    }
+}
+
 static void tb_disp_draw_cursor(struct tb_display *d) {
     if (!d || !d->cursor_visible || d->cursor_source_w <= 0 || d->cursor_source_h <= 0) return;
 
     int out_w = 0, out_h = 0;
     if (SDL_GetRendererOutputSize(d->ren, &out_w, &out_h) < 0 || out_w <= 0 || out_h <= 0) {
+        return;
+    }
+    if (d->cursor_pixels) {
+        tb_disp_draw_cursor_image(d, out_w, out_h);
         return;
     }
 
@@ -1555,6 +1607,8 @@ static void tb_disp_fall_back_to_opengl(struct tb_display *d, const char *why) {
     d->vsync = NULL;
     d->paced = 0;
     tb_disp_destroy_status_texture(d);
+    if (d->cursor_tex) SDL_DestroyTexture(d->cursor_tex);
+    d->cursor_tex = NULL;
     if (d->tex) SDL_DestroyTexture(d->tex);
     d->tex = NULL;
     d->tex_w = d->tex_h = 0;
@@ -1576,7 +1630,8 @@ static void tb_disp_fall_back_to_opengl(struct tb_display *d, const char *why) {
 static int tb_disp_metal_vector_cursor(struct tb_display *d, int type, int size, int *hot) {
     const int canvas = size * 2 + 16;
     *hot = size * 5 / 8 + 8;
-    if (d->baked_cursor_type == type && d->baked_cursor_size == size) return canvas;
+    const uint64_t key = (2ull << 40) | ((uint64_t)(uint32_t)type << 16) | (uint64_t)(uint32_t)size;
+    if (d->metal_cursor_key == key) return canvas;
 
     SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormat(0, canvas, canvas, 32, SDL_PIXELFORMAT_ARGB8888);
     SDL_Renderer *soft = surface ? SDL_CreateSoftwareRenderer(surface) : NULL;
@@ -1604,8 +1659,7 @@ static int tb_disp_metal_vector_cursor(struct tb_display *d, int type, int size,
     }
     tb_mtl_set_cursor_bitmap(d->mtl, px, canvas, canvas, surface->pitch);
     SDL_FreeSurface(surface);
-    d->baked_cursor_type = type;
-    d->baked_cursor_size = size;
+    d->metal_cursor_key = key;
     return canvas;
 }
 
@@ -1615,6 +1669,14 @@ static int tb_disp_metal_cursor_rect(struct tb_display *d, struct tb_mtl_rect *r
     int out_w = 0, out_h = 0;
     tb_mtl_drawable_size(d->mtl, &out_w, &out_h);
     if (out_w <= 0 || out_h <= 0) return 0;
+    if (d->cursor_pixels) {
+        const uint64_t key = (1ull << 40) | d->cursor_img_id;
+        if (d->metal_cursor_key != key) {
+            tb_mtl_set_cursor_bitmap(d->mtl, d->cursor_pixels, d->cursor_img_w, d->cursor_img_h, d->cursor_img_w * 4);
+            d->metal_cursor_key = key;
+        }
+        return tb_disp_cursor_image_rect(d, out_w, out_h, &rect->x, &rect->y, &rect->w, &rect->h);
+    }
     const double sx = (double)out_w / (double)d->cursor_source_w;
     const double sy = (double)out_h / (double)d->cursor_source_h;
     const int x = (int)((double)d->cursor_x * sx);
@@ -1776,6 +1838,35 @@ void tb_disp_set_cursor(struct tb_display *d,
             tb_disp_render_current(d, 0);
         }
     }
+}
+
+void tb_disp_set_cursor_image(struct tb_display *d, const struct tb_cursor_image *image) {
+    if (!d) return;
+    if (image && !d->cursor_pixels) {
+        fprintf(stderr, "[disp] the sender's pointer picture arrived (%dx%d): this receiver draws the pointer\n",
+                image->width, image->height);
+    }
+    if (d->cursor_tex) SDL_DestroyTexture(d->cursor_tex);
+    d->cursor_tex = NULL;
+    d->metal_cursor_key = 0;
+    free(d->cursor_pixels);
+    d->cursor_pixels = NULL;
+    d->cursor_img_w = d->cursor_img_h = 0;
+    if (image) {
+        const size_t bytes = (size_t)image->width * (size_t)image->height * 4u;
+        d->cursor_pixels = (uint8_t *)malloc(bytes);
+        if (d->cursor_pixels) {
+            memcpy(d->cursor_pixels, image->bgra, bytes);
+            d->cursor_img_w = image->width;
+            d->cursor_img_h = image->height;
+            d->cursor_hot_x = image->hot_x;
+            d->cursor_hot_y = image->hot_y;
+            d->cursor_frame_w = image->frame_width;
+            d->cursor_frame_h = image->frame_height;
+            d->cursor_img_id = image->id;
+        }
+    }
+    d->cursor_dirty = 1;
 }
 
 /* A fresh press of `sym` with no Command, Control or Option: holding a key

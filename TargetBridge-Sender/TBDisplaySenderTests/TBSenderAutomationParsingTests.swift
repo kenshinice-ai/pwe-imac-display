@@ -1,4 +1,5 @@
 import CoreMedia
+import AppKit
 import XCTest
 @testable import TargetBridge
 
@@ -617,5 +618,63 @@ final class TBSenderAutomationParsingTests: XCTestCase {
         XCTAssertNil(TBSenderAutomation.resolveSessionIndex("abc", sessionCount: 3, createDefaultIfNeeded: true))
         XCTAssertNil(TBSenderAutomation.resolveSessionIndex("0", sessionCount: 3, createDefaultIfNeeded: true))
         XCTAssertNil(TBSenderAutomation.resolveSessionIndex("-1", sessionCount: 3, createDefaultIfNeeded: true))
+    }
+
+    // MARK: - Receiver-drawn pointer
+
+    func testReceiverDrawnPointerLeavesThePointerOutOfTheStream() {
+        for role in TBInputControlRole.allCases {
+            XCTAssertTrue(role.usesLowLatencyCursorOverlay(largeCursorEnabled: false, receiverDrawsPointer: true))
+            // Both modes leave it out, so changing the role needs no capture restart.
+            XCTAssertFalse(role.changesCursorCaptureMode(from: .off, largeCursorEnabled: false,
+                                                         receiverDrawsPointer: true))
+        }
+    }
+
+    func testPointerGeometryFullFrame() {
+        let bounds = CGRect(x: 1440, y: 0, width: 2560, height: 1440)   // a 5K virtual display, 2x
+        XCTAssertEqual(TBReceiverPointerGeometry.scale(displaySize: bounds.size, frameWidth: 5120, frameHeight: 2880), 2)
+        let p = TBReceiverPointerGeometry.place(CGPoint(x: 1440 + 100, y: 50), displayBounds: bounds,
+                                                frameWidth: 5120, frameHeight: 2880)
+        XCTAssertEqual(p, .init(x: 200, y: 100, inside: true))
+        let outside = TBReceiverPointerGeometry.place(CGPoint(x: 500, y: 50), displayBounds: bounds,
+                                                      frameWidth: 5120, frameHeight: 2880)
+        XCTAssertFalse(outside.inside)
+        XCTAssertEqual(outside.x, 0)   // clamped to the display's edge
+    }
+
+    func testPointerGeometryLetterboxedMirror() {
+        // A 16:10 Mac (1440 x 900 pt) mirrored into a 16:9 5K stream: scale 3.2,
+        // content 4608 x 2880, black bars of 256 px left and right.
+        let bounds = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        XCTAssertEqual(TBReceiverPointerGeometry.scale(displaySize: bounds.size, frameWidth: 5120, frameHeight: 2880),
+                       3.2, accuracy: 1e-9)
+        XCTAssertEqual(TBReceiverPointerGeometry.place(.zero, displayBounds: bounds, frameWidth: 5120, frameHeight: 2880),
+                       .init(x: 256, y: 0, inside: true))
+        XCTAssertEqual(TBReceiverPointerGeometry.place(CGPoint(x: 1440, y: 900), displayBounds: bounds,
+                                                       frameWidth: 5120, frameHeight: 2880),
+                       .init(x: 256 + 4608, y: 2880, inside: true))
+        XCTAssertEqual(TBReceiverPointerGeometry.place(CGPoint(x: 720, y: 450), displayBounds: bounds,
+                                                       frameWidth: 5120, frameHeight: 2880).x, 2560)
+    }
+
+    @MainActor
+    func testPointerPictureMatchesTheFrameScale() throws {
+        let arrow = NSCursor.arrow
+        let picture = try XCTUnwrap(TBDisplaySenderSession.pointerPicture(of: arrow, pixelsPerPoint: 2))
+        XCTAssertEqual(picture.width, Int((arrow.image.size.width * 2).rounded()))
+        XCTAssertEqual(picture.height, Int((arrow.image.size.height * 2).rounded()))
+        XCTAssertEqual(picture.frameWidth, picture.width)
+        XCTAssertEqual(picture.bgra.count, picture.width * picture.height * 4)
+        XCTAssertEqual(picture.hotX, Int((arrow.hotSpot.x * 2).rounded()))
+        XCTAssertEqual(picture.hotY, Int((arrow.hotSpot.y * 2).rounded()))
+        XCTAssertTrue(picture.bgra.contains { $0 != 0 }, "the arrow drew nothing")
+        XCTAssertNotNil(TBMonitorProtocol.makeCursorImagePacket(picture))
+
+        // Shrunk to the packet limit, but still covering its full size on the frame.
+        let huge = try XCTUnwrap(TBDisplaySenderSession.pointerPicture(of: arrow, pixelsPerPoint: 40))
+        XCTAssertLessThanOrEqual(max(huge.width, huge.height), TBMonitorCursorImage.maxSide)
+        XCTAssertGreaterThan(huge.frameWidth, huge.width)
+        XCTAssertNotNil(TBMonitorProtocol.makeCursorImagePacket(huge))
     }
 }

@@ -1241,6 +1241,16 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
             tb_disp_set_cursor(a->disp, x, y, w, h, visible, type, large);
         }
         break;
+    case TB_PKT_CURSOR_IMAGE:
+        {
+            struct tb_cursor_image image;
+            if (tb_cursor_image_parse(payload, len, &image) == 0) {
+                tb_disp_set_cursor_image(a->disp, &image);
+            } else {
+                fprintf(stderr, "[main] malformed cursor image (%zu bytes)\n", len);
+            }
+        }
+        break;
     case TB_PKT_BRIGHTNESS:
         {
             double level = 1.0;
@@ -1858,6 +1868,13 @@ static void tb_receiver_send_display_tweaks_if_changed(struct app *a) {
     (void)send_all(a->client_fd, pkt, 5 + (size_t)len);
 }
 
+/* Draw the sender's pointer here, from 0x39 pictures and 0x32 positions, so
+ * the video can leave it out. TB_RECEIVER_CURSOR_IMAGE=0 keeps it in the video. */
+static int tb_receiver_draws_pointer(void) {
+    const char *v = getenv("TB_RECEIVER_CURSOR_IMAGE");
+    return !(v && strcmp(v, "0") == 0);
+}
+
 static void send_receiver_info(struct app *a) {
     struct tb_display_info info;
     if (tb_disp_get_info(a->disp, &info) < 0) return;
@@ -1890,7 +1907,7 @@ static void send_receiver_info(struct app *a) {
         "\"modeWidth\":%u,\"modeHeight\":%u,\"refreshRate\":60,"
         "\"hiDPI\":%s,\"captureWidth\":%u,\"captureHeight\":%u,"
         "\"supportsHEVCDecode\":%s,\"supportsRawNV12\":true,\"inputMonitoringTrusted\":%s,\"accessibilityTrusted\":%s,"
-        "\"supportsNightShift\":%s,\"supportsTrueTone\":%s}",
+        "\"supportsNightShift\":%s,\"supportsTrueTone\":%s,\"cursorImage\":%s}",
         escaped_name,
         profile.panel_w,
         profile.panel_h,
@@ -1903,7 +1920,8 @@ static void send_receiver_info(struct app *a) {
         tb_receiver_input_monitoring_trusted() ? "true" : "false",
         tb_receiver_accessibility_trusted() ? "true" : "false",
         tb_night_shift_supported() ? "true" : "false",
-        tb_true_tone_supported() ? "true" : "false");
+        tb_true_tone_supported() ? "true" : "false",
+        tb_receiver_draws_pointer() ? "true" : "false");
     if (json_len <= 0 || (size_t)json_len >= sizeof(json)) return;
 
     const size_t packet_len = 4 + 1 + (size_t)json_len;
@@ -1934,6 +1952,7 @@ static void close_client(struct app *a) {
     tb_receiver_refresh_input_capture(a);
     tb_disp_set_connection_state(a->disp, 0);
     tb_disp_set_cursor(a->disp, 0, 0, 1, 1, 0, 0, 0);
+    tb_disp_set_cursor_image(a->disp, NULL);
     tb_refresh_idle_localized_strings(a);
     a->last_clipboard_text[0] = '\0';
     tb_parser_free(&a->parser);

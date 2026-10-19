@@ -19,6 +19,9 @@ enum TBMonitorPacketType: UInt8 {
     case volume = 0x37
     /// Night Shift / True Tone on the receiver's panel.
     case displayTweaks = 0x38
+    /// The pointer's picture, for a receiver that draws the pointer itself
+    /// (its display profile says `cursorImage`). Binary; see `TBMonitorCursorImage`.
+    case cursorImage = 0x39
     case testData = 0x40
 }
 
@@ -49,6 +52,9 @@ struct TBMonitorDisplayProfile: Codable {
     /// Optional so older receivers still decode; absent means "cannot".
     var supportsNightShift: Bool?
     var supportsTrueTone: Bool?
+    /// The receiver draws the pointer from `cursorImage` packets and `cursor`
+    /// positions on every refresh, so the stream can leave it out. Absent: no.
+    var cursorImage: Bool?
 }
 
 struct TBMonitorCreateSessionAck: Codable {
@@ -69,7 +75,7 @@ struct TBMonitorTeardown: Codable {
     var reason: String
 }
 
-struct TBMonitorCursor: Codable {
+struct TBMonitorCursor: Codable, Equatable {
     var x: Int
     var y: Int
     var width: Int
@@ -77,6 +83,28 @@ struct TBMonitorCursor: Codable {
     var visible: Bool
     var type: Int
     var large: Bool
+    /// `TBMonitorCursorImage.id` of the picture to draw (receiver-drawn pointer only).
+    var image: UInt32? = nil
+}
+
+/// The pointer's picture for a receiver that draws the pointer itself. Sent
+/// only when it changes. Payload, big-endian:
+///   [id u32][width u16][height u16][hotX u16][hotY u16][frameWidth u16][frameHeight u16]
+///   [width * height * 4 bytes: premultiplied BGRA, top row first]
+/// hotX/hotY are in image pixels; frameWidth x frameHeight is the size the
+/// picture covers on the video frame, in frame pixels (before "Large cursor").
+struct TBMonitorCursorImage: Equatable {
+    static let maxSide = 256
+    static let headerLength = 16
+
+    var id: UInt32
+    var width: Int
+    var height: Int
+    var hotX: Int
+    var hotY: Int
+    var frameWidth: Int
+    var frameHeight: Int
+    var bgra: Data
 }
 
 struct TBMonitorInputEvent: Codable {
@@ -169,6 +197,24 @@ enum TBMonitorProtocol {
         return makePacket(type: .inputEvent, payload: Data(json.utf8))
     }
 
+    /// `nil` when the picture is empty, larger than `maxSide`, or its pixels do
+    /// not match its size.
+    static func makeCursorImagePacket(_ image: TBMonitorCursorImage) -> Data? {
+        let maxSide = TBMonitorCursorImage.maxSide
+        guard (1...maxSide).contains(image.width), (1...maxSide).contains(image.height),
+              (0...image.width).contains(image.hotX), (0...image.height).contains(image.hotY),
+              (1...4 * maxSide).contains(image.frameWidth), (1...4 * maxSide).contains(image.frameHeight),
+              image.bgra.count == image.width * image.height * 4
+        else { return nil }
+        var payload = Data(capacity: TBMonitorCursorImage.headerLength + image.bgra.count)
+        appendBE32(&payload, image.id)
+        for value in [image.width, image.height, image.hotX, image.hotY, image.frameWidth, image.frameHeight] {
+            appendBE16(&payload, UInt16(value))
+        }
+        payload.append(image.bgra)
+        return makePacket(type: .cursorImage, payload: payload)
+    }
+
     static func decodeJSON<T: Decodable>(_ type: T.Type, from payload: Data) -> T? {
         let decoder = JSONDecoder()
         return try? decoder.decode(type, from: payload)
@@ -204,6 +250,11 @@ enum TBMonitorProtocol {
     }
 
     static func appendBE32(_ data: inout Data, _ value: UInt32) {
+        var be = value.bigEndian
+        withUnsafeBytes(of: &be) { data.append(contentsOf: $0) }
+    }
+
+    static func appendBE16(_ data: inout Data, _ value: UInt16) {
         var be = value.bigEndian
         withUnsafeBytes(of: &be) { data.append(contentsOf: $0) }
     }

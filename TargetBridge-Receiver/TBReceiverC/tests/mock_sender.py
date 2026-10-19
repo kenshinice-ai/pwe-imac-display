@@ -16,6 +16,10 @@ Modes (--mode):
                 the receiver's parser must reject it and disconnect.
     drop        connect, HELLO, send half a packet, then close abruptly —
                 the receiver must return to "waiting for sender".
+    pointer     stream, plus the receiver-drawn pointer: checks that the
+                receiver's display profile says "cursorImage": true, sends one
+                CURSOR_IMAGE picture and CURSOR positions on a circle at 240 Hz
+                between the video frames.
 
 Stdlib only. Example:
     python3 tests/mock_sender.py --mode handshake --duration 3
@@ -36,6 +40,9 @@ PKT_PARAM_SETS = 0x20
 PKT_FRAME = 0x21
 PKT_HEARTBEAT = 0x30
 PKT_TEARDOWN = 0x31
+PKT_CURSOR = 0x32
+PKT_DISPLAY_PROFILE = 0x11
+PKT_CURSOR_IMAGE = 0x39
 
 
 def packet(ptype: int, payload: bytes) -> bytes:
@@ -80,13 +87,13 @@ def drain_receiver(sock: socket.socket, quiet: bool = False) -> None:
 
 # ---- H.264 generation & AVCC conversion (stream mode) ----------------------
 
-def generate_h264(duration_s: int, fps: int = 30) -> bytes:
+def generate_h264(duration_s: int, fps: int = 30, size: str = "1280x720") -> bytes:
     """Render a test pattern to Annex-B H.264 using the ffmpeg CLI."""
     with tempfile.NamedTemporaryFile(suffix=".h264", delete=False) as tmp:
         path = tmp.name
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-        "-f", "lavfi", "-i", f"testsrc2=size=1280x720:rate={fps}:duration={duration_s}",
+        "-f", "lavfi", "-i", f"testsrc2=size={size}:rate={fps}:duration={duration_s}",
         "-c:v", "libx264", "-profile:v", "baseline", "-pix_fmt", "yuv420p",
         "-g", str(fps), "-f", "h264", path,
     ]
@@ -116,9 +123,56 @@ def split_annexb(data: bytes):
     return nals
 
 
-def stream_video(sock: socket.socket, duration_s: int) -> None:
-    fps = 30
-    nals = split_annexb(generate_h264(duration_s, fps))
+def read_profile(sock: socket.socket) -> dict:
+    """The DISPLAY_PROFILE the receiver sends as soon as it accepts us."""
+    sock.settimeout(3)
+    buf = b""
+    try:
+        while True:
+            while len(buf) >= 5:
+                (length,) = struct.unpack(">I", buf[:4])
+                if len(buf) < 4 + length:
+                    break
+                ptype, payload = buf[4], buf[5:4 + length]
+                buf = buf[4 + length:]
+                if ptype == PKT_DISPLAY_PROFILE:
+                    return json.loads(payload.decode("utf-8"))
+            chunk = sock.recv(65536)
+            if not chunk:
+                return {}
+            buf += chunk
+    except socket.timeout:
+        return {}
+    finally:
+        sock.settimeout(None)
+
+
+def cursor_image_packet(image_id: int) -> bytes:
+    """A 16x16 picture: white square with a black border, premultiplied BGRA,
+    hot spot top-left, covering 32x32 frame pixels."""
+    w = h = 16
+    pixels = bytearray()
+    for y in range(h):
+        for x in range(w):
+            edge = x in (0, w - 1) or y in (0, h - 1)
+            v = 0 if edge else 255
+            pixels += bytes([v, v, v, 255])
+    header = struct.pack(">IHHHHHH", image_id, w, h, 0, 0, 32, 32)
+    return packet(PKT_CURSOR_IMAGE, header + bytes(pixels))
+
+
+def cursor_position_packet(t: float, width: int, height: int, image_id: int) -> bytes:
+    import math
+    x = int(width / 2 + width / 4 * math.cos(t * 2 * math.pi))
+    y = int(height / 2 + height / 4 * math.sin(t * 2 * math.pi))
+    return json_packet(PKT_CURSOR, {"x": x, "y": y, "width": width, "height": height,
+                                    "visible": True, "type": 0, "large": False, "image": image_id})
+
+
+def stream_video(sock: socket.socket, duration_s: int, fps: int = 30, size: str = "1280x720",
+                 pointer: bool = False) -> None:
+    nals = split_annexb(generate_h264(duration_s, fps, size))
+    width, height = (int(v) for v in size.split("x"))
 
     sps = next(n for n in nals if n and (n[0] & 0x1F) == 7)
     pps = next(n for n in nals if n and (n[0] & 0x1F) == 8)
@@ -129,13 +183,19 @@ def stream_video(sock: socket.socket, duration_s: int) -> None:
         params += struct.pack(">I", len(ps)) + ps
     sock.sendall(packet(PKT_PARAM_SETS, params))
     print(f"[mock] sent param sets (SPS {len(sps)}B, PPS {len(pps)}B)")
+    if pointer:
+        sock.sendall(cursor_image_packet(1))
+        print("[mock] sent cursor image id=1")
 
     # Group slices into frames: a frame is one slice NAL (types 1/5) here
     # (baseline testsrc2 output, one slice per picture).
     frame_interval = 1.0 / fps
     heartbeat_due = time.monotonic()
+    start = time.monotonic()
     seq = 0
     frames_sent = 0
+    positions_sent = 0
+    next_frame = time.monotonic()
     for nal in nals:
         ntype = nal[0] & 0x1F if nal else 0
         if ntype not in (1, 5):
@@ -149,8 +209,18 @@ def stream_video(sock: socket.socket, duration_s: int) -> None:
             seq += 1
             heartbeat_due = now + 2.0
         drain_receiver(sock, quiet=True)
-        time.sleep(frame_interval)
-    print(f"[mock] streamed {frames_sent} frames")
+        next_frame += frame_interval
+        while True:
+            now = time.monotonic()
+            if now >= next_frame:
+                break
+            if pointer:
+                sock.sendall(cursor_position_packet(now - start, width, height, 1))
+                positions_sent += 1
+                time.sleep(min(1.0 / 240.0, max(0.0, next_frame - now)))
+            else:
+                time.sleep(next_frame - now)
+    print(f"[mock] streamed {frames_sent} frames" + (f", {positions_sent} pointer positions" if pointer else ""))
 
 
 # ---- modes ------------------------------------------------------------------
@@ -159,8 +229,16 @@ def run(args) -> int:
     sock = socket.create_connection((args.host, args.port), timeout=5)
     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     print(f"[mock] connected to {args.host}:{args.port}")
-    time.sleep(0.2)
-    drain_receiver(sock)
+    if args.mode == "pointer":
+        profile = read_profile(sock)
+        if profile.get("cursorImage") is not True:
+            print(f"[mock] ERROR: receiver profile has no \"cursorImage\": true ({profile.get('cursorImage')!r})")
+            sock.close()
+            return 1
+        print("[mock] receiver draws the pointer (cursorImage: true)")
+    else:
+        time.sleep(0.2)
+        drain_receiver(sock)
 
     sock.sendall(hello_packet(args.name))
     print("[mock] sent HELLO")
@@ -177,8 +255,8 @@ def run(args) -> int:
             sock.sendall(json_packet(PKT_TEARDOWN, {"reason": "mock done"}))
             print("[mock] sent TEARDOWN")
 
-        elif args.mode == "stream":
-            stream_video(sock, args.duration)
+        elif args.mode in ("stream", "pointer"):
+            stream_video(sock, args.duration, args.fps, args.size, pointer=args.mode == "pointer")
             sock.sendall(json_packet(PKT_TEARDOWN, {"reason": "mock stream done"}))
 
         elif args.mode == "hang":
@@ -220,8 +298,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=54321)
-    ap.add_argument("--mode", choices=["handshake", "stream", "hang", "badlen", "drop"], default="handshake")
+    ap.add_argument("--mode", choices=["handshake", "stream", "hang", "badlen", "drop", "pointer"], default="handshake")
     ap.add_argument("--duration", type=int, default=5, help="seconds (mode-specific)")
+    ap.add_argument("--fps", type=int, default=30, help="stream/pointer: frame rate")
+    ap.add_argument("--size", default="1280x720", help="stream/pointer: frame size, WxH")
     ap.add_argument("--name", default="MockSender")
     return run(ap.parse_args())
 

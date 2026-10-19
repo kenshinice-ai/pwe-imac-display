@@ -432,19 +432,57 @@ enum TBInputControlRole: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    func usesLowLatencyCursorOverlay(largeCursorEnabled: Bool) -> Bool {
+    func usesLowLatencyCursorOverlay(largeCursorEnabled: Bool, receiverDrawsPointer: Bool = false) -> Bool {
         // ScreenCaptureKit preserves every native macOS cursor shape, including
         // temporary system cursors such as the screenshot crosshair. The custom
-        // overlay is reserved for the explicit large-cursor accessibility option.
-        largeCursorEnabled
+        // overlay is reserved for the explicit large-cursor accessibility option,
+        // and for a receiver that draws the real pointer picture itself.
+        largeCursorEnabled || receiverDrawsPointer
     }
 
     func changesCursorCaptureMode(
         from previousRole: TBInputControlRole,
-        largeCursorEnabled: Bool
+        largeCursorEnabled: Bool,
+        receiverDrawsPointer: Bool = false
     ) -> Bool {
-        usesLowLatencyCursorOverlay(largeCursorEnabled: largeCursorEnabled)
-            != previousRole.usesLowLatencyCursorOverlay(largeCursorEnabled: largeCursorEnabled)
+        usesLowLatencyCursorOverlay(largeCursorEnabled: largeCursorEnabled, receiverDrawsPointer: receiverDrawsPointer)
+            != previousRole.usesLowLatencyCursorOverlay(
+                largeCursorEnabled: largeCursorEnabled,
+                receiverDrawsPointer: receiverDrawsPointer
+            )
+    }
+}
+
+/// Where the pointer is on the video frame. The capture scales the display to
+/// fit the frame and centres it (`scalesToFit`), so a display whose shape differs
+/// from the frame — a 16:10 Mac mirrored into a 16:9 stream — sits between black
+/// bars, and positions must be mapped into that content rectangle, not the whole frame.
+enum TBReceiverPointerGeometry {
+    struct Placement: Equatable {
+        var x: Int
+        var y: Int
+        var inside: Bool
+    }
+
+    /// Frame pixels per display point.
+    static func scale(displaySize: CGSize, frameWidth: Int, frameHeight: Int) -> Double {
+        guard displaySize.width > 0, displaySize.height > 0, frameWidth > 0, frameHeight > 0 else { return 1 }
+        return min(Double(frameWidth) / displaySize.width, Double(frameHeight) / displaySize.height)
+    }
+
+    /// `point` in global display coordinates (top-left origin, points).
+    static func place(_ point: CGPoint, displayBounds: CGRect, frameWidth: Int, frameHeight: Int) -> Placement {
+        let s = scale(displaySize: displayBounds.size, frameWidth: frameWidth, frameHeight: frameHeight)
+        let originX = (Double(frameWidth) - displayBounds.width * s) / 2
+        let originY = (Double(frameHeight) - displayBounds.height * s) / 2
+        let localX = point.x - displayBounds.origin.x
+        let localY = point.y - displayBounds.origin.y
+        let inside = localX >= 0 && localY >= 0 && localX <= displayBounds.width && localY <= displayBounds.height
+        let clampedX = max(0, min(displayBounds.width, localX))
+        let clampedY = max(0, min(displayBounds.height, localY))
+        return Placement(x: Int((originX + clampedX * s).rounded(.down)),
+                         y: Int((originY + clampedY * s).rounded(.down)),
+                         inside: inside)
     }
 }
 
@@ -453,6 +491,173 @@ enum TBInputGestureMode: String, CaseIterable, Identifiable {
     case relayToSlave
 
     var id: String { rawValue }
+}
+
+/// Pointer positions for a receiver that draws the pointer itself. Runs on its
+/// own thread so a busy main thread never holds the pointer back: a listen-only
+/// event tap sends a position on every mouse move, at most every 1/240 s, and a
+/// timer catches what the tap misses (the last move inside that interval,
+/// events the tap does not see, a tap the system turned off). Packets go
+/// straight onto the connection, as the video pipeline's do.
+private final class TBReceiverPointerSource: @unchecked Sendable {
+    private static let minimumInterval: CFTimeInterval = 1.0 / 240.0
+
+    private let connection: NWConnection
+    private let displayID: CGDirectDisplayID
+    private let frameWidth: Int
+    private let frameHeight: Int
+
+    // Set from the main thread, read on the pointer thread; guarded by `lock`.
+    private let lock = NSLock()
+    private var large = false
+    private var imageID: UInt32 = 0
+    private var cursorType = 0
+    private var forceNext = true
+    private var stopped = false
+    private var runLoop: CFRunLoop?
+
+    // Pointer thread only.
+    private var tap: CFMachPort?
+    private var lastSent: TBMonitorCursor?
+    private var lastSendTime: CFTimeInterval = 0
+
+    init(connection: NWConnection, displayID: CGDirectDisplayID, frameWidth: Int, frameHeight: Int) {
+        self.connection = connection
+        self.displayID = displayID
+        self.frameWidth = frameWidth
+        self.frameHeight = frameHeight
+    }
+
+    /// Frame pixels per point on the captured display: the scale for the picture.
+    var pixelsPerPoint: Double {
+        TBReceiverPointerGeometry.scale(displaySize: CGDisplayBounds(displayID).size,
+                                        frameWidth: frameWidth, frameHeight: frameHeight)
+    }
+
+    func update(large: Bool, imageID: UInt32, cursorType: Int) {
+        lock.lock()
+        if large != self.large || imageID != self.imageID || cursorType != self.cursorType { forceNext = true }
+        self.large = large
+        self.imageID = imageID
+        self.cursorType = cursorType
+        lock.unlock()
+    }
+
+    func start() {
+        let thread = Thread { [self] in run() }
+        thread.name = "TargetBridge pointer"
+        thread.qualityOfService = .userInteractive
+        thread.start()
+    }
+
+    func stop() {
+        lock.lock()
+        stopped = true
+        let loop = runLoop
+        lock.unlock()
+        if let loop { CFRunLoopStop(loop) }
+    }
+
+    private var isStopped: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return stopped
+    }
+
+    private func run() {
+        lock.lock()
+        runLoop = CFRunLoopGetCurrent()
+        lock.unlock()
+
+        let mask = [CGEventType.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
+            .reduce(CGEventMask(0)) { $0 | (CGEventMask(1) << CGEventMask($1.rawValue)) }
+        tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .tailAppendEventTap,
+            options: .listenOnly,
+            eventsOfInterest: mask,
+            callback: { _, type, event, refcon in
+                guard let refcon else { return Unmanaged.passUnretained(event) }
+                let source = Unmanaged<TBReceiverPointerSource>.fromOpaque(refcon).takeUnretainedValue()
+                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                    if let tap = source.tap { CGEvent.tapEnable(tap: tap, enable: true) }
+                } else {
+                    source.send(at: event.location)
+                }
+                return Unmanaged.passUnretained(event)
+            },
+            userInfo: Unmanaged.passUnretained(self).toOpaque()
+        )
+        if let tap, let source = CFMachPortCreateRunLoopSource(nil, tap, 0) {
+            CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+            CGEvent.tapEnable(tap: tap, enable: true)
+        }
+        TBLog.connection.info("pointer: receiver draws the pointer; event tap \(self.tap != nil ? "on" : "unavailable, polling", privacy: .public)")
+
+        // With the tap the timer only catches stragglers; without it, it is the source.
+        let interval: CFTimeInterval = tap != nil ? 1.0 / 120.0 : Self.minimumInterval
+        let timer = CFRunLoopTimerCreateWithHandler(nil, CFAbsoluteTimeGetCurrent(), interval, 0, 0) { [weak self] _ in
+            guard let self, let point = CGEvent(source: nil)?.location else { return }
+            self.send(at: point)
+        }
+        CFRunLoopAddTimer(CFRunLoopGetCurrent(), timer, .commonModes)
+
+        while !isStopped {
+            CFRunLoopRunInMode(.defaultMode, 0.5, false)
+        }
+        CFRunLoopTimerInvalidate(timer)
+        if let tap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            CFMachPortInvalidate(tap)
+        }
+        tap = nil
+    }
+
+    /// Pointer thread only.
+    private func send(at point: CGPoint) {
+        let now = CACurrentMediaTime()
+        lock.lock()
+        let force = forceNext
+        let large = self.large, imageID = self.imageID, cursorType = self.cursorType
+        lock.unlock()
+        if !force, now - lastSendTime < Self.minimumInterval { return }   // the timer sends the rest
+
+        let placement = TBReceiverPointerGeometry.place(point, displayBounds: CGDisplayBounds(displayID),
+                                                        frameWidth: frameWidth, frameHeight: frameHeight)
+        let cursor = TBMonitorCursor(
+            x: placement.x,
+            y: placement.y,
+            width: frameWidth,
+            height: frameHeight,
+            visible: placement.inside && Self.systemCursorVisible(),
+            type: cursorType,
+            large: large,
+            image: imageID
+        )
+        if !force, cursor == lastSent { return }
+        guard let packet = TBMonitorProtocol.makeJSONPacket(type: .cursor, value: cursor) else { return }
+        // Under the lock: once stop() returns, nothing more is sent, so the
+        // hidden-pointer packet the session sends next is the last word.
+        lock.lock()
+        defer { lock.unlock() }
+        guard !stopped else { return }
+        forceNext = false
+        lastSent = cursor
+        lastSendTime = now
+        connection.send(content: packet, completion: .contentProcessed({ _ in }))
+    }
+
+    /// Whether an app hid the pointer (a playing video, typing). CGCursorIsVisible
+    /// is deprecated but has no public replacement; looked up at run time so a
+    /// future SDK without it still builds, and treated as visible when missing.
+    private static let cursorIsVisibleFunction: (@convention(c) () -> Int32)? = {
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGCursorIsVisible") else { return nil }
+        return unsafeBitCast(symbol, to: (@convention(c) () -> Int32).self)
+    }()
+
+    private static func systemCursorVisible() -> Bool {
+        guard let function = cursorIsVisibleFunction else { return true }
+        return function() != 0
+    }
 }
 
 private final class TBDirectDisplayStreamCapture {
@@ -1295,7 +1500,8 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         didSet {
             let cursorCaptureModeChanged = inputControlRole.changesCursorCaptureMode(
                 from: oldValue,
-                largeCursorEnabled: largeCursor
+                largeCursorEnabled: largeCursor,
+                receiverDrawsPointer: receiverDrawsPointer
             )
             inputRelayActive = (inputControlRole == .senderMaster)
             if inputControlRole != .receiverMaster {
@@ -1356,6 +1562,11 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     private var headlessMirrorUsesVirtualDisplay = false
     private var cursorDisplayID: CGDirectDisplayID = kCGNullDirectDisplay
     private var lastCursorPacket: TBMonitorCursor?
+    /// Receiver-drawn pointer: positions from its own thread, the picture from here.
+    private var pointerSource: TBReceiverPointerSource?
+    private var pointerImageTimer: Timer?
+    private var pointerImageID: UInt32 = 0
+    private var lastPointerPicture: TBMonitorCursorImage?
     private var injectedRemoteMouseLocation: CGPoint?
     private var cachedLocalInputEventSource: CGEventSource?
     private var injectedLeftClickTracker = TBInjectedClickStateTracker()
@@ -1896,8 +2107,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         heartbeatTimer = nil
         firstFrameTimer?.invalidate()
         firstFrameTimer = nil
-        cursorTimer?.invalidate()
-        cursorTimer = nil
+        stopCursorUpdates()
         fpsTimer?.invalidate()
         fpsTimer = nil
         stopCaptureWatchdog()
@@ -2861,7 +3071,8 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             }
 
             let usesCursorOverlay = inputControlRole.usesLowLatencyCursorOverlay(
-                largeCursorEnabled: largeCursor
+                largeCursorEnabled: largeCursor,
+                receiverDrawsPointer: receiverDrawsPointer
             )
             let configuration = SCStreamConfiguration()
             configuration.width = preset.width
@@ -2976,7 +3187,8 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     private func startDirectDisplayStream(displayID: CGDirectDisplayID, preset: TBDisplayCapturePreset) async -> Bool {
         guard let pipeline else { return false }
         let usesCursorOverlay = inputControlRole.usesLowLatencyCursorOverlay(
-            largeCursorEnabled: largeCursor
+            largeCursorEnabled: largeCursor,
+            receiverDrawsPointer: receiverDrawsPointer
         )
         let codecName = activeCodecName ?? codecName(for: activeCodecType ?? preset.codecType)
         streamResolutionText = TBDisplaySenderL10n.streamSummary(
@@ -3425,9 +3637,13 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         return Array(displays.prefix(Int(count)))
     }
     private func startCursorUpdates(displayID: CGDirectDisplayID) {
-        cursorTimer?.invalidate()
+        stopCursorUpdates()
         cursorDisplayID = displayID
         lastCursorPacket = nil
+        if receiverDrawsPointer {
+            startReceiverDrawnPointer(displayID: displayID)
+            return
+        }
 
         let timer = Timer(timeInterval: 1.0 / 120.0, repeats: true) { [weak self] _ in
             guard let self else { return }
@@ -3458,16 +3674,111 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         }
     }
 
+    /// The receiver said it draws the pointer itself ("cursorImage" in its
+    /// profile) and the user has not turned that off. The stream then leaves
+    /// the pointer out and the receiver draws it on every refresh, so it moves
+    /// at the display's rate, not the video's. Turn off with
+    /// `defaults write <sender bundle id> fd.tbdisplaysender.receiverDrawnPointer -bool false`;
+    /// it applies from the next capture start.
+    private var receiverDrawsPointer: Bool {
+        guard activeProfile?.cursorImage == true else { return false }
+        return UserDefaults.standard.object(forKey: Self.receiverDrawnPointerDefaultsKey) as? Bool ?? true
+    }
+
+    static let receiverDrawnPointerDefaultsKey = "fd.tbdisplaysender.receiverDrawnPointer"
+
+    private func stopCursorUpdates() {
+        cursorTimer?.invalidate()
+        cursorTimer = nil
+        pointerImageTimer?.invalidate()
+        pointerImageTimer = nil
+        pointerSource?.stop()
+        pointerSource = nil
+    }
+
+    private func startReceiverDrawnPointer(displayID: CGDirectDisplayID) {
+        guard let connection else { return }
+        let source = TBReceiverPointerSource(connection: connection, displayID: displayID,
+                                             frameWidth: capturePreset.width, frameHeight: capturePreset.height)
+        pointerSource = source
+        lastPointerPicture = nil
+        sendPointerPictureIfChanged()
+        source.start()
+        // NSCursor is AppKit: its picture is read here, on the main thread.
+        let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            MainActor.assumeIsolated {
+                sendPointerPictureIfChanged()
+            }
+        }
+        pointerImageTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func sendPointerPictureIfChanged() {
+        guard let source = pointerSource, isConnected else { return }
+        let type = getCurrentCursorType()
+        if let cursor = NSCursor.currentSystem,
+           var picture = Self.pointerPicture(of: cursor, pixelsPerPoint: source.pixelsPerPoint),
+           picture != lastPointerPicture {
+            lastPointerPicture = picture
+            pointerImageID &+= 1
+            if pointerImageID == 0 { pointerImageID = 1 }
+            picture.id = pointerImageID
+            if let packet = TBMonitorProtocol.makeCursorImagePacket(picture) {
+                send(packet)
+            }
+        }
+        source.update(large: largeCursor, imageID: pointerImageID, cursorType: type)
+    }
+
+    /// The pointer's picture as premultiplied BGRA at the frame's scale (one
+    /// picture pixel per frame pixel), shrunk only to fit the packet limit.
+    /// `id` is left 0 for the caller.
+    static func pointerPicture(of cursor: NSCursor, pixelsPerPoint: Double) -> TBMonitorCursorImage? {
+        let size = cursor.image.size
+        guard size.width > 0, size.height > 0, pixelsPerPoint > 0 else { return nil }
+        let maxSide = Double(TBMonitorCursorImage.maxSide)
+        let longest = max(size.width, size.height) * pixelsPerPoint
+        let pixelScale = longest > maxSide ? pixelsPerPoint * maxSide / longest : pixelsPerPoint
+        let width = max(1, Int((size.width * pixelScale).rounded()))
+        let height = max(1, Int((size.height * pixelScale).rounded()))
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                                      bytesPerRow: width * 4, space: colorSpace,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+                                          | CGBitmapInfo.byteOrder32Little.rawValue)
+        else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        cursor.image.draw(in: NSRect(x: 0, y: 0, width: width, height: height),
+                          from: .zero, operation: .copy, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+        guard let pixels = context.data else { return nil }
+        let maxFrameSide = 4 * TBMonitorCursorImage.maxSide
+        // NSCursor's hot spot is measured from the picture's top-left corner.
+        return TBMonitorCursorImage(
+            id: 0,
+            width: width,
+            height: height,
+            hotX: max(0, min(width, Int((cursor.hotSpot.x * pixelScale).rounded()))),
+            hotY: max(0, min(height, Int((cursor.hotSpot.y * pixelScale).rounded()))),
+            frameWidth: max(1, min(maxFrameSide, Int((size.width * pixelsPerPoint).rounded()))),
+            frameHeight: max(1, min(maxFrameSide, Int((size.height * pixelsPerPoint).rounded()))),
+            bgra: Data(bytes: pixels, count: width * height * 4)
+        )
+    }
+
     private func applyCursorOverlayMode() {
         if inputRelayActive {
-            cursorTimer?.invalidate()
-            cursorTimer = nil
+            stopCursorUpdates()
             sendHiddenCursorPacketIfNeeded()
             return
         }
 
         let usesCursorOverlay = inputControlRole.usesLowLatencyCursorOverlay(
-            largeCursorEnabled: largeCursor
+            largeCursorEnabled: largeCursor,
+            receiverDrawsPointer: receiverDrawsPointer
         )
         guard usesCursorOverlay, isStreaming, cursorDisplayID != kCGNullDirectDisplay else { return }
         startCursorUpdates(displayID: cursorDisplayID)
@@ -3522,18 +3833,17 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         let bounds = CGDisplayBounds(cursorDisplayID)
         guard bounds.width > 0, bounds.height > 0 else { return }
 
-        let localX = point.x - bounds.origin.x
-        let localY = point.y - bounds.origin.y
-        let visible = localX >= 0 && localY >= 0 && localX <= bounds.width && localY <= bounds.height
-
-        let scaledX = Int((max(0, min(bounds.width, localX)) / bounds.width) * Double(capturePreset.width))
-        let scaledY = Int((max(0, min(bounds.height, localY)) / bounds.height) * Double(capturePreset.height))
+        // Into the content rectangle: a mirrored display of another shape sits
+        // between black bars, so a linear map over the whole frame is off.
+        let placement = TBReceiverPointerGeometry.place(point, displayBounds: bounds,
+                                                        frameWidth: capturePreset.width,
+                                                        frameHeight: capturePreset.height)
         let cursor = TBMonitorCursor(
-            x: scaledX,
-            y: scaledY,
+            x: placement.x,
+            y: placement.y,
             width: capturePreset.width,
             height: capturePreset.height,
-            visible: visible,
+            visible: placement.inside,
             type: getCurrentCursorType(),
             large: largeCursor
         )
@@ -3743,8 +4053,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
 
     private func softRestartCapture(for profile: TBMonitorDisplayProfile) async {
         // Tear down only the capture pipeline — keep the network connection and virtual display.
-        cursorTimer?.invalidate()
-        cursorTimer = nil
+        stopCursorUpdates()
         fpsTimer?.invalidate()
         fpsTimer = nil
         firstFrameTimer?.invalidate()

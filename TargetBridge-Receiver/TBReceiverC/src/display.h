@@ -8,6 +8,7 @@
 
 #include "decoder.h"
 #include "input_queue.h"
+#include "tb_cursor_image.h"
 
 struct tb_display;
 
@@ -69,6 +70,10 @@ void tb_disp_set_cursor(struct tb_display *d,
                         int visible,
                         int type,
                         int large);
+
+/* The sender's pointer picture (0x39); NULL goes back to the drawn shapes.
+ * The pixels are copied. */
+void tb_disp_set_cursor_image(struct tb_display *d, const struct tb_cursor_image *image);
 
 void tb_disp_set_brightness(struct tb_display *d, double level);
 
