@@ -92,6 +92,7 @@ struct tb_display {
     struct tb_vsync *vsync;          /* refresh ticks, when paced */
     int              paced;          /* at most one submit per refresh, newest frame wins */
     int              copy_frames;    /* decoder buffers cannot be textured: copy them */
+    int              frame_checked;  /* this session's first frame was test-wrapped */
     int              logged_first_metal_frame;
     CVPixelBufferRef pending;        /* decoded, waiting for the next refresh */
     uint32_t         pending_trace_id;
@@ -1635,8 +1636,13 @@ static void tb_disp_metal_release_frames(struct tb_display *d) {
 
 /* Drop the Metal path for the rest of this run and draw with OpenGL. The SDL
  * window is recreated by SDL for the OpenGL context; nothing caches it. */
+static void tb_disp_sdl_show_frame(struct tb_display *d, const struct tb_frame *f);
+
 static void tb_disp_fall_back_to_opengl(struct tb_display *d, const char *why) {
     fprintf(stderr, "[disp] Metal zero-copy failed (%s); falling back to OpenGL\n", why);
+    /* Keep the newest picture: with a still desktop no new frame may come. */
+    CVPixelBufferRef keep = d->pending ? d->pending : d->current;
+    if (keep) CVPixelBufferRetain(keep);
     tb_disp_metal_release_frames(d);
     tb_mtl_destroy(d->mtl);
     d->mtl = NULL;
@@ -1655,11 +1661,21 @@ static void tb_disp_fall_back_to_opengl(struct tb_display *d, const char *why) {
     if (!d->ren) d->ren = tb_disp_try_renderer(d->win, NULL);
     if (!d->ren) {
         fprintf(stderr, "[disp] no renderer after the fallback; quitting\n");
+        if (keep) CVPixelBufferRelease(keep);
         d->quit = 1;
         return;
     }
     tb_disp_setup_renderer(d);
     tb_disp_refresh_window_mode(d);
+    if (keep) {
+        struct tb_frame f = {
+            .width = (int)CVPixelBufferGetWidth(keep),
+            .height = (int)CVPixelBufferGetHeight(keep),
+            .pixel_buffer = keep,
+        };
+        if (d->is_connected) tb_disp_sdl_show_frame(d, &f);
+        CVPixelBufferRelease(keep);
+    }
 }
 
 /* The vector pointer, rasterised once per shape and size with SDL's software
@@ -1730,6 +1746,14 @@ static int tb_disp_metal_cursor_rect(struct tb_display *d, struct tb_mtl_rect *r
 }
 
 static void tb_disp_metal_render(struct tb_display *d) {
+    if (!tb_mtl_ready(d->mtl)) {
+        /* Covered window, or enough frames queued: try again next refresh.
+         * A waiting frame stays waiting (and may still be replaced). */
+        d->redraw_needed = 1;
+        d->last_submit_tick = tb_disp_tick_count(d);
+        d->last_submit_ns = tb_disp_now_ns();
+        return;
+    }
     uint32_t trace_id = 0;
     const int new_frame = d->pending != NULL;
     if (new_frame) {
@@ -1786,6 +1810,26 @@ static void tb_disp_metal_take_frame(struct tb_display *d, const struct tb_frame
         pb = tb_mtl_copy_buffer(d->mtl, (CVPixelBufferRef)f->pixel_buffer);
     } else {
         pb = tb_mtl_copy_planes(d->mtl, f->y, f->y_stride, f->uv, f->uv_stride, f->width, f->height);
+    }
+    if (pb && !d->frame_checked) {
+        /* The first frame of a session must become a texture, visible window
+         * or not: if the decoder's buffers cannot, copy them; if not even a
+         * copy can, give up on Metal now rather than at the first draw. */
+        d->frame_checked = 1;
+        if (!tb_mtl_can_texture(d->mtl, pb) && !d->copy_frames) {
+            CVPixelBufferRef copy = tb_mtl_copy_buffer(d->mtl, pb);
+            CVPixelBufferRelease(pb);
+            pb = copy;
+            if (pb) {
+                fprintf(stderr, "[disp] decoder buffers are not Metal textures here; copying each frame\n");
+                d->copy_frames = 1;
+            }
+        }
+        if (pb && !tb_mtl_can_texture(d->mtl, pb)) {
+            CVPixelBufferRelease(pb);
+            tb_disp_fall_back_to_opengl(d, "a decoded frame did not become a Metal texture");
+            return;
+        }
     }
     if (!pb) {
         tb_disp_fall_back_to_opengl(d, "a frame could not be put into an IOSurface buffer");
@@ -2138,6 +2182,7 @@ static void tb_disp_set_stream_state(struct tb_display *d, int connected, int co
         d->cursor_dirty = 0;
         d->redraw_needed = 0;
         d->last_seen_tick = 0;
+        d->frame_checked = 0;
     }
     /* A session starts: the next idle screen opens on the calm view again. */
     if (connected || connecting) d->show_details = 0;

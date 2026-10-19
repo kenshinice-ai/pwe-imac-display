@@ -436,8 +436,10 @@ enum TBInputControlRole: String, CaseIterable, Identifiable {
         // ScreenCaptureKit preserves every native macOS cursor shape, including
         // temporary system cursors such as the screenshot crosshair. The custom
         // overlay is reserved for the explicit large-cursor accessibility option,
-        // and for a receiver that draws the real pointer picture itself.
-        largeCursorEnabled || receiverDrawsPointer
+        // and for a receiver that draws the real pointer picture itself — except
+        // while this Mac drives the receiver (senderMaster), where the overlay
+        // is hidden and the pointer must stay in the video.
+        largeCursorEnabled || (receiverDrawsPointer && self != .senderMaster)
     }
 
     func changesCursorCaptureMode(
@@ -3640,7 +3642,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         stopCursorUpdates()
         cursorDisplayID = displayID
         lastCursorPacket = nil
-        if receiverDrawsPointer {
+        if receiverDrawsPointer && inputControlRole != .senderMaster {
             startReceiverDrawnPointer(displayID: displayID)
             return
         }

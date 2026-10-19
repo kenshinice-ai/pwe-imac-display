@@ -60,6 +60,11 @@ enum tb_mtl_draw_result {
 enum tb_mtl_draw_result tb_mtl_draw(struct tb_mtl *m, CVPixelBufferRef frame,
                                     const struct tb_mtl_rect *cursor, uint32_t trace_id);
 
+/* 1 when `pb`'s planes become Metal textures (checked on a session's first frame). */
+int      tb_mtl_can_texture(struct tb_mtl *m, CVPixelBufferRef pb);
+/* 1 when a draw now would neither wait for a drawable nor be wasted: the
+ * window is visible and fewer than maximumDrawableCount - 1 frames are in flight. */
+int      tb_mtl_ready(struct tb_mtl *m);
 /* 0 when the window is fully covered or hidden (no drawable will come soon). */
 int      tb_mtl_window_visible(struct tb_mtl *m);
 /* Drawable size in pixels (0 x 0 when unknown). */

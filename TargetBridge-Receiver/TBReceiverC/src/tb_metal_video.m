@@ -73,6 +73,7 @@ static CFStringRef const kTBPoolAttachment = CFSTR("PWEReceiverPoolBuffer");
 @property (nonatomic, assign) int poolWidth;
 @property (nonatomic, assign) int poolHeight;
 @property (nonatomic, assign) unsigned long draws;
+@property (atomic, assign) NSInteger inFlight;   /* committed, not yet completed */
 @end
 
 @implementation TBMetalVideo
@@ -230,7 +231,9 @@ CVPixelBufferRef tb_mtl_copy_planes(struct tb_mtl *m, const uint8_t *y, int y_st
 }
 
 CVPixelBufferRef tb_mtl_copy_buffer(struct tb_mtl *m, CVPixelBufferRef src) {
-    if (!m || !src || CVPixelBufferGetPlaneCount(src) != 2) return NULL;
+    /* 8-bit NV12 only: a 10-bit buffer copied byte for byte would be garbage. */
+    if (!m || !src || CVPixelBufferGetPlaneCount(src) != 2 ||
+        !tb_mtl_is_nv12(CVPixelBufferGetPixelFormatType(src))) return NULL;
     if (CVPixelBufferLockBaseAddress(src, kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess) return NULL;
     CVPixelBufferRef out = tb_mtl_copy_planes(m,
         (const uint8_t *)CVPixelBufferGetBaseAddressOfPlane(src, 0), (int)CVPixelBufferGetBytesPerRowOfPlane(src, 0),
@@ -435,6 +438,31 @@ static NSWindow *tb_mtl_window(TBMetalVideo *v) {
     return [delegate isKindOfClass:[NSView class]] ? [(NSView *)delegate window] : nil;
 }
 
+int tb_mtl_can_texture(struct tb_mtl *m, CVPixelBufferRef pb) {
+    if (!m || !pb) return 0;
+    @autoreleasepool {
+        CVMetalTextureRef ty = NULL, tuv = NULL;
+        if (!tb_mtl_wrap(tb_mtl_obj(m), pb, &ty, &tuv)) return 0;
+        CFRelease(ty);
+        CFRelease(tuv);
+        return 1;
+    }
+}
+
+int tb_mtl_ready(struct tb_mtl *m) {
+    if (!m) return 0;
+    @autoreleasepool {
+        TBMetalVideo *v = tb_mtl_obj(m);
+        if (!v.layer) return 0;
+        if (!tb_mtl_window_visible(m)) {
+            CVMetalTextureCacheFlush(v.cache, 0);   /* no draws, so no periodic flush */
+            return 0;
+        }
+        /* One drawable stays free, so nextDrawable never waits. */
+        return v.inFlight < (NSInteger)v.layer.maximumDrawableCount - 1;
+    }
+}
+
 enum tb_mtl_draw_result tb_mtl_draw(struct tb_mtl *m, CVPixelBufferRef frame,
                                     const struct tb_mtl_rect *cursor, uint32_t trace_id) {
     if (!m) return TB_MTL_NO_DRAWABLE;
@@ -478,13 +506,16 @@ enum tb_mtl_draw_result tb_mtl_draw(struct tb_mtl *m, CVPixelBufferRef frame,
 
         /* Keep the decoded buffer and its textures until the GPU has read them. */
         if (frame) CVPixelBufferRetain(frame);
+        TBMetalVideo *counter = v;
         [cmd addCompletedHandler:^(id<MTLCommandBuffer> done) {
             (void)done;
+            counter.inFlight = counter.inFlight - 1;
             if (ty) CFRelease(ty);
             if (tuv) CFRelease(tuv);
             if (frame) CVPixelBufferRelease(frame);
         }];
         tb_trace_mark_now(trace_id, TB_TRACE_SUBMITTED);
+        v.inFlight = v.inFlight + 1;
         [cmd commit];
 
         if ((++v.draws % 120) == 0) CVMetalTextureCacheFlush(v.cache, 0);
@@ -519,6 +550,8 @@ uint32_t tb_mtl_display_id(struct tb_mtl *m) {
 }
 
 int tb_mtl_os_defaults_to_opengl(void) {
-    if (@available(macOS 26.0, *)) return 1;
+    /* 16.0, not 26.0: linked against an SDK older than 26, Tahoe reports
+     * itself as 16.0. */
+    if (@available(macOS 16.0, *)) return 1;
     return 0;
 }

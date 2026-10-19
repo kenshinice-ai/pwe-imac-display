@@ -623,12 +623,16 @@ final class TBSenderAutomationParsingTests: XCTestCase {
     // MARK: - Receiver-drawn pointer
 
     func testReceiverDrawnPointerLeavesThePointerOutOfTheStream() {
-        for role in TBInputControlRole.allCases {
+        for role in [TBInputControlRole.off, .receiverMaster] {
             XCTAssertTrue(role.usesLowLatencyCursorOverlay(largeCursorEnabled: false, receiverDrawsPointer: true))
-            // Both modes leave it out, so changing the role needs no capture restart.
             XCTAssertFalse(role.changesCursorCaptureMode(from: .off, largeCursorEnabled: false,
                                                          receiverDrawsPointer: true))
         }
+        // While this Mac drives the receiver the overlay is hidden: keep the pointer in the video.
+        XCTAssertFalse(TBInputControlRole.senderMaster.usesLowLatencyCursorOverlay(
+            largeCursorEnabled: false, receiverDrawsPointer: true))
+        XCTAssertTrue(TBInputControlRole.senderMaster.changesCursorCaptureMode(
+            from: .off, largeCursorEnabled: false, receiverDrawsPointer: true))
     }
 
     func testPointerGeometryFullFrame() {

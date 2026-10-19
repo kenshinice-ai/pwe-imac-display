@@ -644,6 +644,9 @@ static void on_bonjour_register(DNSServiceRef sdRef,
 
 static void bonjour_update(struct app *a, uint16_t port) {
     bonjour_deinit(a);
+    /* Tests on a Mac whose own sender is running (loopback_smoke.sh): stay
+     * out of discovery; TB_RECEIVER_TEST_PORT also moves the listener. */
+    if (getenv("TB_RECEIVER_NO_BONJOUR")) return;
 
     if (a->ip_text[0] == '\0' || strcmp(a->ip_text, tb_i18n_get("receiver.network.not_detected")) == 0) return;
 
@@ -2110,7 +2113,15 @@ int main(int argc, char **argv) {
 
     tb_parser_init(&a.parser, on_packet, &a);
 
-    a.server_fd = tb_net_listen(TB_PORT);
+    /* Tests only: another port, so a sender running on the same Mac that
+     * remembers this Mac's address cannot take the single client slot. */
+    uint16_t listen_port = TB_PORT;
+    {
+        const char *p = getenv("TB_RECEIVER_TEST_PORT");
+        long v = p ? strtol(p, NULL, 10) : 0;
+        if (v > 1024 && v < 65536) listen_port = (uint16_t)v;
+    }
+    a.server_fd = tb_net_listen(listen_port);
     if (a.server_fd < 0) { fprintf(stderr, "tb_net_listen failed\n"); return 1; }
 
     a.last_fps_tick_ms = now_ms();
