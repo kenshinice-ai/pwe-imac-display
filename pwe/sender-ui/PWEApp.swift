@@ -44,6 +44,9 @@ struct PWEApp: App {
         _service = StateObject(wrappedValue: shared)
         _model = StateObject(wrappedValue: model)
         statusMenu = PWEStatusMenu(model: model)
+        // The iMac's brightness keys and HUD; it also takes the app's URLs from
+        // Apple events, so a background URL never opens a window (PWEBrightnessKeys).
+        PWEBrightness.shared.start()
         TBSenderAutomation.handleLaunchArguments(CommandLine.arguments)
     }
 

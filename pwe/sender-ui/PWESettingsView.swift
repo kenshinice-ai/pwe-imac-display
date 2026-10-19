@@ -176,6 +176,9 @@ struct PWEDisplaySettings: View {
                 footnote(model.knownReceiverName == nil ? strings.noIMacYet : strings.pictureHint)
             }
             Section {
+                PWEBrightnessKeysSetting(language: strings.language)
+            }
+            Section {
                 Toggle(strings.keepAwake, isOn: $model.keepAwake)
                 Toggle(isOn: $model.largeCursor) {
                     Text(strings.largeCursor)
@@ -184,7 +187,7 @@ struct PWEDisplaySettings: View {
             }
         }
         .formStyle(.grouped)
-        .frame(height: 340)
+        .frame(height: 430)
     }
 }
 

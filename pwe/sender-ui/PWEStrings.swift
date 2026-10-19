@@ -12,6 +12,9 @@ struct PWEStrings {
 
     init(language: TBDisplaySenderLanguage) { zh = language == .chinese }
 
+    /// For views that bring their own words (PWEBrightnessKeysSetting).
+    var language: TBDisplaySenderLanguage { zh ? .chinese : .english }
+
     /// The language macOS gives this app. There is no language choice inside PWE.
     static func systemLanguage(_ preferred: [String] = Locale.preferredLanguages) -> TBDisplaySenderLanguage {
         for code in preferred {
