@@ -1869,10 +1869,12 @@ static void tb_receiver_send_display_tweaks_if_changed(struct app *a) {
 }
 
 /* Draw the sender's pointer here, from 0x39 pictures and 0x32 positions, so
- * the video can leave it out. TB_RECEIVER_CURSOR_IMAGE=0 keeps it in the video. */
+ * the video can leave it out. TB_RECEIVER_CURSOR_IMAGE=0 (or the defaults key
+ * TBReceiverCursorImage = NO) keeps it in the video. */
 static int tb_receiver_draws_pointer(void) {
-    const char *v = getenv("TB_RECEIVER_CURSOR_IMAGE");
-    return !(v && strcmp(v, "0") == 0);
+    char v[8];
+    return !(tb_disp_setting("TB_RECEIVER_CURSOR_IMAGE", "TBReceiverCursorImage", v, sizeof(v)) &&
+             strcmp(v, "0") == 0);
 }
 
 static void send_receiver_info(struct app *a) {

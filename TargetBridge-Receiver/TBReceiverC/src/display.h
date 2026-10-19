@@ -40,6 +40,10 @@ enum tb_display_login_item {
     TB_DISP_LOGIN_ITEM_UNAVAILABLE   /* this copy runs from a disk image or translocated path */
 };
 
+/* A switch from the environment, else from the app's defaults (a string or a
+ * boolean, booleans as "1"/"0"). 1 when found; `out` is "" when not. */
+int tb_disp_setting(const char *env_name, const char *defaults_key, char *out, size_t size);
+
 struct tb_display *tb_disp_create(int fullscreen);
 void               tb_disp_destroy(struct tb_display *d);
 void               tb_disp_set_connection_state(struct tb_display *d, int connected);

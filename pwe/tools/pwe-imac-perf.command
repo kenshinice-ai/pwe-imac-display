@@ -57,6 +57,9 @@ stop_receiver() {
 }
 
 # run_phase <name> <ENV=VALUE>...
+# Each phase starts the receiver from this script with its switches in the
+# environment; the receiver also reads them from its defaults
+# (TBReceiverRenderDriver, TBReceiverCursorImage), which the environment overrides.
 run_phase() {
   local name="$1"; shift
   local dir="$out/$name"
@@ -82,6 +85,8 @@ run_phase() {
   fi
 
   echo "   Recording ${phase_seconds} s. Keep the 60 fps page moving on the iMac."
+  # A sound at the start of each recording, for filming the phase with a phone.
+  afplay /System/Library/Sounds/Glass.aiff >/dev/null 2>&1 &
   local ws
   ws="$(pgrep -x WindowServer | head -1)"
   wc -l < "$dir/receiver-stderr.log" | tr -d ' ' > "$dir/window.txt"   # trace lines before the recording

@@ -11,6 +11,8 @@
  * TB_RECEIVER_RENDER_DRIVER = metal | opengl | metal-sdl (SDL's own Metal
  * renderer with the copying upload, for comparison) | any SDL driver name.
  * TB_RECEIVER_PACING = vsync | immediate applies to the Metal path.
+ * Without the environment variable, the app's defaults keys
+ * TBReceiverRenderDriver and TBReceiverPacing are read (tb_disp_setting).
  */
 
 #include "display.h"
@@ -840,6 +842,29 @@ static SDL_Renderer *tb_disp_create_accelerated_renderer(SDL_Window *win, const 
     return tb_disp_try_renderer(win, NULL);
 }
 
+int tb_disp_setting(const char *env_name, const char *defaults_key, char *out, size_t size) {
+    if (!out || size == 0) return 0;
+    out[0] = '\0';
+    const char *env = env_name ? getenv(env_name) : NULL;
+    if (env) {
+        snprintf(out, size, "%s", env);
+        return 1;
+    }
+    if (!defaults_key) return 0;
+    CFStringRef key = CFStringCreateWithCString(NULL, defaults_key, kCFStringEncodingUTF8);
+    CFPropertyListRef value = key ? CFPreferencesCopyAppValue(key, kCFPreferencesCurrentApplication) : NULL;
+    int found = 0;
+    if (value && CFGetTypeID(value) == CFStringGetTypeID()) {
+        found = CFStringGetCString((CFStringRef)value, out, (CFIndex)size, kCFStringEncodingUTF8) ? 1 : 0;
+    } else if (value && CFGetTypeID(value) == CFBooleanGetTypeID()) {
+        snprintf(out, size, "%s", CFBooleanGetValue((CFBooleanRef)value) ? "1" : "0");
+        found = 1;
+    }
+    if (value) CFRelease(value);
+    if (key) CFRelease(key);
+    return found;
+}
+
 /* After every renderer (re)creation: colour conversion, logging, trace labels. */
 static void tb_disp_setup_renderer(struct tb_display *d) {
     SDL_SetYUVConversionMode(SDL_YUV_CONVERSION_BT709);
@@ -865,8 +890,11 @@ static void tb_disp_setup_renderer(struct tb_display *d) {
 /* Choose and build the renderer. Metal zero-copy unless told otherwise or on
  * macOS 26+; any failure on that path ends on OpenGL. */
 static int tb_disp_create_renderer(struct tb_display *d) {
-    const char *driver = getenv("TB_RECEIVER_RENDER_DRIVER");
-    if (!driver) driver = "";
+    char driver_buf[32];
+    const char *driver = driver_buf;
+    if (tb_disp_setting("TB_RECEIVER_RENDER_DRIVER", "TBReceiverRenderDriver", driver_buf, sizeof(driver_buf))) {
+        fprintf(stderr, "[disp] renderer setting = %s\n", driver);
+    }
     int want_metal = 0;
     if (strcmp(driver, "metal") == 0) {
         want_metal = 1;
@@ -876,8 +904,9 @@ static int tb_disp_create_renderer(struct tb_display *d) {
     }
 
     if (want_metal) {
-        const char *pacing = getenv("TB_RECEIVER_PACING");
-        const int paced = !(pacing && strcmp(pacing, "immediate") == 0);
+        char pacing[32];
+        tb_disp_setting("TB_RECEIVER_PACING", "TBReceiverPacing", pacing, sizeof(pacing));
+        const int paced = strcmp(pacing, "immediate") != 0;
         d->ren = tb_disp_try_renderer(d->win, "metal");
         char why[256] = "SDL could not create its Metal renderer";
         if (d->ren) d->mtl = tb_mtl_create(SDL_RenderGetMetalLayer(d->ren), paced, why, sizeof(why));
