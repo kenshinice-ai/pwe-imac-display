@@ -146,6 +146,12 @@ enum TBSenderAutomation {
         while !Task.isCancelled {
             await TBSystemSleepGate.waitUntilAwake()
             guard !Task.isCancelled else { return }
+            // PWE: a pairing code or an unencrypted-connection question waits for the user.
+            if let session = resolveSession(TBDisplaySenderService.shared, params["session"]),
+               session.pweSecurity.waitsForUser {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                continue
+            }
             attempt += 1
             NSLog("[automation] automatic connection attempt \(attempt)")
 

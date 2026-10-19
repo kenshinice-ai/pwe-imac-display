@@ -38,6 +38,12 @@ targets:
         # Base plist merged with the auto-generated keys; declares the targetbridge:// URL scheme.
         INFOPLIST_FILE: TargetBridgeSupport/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # PWE: pairing and encrypted sessions. TargetBridge-Shared/secure is C on
+        # libsodium, built universal by pwe/receiver-deps.sh (pwe/package.sh passes
+        # PWE_SODIUM_DIR; the default is that script's cache).
+        PWE_SODIUM_DIR: "$(TMPDIR)/pwe-imacdisplay-deps/universal"
+        HEADER_SEARCH_PATHS: ["$(PWE_SODIUM_DIR)/include", "$(SRCROOT)/../TargetBridge-Shared/secure"]
+        OTHER_LDFLAGS: ["$(PWE_SODIUM_DIR)/lib/libsodium.a", "-framework", "Security"]
     preBuildScripts:
       - name: Stamp Sender Build Info
         script: |
@@ -67,6 +73,10 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/TargetBridge.app/Contents/MacOS/TargetBridge"
         BUNDLE_LOADER: "$(TEST_HOST)"
+        # PWE: tests call the shared C layer directly (test vectors).
+        SWIFT_OBJC_BRIDGING_HEADER: TargetBridgeSupport/TargetBridge-Bridging-Header.h
+        PWE_SODIUM_DIR: "$(TMPDIR)/pwe-imacdisplay-deps/universal"
+        HEADER_SEARCH_PATHS: ["$(PWE_SODIUM_DIR)/include", "$(SRCROOT)/../TargetBridge-Shared/secure"]
 
 schemes:
   TBDisplaySender:

@@ -20,6 +20,18 @@ enum TBMonitorPacketType: UInt8 {
     /// Night Shift / True Tone on the receiver's panel.
     case displayTweaks = 0x38
     case testData = 0x40
+    // PWE: pairing and encrypted sessions (TargetBridge-Shared/secure/pwe_secure.h).
+    case secHello = 0x50
+    case secHelloReply = 0x51
+    case secPairRequest = 0x52
+    case secPairReady = 0x53
+    case secPairA = 0x54
+    case secPairB = 0x55
+    case secPairConfirm = 0x56
+    case secKK1 = 0x57
+    case secKK2 = 0x58
+    case secError = 0x5E
+    case secSealed = 0x5F
 }
 
 struct TBMonitorHelloReceiver: Codable {
