@@ -205,5 +205,20 @@
   "sender.input_bindings.add": "Hinzufügen",
   "sender.input_bindings.empty": "Noch keine Kurzbefehle. Füge einen hinzu, um eine am Empfänger gedrückte Tastenkombination einer Aktion auf diesem Mac zuzuordnen.",
   "sender.input_bindings.details": "Verfügbar, wenn der Empfänger Master ist. Der Auslöser wird am Empfänger gedrückt; die Aktion läuft auf diesem Mac. Der Auslöser darf kein von macOS reservierter Kurzbefehl sein, etwa Ctrl+Links für Spaces: verwende stattdessen Ctrl+Option+Links. Die Aktion darf reservierte Kurzbefehle verwenden, einschließlich Ctrl+Links zum Wechseln des Space auf diesem Mac.",
-  "sender.input_bindings.record": "Tasten drücken..."
+  "sender.input_bindings.record": "Tasten drücken...",
+  "receiver.pairing.code": "Kopplungscode %{code}",
+  "receiver.pairing.enter_on_mac": "Gib diese 6 Ziffern auf deinem Mac ein",
+  "receiver.pairing.not_you": "Nicht du? Zieh einfach das Kabel ab.",
+  "receiver.pairing.paired": "Gekoppelt mit „%{name}“",
+  "receiver.pairing.locked": "Zu viele Versuche. Versuch es in einer Minute erneut.",
+  "receiver.pairing.refused_unencrypted": "Ein nicht gekoppelter Computer mit der alten, unverschlüsselten Verbindung wurde abgewiesen.",
+  "receiver.pairing.unencrypted": "Nicht verschlüsselt: nur Bild und Ton.",
+  "receiver.pairing.unencrypted_hint": "Unverschlüsselte Verbindungen lassen sich im App-Menü ausschalten.",
+  "receiver.pairing.keychain": "Verschlüsselte Verbindungen nicht verfügbar: Der Schlüsselbund ist nicht lesbar.",
+  "receiver.pairing.forgot_all": "Alle gekoppelten Macs wurden vergessen.",
+  "receiver.menu.allow_unencrypted": "Unverschlüsselte Verbindungen erlauben",
+  "receiver.menu.forget_all": "Alle gekoppelten Macs vergessen …",
+  "receiver.menu.forget_all_confirm": "Alle gekoppelten Macs vergessen? Jeder braucht dann wieder seinen Kopplungscode.",
+  "receiver.menu.forget": "Vergessen",
+  "receiver.menu.cancel": "Abbrechen"
 }

@@ -87,6 +87,12 @@ struct tb_display {
     int           last_drawable_h;
     int           status_is_connecting;
 
+    /* PWE pairing: a notice drawn in place of the calm idle screen's two lines
+     * (and, for a warning, on the connecting screen). See tb_disp_set_notice. */
+    int           pwe_notice_kind;
+    char          pwe_notice[3][192];
+    int           pwe_notice_dirty;
+
     /* Receiver rendering (PWE 1.1): the Metal zero-copy path and its pacing. */
     struct tb_mtl   *mtl;            /* non-NULL = Metal draws the video */
     struct tb_vsync *vsync;          /* refresh ticks, when paced */
@@ -660,6 +666,10 @@ static void tb_disp_rebuild_status_texture(struct tb_display *d,
         tb_disp_draw_text_centered(ctx, tb_i18n_get("receiver.splash.waiting_first_frame"), body_font, 17.0 * scale,
                                    center_x, icon_y + icon_size + 202.0 * scale,
                                    0.62, 0.68, 0.77);
+        if (d->pwe_notice_kind == TB_DISP_NOTICE_WARNING) {   /* PWE: e.g. not encrypted */
+            tb_disp_draw_text_centered(ctx, d->pwe_notice[0], body_font, 17.0 * scale,
+                                       center_x, icon_y + icon_size + 248.0 * scale, 1.0, 0.72, 0.30);
+        }
         tb_disp_draw_text_centered(ctx, TB_RECEIVER_VERSION, mono_font, 13.0 * scale,
                                    center_x, icon_y + icon_size + 310.0 * scale,
                                    0.40, 0.45, 0.53);
@@ -677,10 +687,27 @@ static void tb_disp_rebuild_status_texture(struct tb_display *d,
         tb_disp_draw_app_icon(ctx, center_x - icon_size / 2.0, icon_y, icon_size);
         tb_disp_draw_text_centered(ctx, tb_i18n_get("common.app_name"), title_font, 34.0 * scale,
                                    center_x, icon_y + icon_size + 66.0 * scale, 0.95, 0.97, 1.0);
+        if (d->pwe_notice_kind == TB_DISP_NOTICE_PAIRING_CODE) {
+            /* PWE pairing: the code, large, then what to do with it. */
+            tb_disp_draw_text_centered(ctx, d->pwe_notice[0], mono_bold_font, 54.0 * scale,
+                                       center_x, icon_y + icon_size + 136.0 * scale, 0.43, 0.93, 0.60);
+            tb_disp_draw_text_centered(ctx, d->pwe_notice[1], body_font, 22.0 * scale,
+                                       center_x, icon_y + icon_size + 184.0 * scale, 0.80, 0.84, 0.90);
+            tb_disp_draw_text_centered(ctx, d->pwe_notice[2], body_font, 15.0 * scale,
+                                       center_x, icon_y + icon_size + 216.0 * scale, 0.58, 0.63, 0.71);
+        } else if (d->pwe_notice_kind != TB_DISP_NOTICE_NONE) {
+            const int warn = d->pwe_notice_kind == TB_DISP_NOTICE_WARNING;
+            tb_disp_draw_text_centered(ctx, d->pwe_notice[0], body_font, 22.0 * scale,
+                                       center_x, icon_y + icon_size + 112.0 * scale,
+                                       warn ? 1.0 : 0.80, warn ? 0.72 : 0.84, warn ? 0.30 : 0.90);
+            tb_disp_draw_text_centered(ctx, d->pwe_notice[1], body_font, 16.0 * scale,
+                                       center_x, icon_y + icon_size + 146.0 * scale, 0.58, 0.63, 0.71);
+        } else {
         tb_disp_draw_text_centered(ctx, tb_i18n_get("receiver.ui.compact_waiting"), body_font, 22.0 * scale,
                                    center_x, icon_y + icon_size + 112.0 * scale, 0.80, 0.84, 0.90);
         tb_disp_draw_text_centered(ctx, tb_i18n_get("receiver.ui.compact_hint"), body_font, 16.0 * scale,
                                    center_x, icon_y + icon_size + 146.0 * scale, 0.58, 0.63, 0.71);
+        }
 
         char footer[256];
         snprintf(footer, sizeof(footer), "%s   ·   %s   ·   %s",
@@ -2264,7 +2291,9 @@ void tb_disp_render_status(struct tb_display *d,
         d->last_show_details != d->show_details ||
         d->last_login_item_state != d->login_item_state ||
         d->status_tex == NULL ||
+        d->pwe_notice_dirty ||
         d->status_is_connecting) {
+        d->pwe_notice_dirty = 0;
         snprintf(d->last_ip, sizeof(d->last_ip), "%s", ip);
         snprintf(d->last_status, sizeof(d->last_status), "%s", status);
         snprintf(d->last_sender, sizeof(d->last_sender), "%s", sender);
@@ -2307,8 +2336,10 @@ void tb_disp_render_connecting(struct tb_display *d) {
 
     if (d->status_tex == NULL ||
         !d->status_is_connecting ||
+        d->pwe_notice_dirty ||
         d->last_drawable_w != drawable_w ||
         d->last_drawable_h != drawable_h) {
+        d->pwe_notice_dirty = 0;
         d->last_drawable_w = drawable_w;
         d->last_drawable_h = drawable_h;
         d->status_is_connecting = 1;
@@ -2322,6 +2353,19 @@ void tb_disp_render_connecting(struct tb_display *d) {
     if (d->status_tex) SDL_RenderCopy(d->ren, d->status_tex, NULL, NULL);
     tb_disp_draw_connecting_spinner(d, drawable_w, drawable_h);
     SDL_RenderPresent(d->ren);
+}
+
+void tb_disp_set_notice(struct tb_display *d, enum tb_display_notice kind,
+                        const char *line1, const char *line2, const char *line3) {
+    if (!d) return;
+    const char *lines[3] = { line1 ? line1 : "", line2 ? line2 : "", line3 ? line3 : "" };
+    int changed = d->pwe_notice_kind != (int)kind;
+    for (int i = 0; i < 3; i++) {
+        if (strcmp(d->pwe_notice[i], lines[i]) != 0) changed = 1;
+        snprintf(d->pwe_notice[i], sizeof(d->pwe_notice[i]), "%s", lines[i]);
+    }
+    d->pwe_notice_kind = (int)kind;
+    if (changed) d->pwe_notice_dirty = 1;
 }
 
 void tb_disp_set_login_item_state(struct tb_display *d, enum tb_display_login_item state) {

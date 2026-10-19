@@ -205,5 +205,20 @@
   "sender.input_bindings.add": "Aggiungi",
   "sender.input_bindings.empty": "Nessuna scorciatoia. Aggiungine una per trasformare una combinazione premuta sul receiver in un'azione su questo Mac.",
   "sender.input_bindings.details": "Disponibile quando Receiver e Master. Il trigger viene premuto sul receiver; l'azione viene eseguita su questo Mac. Il trigger non puo essere una scorciatoia riservata da macOS, come Ctrl+Freccia Sinistra per gli Spazi: usa invece Ctrl+Option+Freccia Sinistra. L'azione puo usare anche scorciatoie riservate, incluso Ctrl+Freccia Sinistra per cambiare Spazio su questo Mac.",
-  "sender.input_bindings.record": "Premi i tasti..."
+  "sender.input_bindings.record": "Premi i tasti...",
+  "receiver.pairing.code": "Codice di abbinamento %{code}",
+  "receiver.pairing.enter_on_mac": "Inserisci queste 6 cifre sul Mac",
+  "receiver.pairing.not_you": "Non sei tu? Scollega il cavo.",
+  "receiver.pairing.paired": "Abbinato a “%{name}”",
+  "receiver.pairing.locked": "Troppi tentativi. Riprova tra un minuto.",
+  "receiver.pairing.refused_unencrypted": "Rifiutato un computer non abbinato che usa la vecchia connessione non cifrata.",
+  "receiver.pairing.unencrypted": "Non cifrato: solo immagine e audio.",
+  "receiver.pairing.unencrypted_hint": "Disattiva le connessioni non cifrate dal menu dell’app.",
+  "receiver.pairing.keychain": "Connessioni cifrate non disponibili: impossibile leggere il portachiavi.",
+  "receiver.pairing.forgot_all": "Tutti i Mac abbinati sono stati dimenticati.",
+  "receiver.menu.allow_unencrypted": "Consenti connessioni non cifrate",
+  "receiver.menu.forget_all": "Dimentica tutti i Mac abbinati…",
+  "receiver.menu.forget_all_confirm": "Dimenticare tutti i Mac abbinati? Ognuno dovrà inserire di nuovo il codice.",
+  "receiver.menu.forget": "Dimentica",
+  "receiver.menu.cancel": "Annulla"
 }

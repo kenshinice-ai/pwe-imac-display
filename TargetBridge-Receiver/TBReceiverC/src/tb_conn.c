@@ -171,6 +171,7 @@ int tb_conn_init(struct tb_conn *c, int fd, const struct tb_conn_config *cfg,
     c->on_packet = on_packet;
     c->on_event = on_event;
     c->ud = ud;
+    c->opened_ms = mono_ms();
     tb_parser_init(&c->parser, on_raw_packet, c);
     if (pwe_sec_global_init() != 0) return -1;
     if (!c->cfg.identity || !c->cfg.store || !c->cfg.gate) {
@@ -214,6 +215,15 @@ int tb_conn_send(struct tb_conn *c, uint8_t type, const uint8_t *payload, size_t
 int tb_conn_send_packet(struct tb_conn *c, const uint8_t *pkt, size_t len) {
     if (len < TB_HDR_BYTES) return -1;
     return tb_conn_send(c, pkt[4], pkt + TB_HDR_BYTES, len - TB_HDR_BYTES);
+}
+
+void tb_conn_tick(struct tb_conn *c) {
+    if (!c || c->mode != TB_CONN_UNDECIDED || c->want_close || !c->cfg.allow_plaintext) return;
+    if (mono_ms() - c->opened_ms < TB_CONN_SILENT_SENDER_MS) return;
+    c->mode = TB_CONN_PLAINTEXT;
+    fprintf(stderr, "[sec] sender silent for %d ms: unencrypted connection (compatibility mode)\n",
+            TB_CONN_SILENT_SENDER_MS);
+    emit(c, TB_CONN_EV_READY | TB_CONN_EV_PLAINTEXT);
 }
 
 int tb_conn_gate_tick(struct pwe_sec_gate *gate, uint64_t now_ms) {

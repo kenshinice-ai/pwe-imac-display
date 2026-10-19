@@ -118,6 +118,7 @@ struct tb_conn {
     int                   want_close;
     uint64_t              now_ms;
     unsigned long         withheld;   /* plaintext packets dropped by policy */
+    uint64_t              opened_ms;  /* monotonic, at tb_conn_init */
 };
 
 int  tb_conn_init (struct tb_conn *c, int fd, const struct tb_conn_config *cfg,
@@ -128,6 +129,13 @@ int  tb_conn_feed (struct tb_conn *c, const uint8_t *data, size_t n, uint64_t no
 int  tb_conn_send (struct tb_conn *c, uint8_t type, const uint8_t *payload, size_t len);
 /* The same for an already framed packet [BE32 len][type][payload]. */
 int  tb_conn_send_packet(struct tb_conn *c, const uint8_t *pkt, size_t len);
+/* Every loop while connected. An older sender may wait for the display profile
+ * before it sends anything, as the receiver used to send it on accept: after
+ * TB_CONN_SILENT_SENDER_MS of silence, with unencrypted connections allowed,
+ * the connection becomes unencrypted (TB_CONN_EV_READY | TB_CONN_EV_PLAINTEXT).
+ * A PWE sender's HELLO arrives within milliseconds of the connection. */
+#define TB_CONN_SILENT_SENDER_MS 2000
+void tb_conn_tick(struct tb_conn *c);
 /* About once a second, connected or not (gate may be shared): expires the code. */
 int  tb_conn_gate_tick(struct pwe_sec_gate *gate, uint64_t now_ms);
 int  tb_conn_is_secure (const struct tb_conn *c);

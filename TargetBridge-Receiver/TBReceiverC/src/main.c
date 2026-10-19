@@ -24,6 +24,18 @@
 #include "tb_i18n.h"
 #include "tb_login_item.h"
 #include "tb_trace.h"
+/* PWE: pairing and encrypted sessions */
+#include "pwe_secure.h"
+#include "pwe_keystore.h"
+#include "tb_pairing_menu.h"
+#include <SystemConfiguration/SystemConfiguration.h>
+#include <ifaddrs.h>
+#include <net/if.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#ifndef TB_RECEIVER_TEST_HOOKS
+#define TB_RECEIVER_TEST_HOOKS 0   /* 1 only in test builds: make TEST_HOOKS=1 */
+#endif
 
 #ifndef TB_RECEIVER_OFFER_LOGIN_ITEM
 #define TB_RECEIVER_OFFER_LOGIN_ITEM 0
@@ -64,7 +76,6 @@
 struct app {
     struct tb_display *disp;
     struct tb_decoder *dec;
-    struct tb_parser   parser;
 
     int      server_fd;
     int      client_fd;
@@ -136,6 +147,24 @@ struct app {
     int      sent_caps_down;
     uint64_t last_clipboard_poll_ms;
     char     last_clipboard_text[4096];
+
+    /* ---- PWE: pairing and encrypted sessions (tb_conn.c) ---- */
+    CFStringRef             app_id;           /* preferences domain */
+    struct tb_conn          conn;             /* the client connection, when client_fd >= 0 */
+    struct pwe_keystore     keystore;
+    struct pwe_sec_identity identity;
+    struct pwe_sec_store    store;
+    struct pwe_sec_gate     gate;             /* the pairing code, shared by all connections */
+    int                     have_keys;
+    int                     allow_plaintext;  /* compatibility mode: unencrypted senders (D1) */
+    int                     session_plaintext;
+    int                     pwe_status_overridden;
+    enum tb_display_notice  pwe_message_kind;
+    char                    pwe_message[192];
+    uint64_t                pwe_message_until_ms;
+    DNSServiceRef           bonjour_ref2;     /* second cable interface (USB), if any */
+    unsigned long           pwe_test_counts[256];  /* test builds: packets per type this session */
+    uint64_t                pwe_test_frames_at_connect;
 };
 
 static int tb_should_log_input_event(uint64_t count) {
@@ -535,11 +564,7 @@ static void tb_receiver_send_clipboard_if_changed(struct app *a) {
     int len = snprintf(json, sizeof(json), "{\"text\":\"%s\"}", escaped);
     if (len <= 0 || (size_t)len >= sizeof(json)) return;
 
-    uint8_t header[TB_HDR_BYTES];
-    write_be32(header, (uint32_t)(1 + len));
-    header[4] = TB_PKT_CLIPBOARD;
-    if (write(a->client_fd, header, TB_HDR_BYTES) != TB_HDR_BYTES) return;
-    (void)write(a->client_fd, json, (size_t)len);
+    (void)tb_conn_send(&a->conn, TB_PKT_CLIPBOARD, (const uint8_t *)json, (size_t)len);
 }
 
 static void tb_format_i18n(char *dest,
@@ -588,6 +613,44 @@ static void bonjour_deinit(struct app *a) {
         DNSServiceRefDeallocate(a->bonjour_ref);
         a->bonjour_ref = NULL;
     }
+    if (a->bonjour_ref2) {
+        DNSServiceRefDeallocate(a->bonjour_ref2);
+        a->bonjour_ref2 = NULL;
+    }
+}
+
+/* ---- PWE: preferences and the cable interfaces ------------------------- */
+
+static int tb_pwe_pref_bool(CFStringRef app_id, CFStringRef key, int fallback) {
+    if (!app_id) return fallback;
+    Boolean valid = false;
+    Boolean value = CFPreferencesGetAppBooleanValue(key, app_id, &valid);
+    return valid ? (value ? 1 : 0) : fallback;
+}
+
+static void tb_pwe_set_pref_bool(CFStringRef app_id, CFStringRef key, int value) {
+    if (!app_id) return;
+    CFPreferencesSetAppValue(key, value ? kCFBooleanTrue : kCFBooleanFalse, app_id);
+    (void)CFPreferencesAppSynchronize(app_id);
+}
+
+/* Interface index of the interface that holds this IPv4 address; 0 if none. */
+static unsigned int tb_pwe_ifindex_for_ip(const char *ip) {
+    if (!ip || !*ip) return 0;
+    struct in_addr want;
+    if (inet_pton(AF_INET, ip, &want) != 1) return 0;
+    struct ifaddrs *ifap = NULL;
+    if (getifaddrs(&ifap) != 0) return 0;
+    unsigned int index = 0;
+    for (struct ifaddrs *p = ifap; p; p = p->ifa_next) {
+        if (!p->ifa_addr || p->ifa_addr->sa_family != AF_INET) continue;
+        if (((const struct sockaddr_in *)p->ifa_addr)->sin_addr.s_addr == want.s_addr) {
+            index = if_nametoindex(p->ifa_name);
+            break;
+        }
+    }
+    freeifaddrs(ifap);
+    return index;
 }
 
 static int tb_receiver_load_or_create_id(char *dest, size_t size, CFStringRef app_id) {
@@ -650,28 +713,38 @@ static void bonjour_update(struct app *a, uint16_t port) {
 
     if (a->ip_text[0] == '\0' || strcmp(a->ip_text, tb_i18n_get("receiver.network.not_detected")) == 0) return;
 
+    /* PWE: announce this receiver on the cable only (Thunderbolt Bridge, USB),
+     * with only the cable addresses, unless the network is allowed
+     * (preference AllowLocalNetwork). */
+    const int network = tb_pwe_pref_bool(a->app_id, CFSTR("AllowLocalNetwork"), 0);
+    const unsigned int tb_if = network ? 0 : tb_pwe_ifindex_for_ip(a->tb_ip_text);
+    const unsigned int usb_if = network ? 0 : tb_pwe_ifindex_for_ip(a->usb_ip_text);
+    const char *announced_ip = network ? a->ip_text : (a->tb_ip_text[0] ? a->tb_ip_text : a->usb_ip_text);
+    if (!network && !tb_if && !usb_if) return;
+
     TXTRecordRef txt;
     TXTRecordCreate(&txt, 0, NULL);
     TXTRecordSetValue(&txt, "name", (uint8_t)strlen(a->bonjour_name), a->bonjour_name);
     if (a->receiver_id[0] != '\0') {
         TXTRecordSetValue(&txt, "receiverID", (uint8_t)strlen(a->receiver_id), a->receiver_id);
     }
-    TXTRecordSetValue(&txt, "ip", (uint8_t)strlen(a->ip_text), a->ip_text);
+    TXTRecordSetValue(&txt, "ip", (uint8_t)strlen(announced_ip), announced_ip);
     if (a->tb_ip_text[0] != '\0') {
         TXTRecordSetValue(&txt, "tbIP", (uint8_t)strlen(a->tb_ip_text), a->tb_ip_text);
     }
     if (a->usb_ip_text[0] != '\0') {
         TXTRecordSetValue(&txt, "usbIP", (uint8_t)strlen(a->usb_ip_text), a->usb_ip_text);
     }
-    if (a->net_ip_text[0] != '\0') {
+    if (network && a->net_ip_text[0] != '\0') {
         TXTRecordSetValue(&txt, "netIP", (uint8_t)strlen(a->net_ip_text), a->net_ip_text);
     }
-    if (a->ethernet_ip_text[0] != '\0') {
+    if (network && a->ethernet_ip_text[0] != '\0') {
         TXTRecordSetValue(&txt, "ethernetIP", (uint8_t)strlen(a->ethernet_ip_text), a->ethernet_ip_text);
     }
-    if (a->wifi_ip_text[0] != '\0') {
+    if (network && a->wifi_ip_text[0] != '\0') {
         TXTRecordSetValue(&txt, "wifiIP", (uint8_t)strlen(a->wifi_ip_text), a->wifi_ip_text);
     }
+    TXTRecordSetValue(&txt, "pweSec", 1, "2");   /* PWE: pairing and encryption, protocol 2 */
     TXTRecordSetValue(&txt, "panel", (uint8_t)strlen(a->panel_text), a->panel_text);
     TXTRecordSetValue(&txt, "version", (uint8_t)strlen(TB_RECEIVER_VERSION), TB_RECEIVER_VERSION);
     TXTRecordSetValue(&txt, "supportsHEVCDecode", 1, tb_dec_supports_hevc_hwdecode() ? "1" : "0");
@@ -690,7 +763,7 @@ static void bonjour_update(struct app *a, uint16_t port) {
     DNSServiceErrorType err = DNSServiceRegister(
         &a->bonjour_ref,
         0,
-        0,
+        network ? 0 : (tb_if ? tb_if : usb_if),
         a->bonjour_name,
         "_targetbridge._tcp",
         "local.",
@@ -701,6 +774,12 @@ static void bonjour_update(struct app *a, uint16_t port) {
         on_bonjour_register,
         a
     );
+    if (err == kDNSServiceErr_NoError && tb_if && usb_if) {
+        /* Both cables: announce on the USB link too. */
+        err = DNSServiceRegister(&a->bonjour_ref2, 0, usb_if, a->bonjour_name, "_targetbridge._tcp",
+                                 "local.", NULL, htons(port), TXTRecordGetLength(&txt),
+                                 TXTRecordGetBytesPtr(&txt), on_bonjour_register, a);
+    }
     TXTRecordDeallocate(&txt);
 
     if (err != kDNSServiceErr_NoError) {
@@ -1152,6 +1231,9 @@ static void tb_set_system_volume(double level) {
 
 static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud) {
     struct app *a = (struct app *)ud;
+#if TB_RECEIVER_TEST_HOOKS
+    a->pwe_test_counts[type]++;
+#endif
     switch (type) {
     case TB_PKT_UI_LANGUAGE:
         {
@@ -1355,7 +1437,7 @@ static int drain_socket(struct app *a) {
         ssize_t n = read(a->client_fd, buf, sizeof(buf));
         if (n > 0) {
             saw_data = 1;
-            if (tb_parser_feed(&a->parser, buf, (size_t)n) < 0) return -1;
+            if (tb_conn_feed(&a->conn, buf, (size_t)n, now_ms()) < 0) return -1;
         } else if (n == 0) {
             return -1;  /* peer closed */
         } else {
@@ -1371,33 +1453,6 @@ static void write_be32(uint8_t *dst, uint32_t value) {
     dst[1] = (uint8_t)((value >> 16) & 0xff);
     dst[2] = (uint8_t)((value >> 8) & 0xff);
     dst[3] = (uint8_t)(value & 0xff);
-}
-
-static int send_all(int fd, const uint8_t *buf, size_t len) {
-    /* Bound the EAGAIN retry loop: this runs on the event-loop thread, so an
-     * unresponsive reader (half-open peer, saturated link) must not wedge
-     * rendering and quit handling forever. 2s of zero progress means the
-     * session is effectively dead; give up and let the caller/watchdog
-     * tear it down. */
-    const uint64_t deadline_ms = now_ms() + 2000;
-    size_t off = 0;
-    while (off < len) {
-        ssize_t n = write(fd, buf + off, len - off);
-        if (n > 0) {
-            off += (size_t)n;
-            continue;
-        }
-        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            if (now_ms() >= deadline_ms) {
-                fprintf(stderr, "[net] send stalled for 2s; dropping write\n");
-                return -1;
-            }
-            usleep(1000);
-            continue;
-        }
-        return -1;
-    }
-    return 0;
 }
 
 static void tb_receiver_send_input_event(struct app *a,
@@ -1438,7 +1493,7 @@ static void tb_receiver_send_input_event(struct app *a,
                               has_key_code ? (unsigned int)key_code : 0,
                               a->input_control_mode);
     }
-    (void)send_all(a->client_fd, pkt, 5 + (size_t)len);
+    (void)tb_conn_send_packet(&a->conn, pkt, 5 + (size_t)len);
 }
 
 static void tb_receiver_send_input_button_event(struct app *a,
@@ -1473,7 +1528,7 @@ static void tb_receiver_send_input_button_event(struct app *a,
                               0,
                               a->input_control_mode);
     }
-    (void)send_all(a->client_fd, pkt, 5 + (size_t)len);
+    (void)tb_conn_send_packet(&a->conn, pkt, 5 + (size_t)len);
 }
 
 static void tb_receiver_send_target_switch(struct app *a, int direction) {
@@ -1868,7 +1923,7 @@ static void tb_receiver_send_display_tweaks_if_changed(struct app *a) {
     write_be32(pkt, (uint32_t)(1 + len));
     pkt[4] = TB_PKT_DISPLAY_TWEAKS;
     memcpy(pkt + 5, json, (size_t)len);
-    (void)send_all(a->client_fd, pkt, 5 + (size_t)len);
+    (void)tb_conn_send_packet(&a->conn, pkt, 5 + (size_t)len);
 }
 
 /* Draw the sender's pointer here, from 0x39 pictures and 0x32 positions, so
@@ -1937,7 +1992,7 @@ static void send_receiver_info(struct app *a) {
     pkt[4] = TB_PKT_DISPLAY_PROFILE;
     memcpy(pkt + 5, json, (size_t)json_len);
 
-    if (send_all(a->client_fd, pkt, packet_len) == 0) {
+    if (tb_conn_send_packet(&a->conn, pkt, packet_len) == 0) {
         fprintf(stderr,
                 "[main] sent display profile: panel=%ux%u mode=%ux%u hidpi=%d name=%s\n",
                 profile.panel_w, profile.panel_h, profile.mode_w, profile.mode_h,
@@ -1946,9 +2001,25 @@ static void send_receiver_info(struct app *a) {
     free(pkt);
 }
 
+static void tb_pwe_refresh_notice(struct app *a, uint64_t now);
+
 static void close_client(struct app *a) {
-    if (a->client_fd >= 0) close(a->client_fd);
+#if TB_RECEIVER_TEST_HOOKS
+    if (a->client_fd >= 0) {
+        const unsigned long *n = a->pwe_test_counts;
+        fprintf(stderr, "[test] session: secure=%d hello=%lu paramSets=%lu frames=%lu decoded=%llu "
+                        "cursor=%lu cursorImage=%lu brightness=%lu volume=%lu language=%lu teardown=%lu "
+                        "input=%lu clipboard=%lu\n",
+                tb_conn_is_secure(&a->conn), n[TB_PKT_HELLO_RECEIVER], n[TB_PKT_PARAM_SETS], n[TB_PKT_FRAME],
+                (unsigned long long)(a->frames - a->pwe_test_frames_at_connect), n[TB_PKT_CURSOR],
+                n[TB_PKT_CURSOR_IMAGE], n[TB_PKT_BRIGHTNESS], n[TB_PKT_VOLUME], n[TB_PKT_UI_LANGUAGE],
+                n[TB_PKT_TEARDOWN], n[TB_PKT_INPUT_EVENT], n[TB_PKT_CLIPBOARD]);
+    }
+    memset(a->pwe_test_counts, 0, sizeof(a->pwe_test_counts));
+#endif
+    if (a->client_fd >= 0) tb_conn_close(&a->conn, now_ms());   /* PWE: closes the socket, wipes keys */
     a->client_fd = -1;
+    a->session_plaintext = 0;
     a->session_active = 0;
     a->close_requested = 0;
     a->have_video_frame = 0;
@@ -1960,11 +2031,160 @@ static void close_client(struct app *a) {
     tb_disp_set_cursor_image(a->disp, NULL);
     tb_refresh_idle_localized_strings(a);
     a->last_clipboard_text[0] = '\0';
-    tb_parser_free(&a->parser);
-    tb_parser_init(&a->parser, on_packet, a);
     tb_dec_reset(a->dec);   /* fresh decoder for next session */
     tb_audio_close_for_idle(a);
+    tb_pwe_refresh_notice(a, now_ms());
     fprintf(stderr, "[main] client disconnected\n");
+}
+
+/* ---- PWE: pairing and encrypted sessions -------------------------------- */
+
+#define TB_PWE_PAIRED_NOTICE_MS   3000
+#define TB_PWE_REFUSED_NOTICE_MS  8000
+#define TB_PWE_FORGOT_NOTICE_MS   4000
+
+static void tb_pwe_message(struct app *a, enum tb_display_notice kind, const char *text, uint64_t for_ms) {
+    a->pwe_message_kind = kind;
+    snprintf(a->pwe_message, sizeof(a->pwe_message), "%s", text ? text : "");
+    a->pwe_message_until_ms = now_ms() + for_ms;
+}
+
+/* What the idle screen says about pairing: the code while one is shown, a
+ * short message, the unencrypted warning, or why encryption is unavailable. */
+static void tb_pwe_refresh_notice(struct app *a, uint64_t now) {
+    char line1[192] = "", line2[192] = "", line3[192] = "";
+    enum tb_display_notice kind = TB_DISP_NOTICE_NONE;
+    if (a->gate.code[0]) {
+        char spaced[8];
+        snprintf(spaced, sizeof(spaced), "%.3s %.3s", a->gate.code, a->gate.code + 3);
+        struct tb_i18n_pair pairs[] = { { "code", spaced } };
+        tb_format_i18n(line1, sizeof(line1), "receiver.pairing.code", pairs, 1);
+        tb_copy_i18n(line2, sizeof(line2), "receiver.pairing.enter_on_mac");
+        tb_copy_i18n(line3, sizeof(line3), "receiver.pairing.not_you");
+        kind = TB_DISP_NOTICE_PAIRING_CODE;
+    } else if (a->pwe_message[0] && now < a->pwe_message_until_ms) {
+        snprintf(line1, sizeof(line1), "%s", a->pwe_message);
+        kind = a->pwe_message_kind;
+    } else if (a->client_fd >= 0 && a->session_plaintext) {
+        tb_copy_i18n(line1, sizeof(line1), "receiver.pairing.unencrypted");
+        tb_copy_i18n(line2, sizeof(line2), "receiver.pairing.unencrypted_hint");
+        kind = TB_DISP_NOTICE_WARNING;
+    } else if (!a->have_keys) {
+        tb_copy_i18n(line1, sizeof(line1), "receiver.pairing.keychain");
+        kind = TB_DISP_NOTICE_WARNING;
+    }
+    tb_disp_set_notice(a->disp, kind, line1, line2, line3);
+    /* The menu follows the receiver's language. */
+    static char menu_language[16];
+    const char *language = tb_i18n_current_language();
+    if (language && strcmp(menu_language, language) != 0) {
+        snprintf(menu_language, sizeof(menu_language), "%s", language);
+        tb_pairing_menu_update(tb_i18n_get("receiver.menu.allow_unencrypted"), a->allow_plaintext,
+                               tb_i18n_get("receiver.menu.forget_all"));
+    }
+    /* The details screen shows the status line: the notice goes there too. */
+    if (!a->session_active) {
+        if (kind != TB_DISP_NOTICE_NONE) {
+            snprintf(a->status_text, sizeof(a->status_text), "%s", line1);
+            a->pwe_status_overridden = 1;
+        } else if (a->pwe_status_overridden) {
+            a->pwe_status_overridden = 0;
+            tb_copy_i18n(a->status_text, sizeof(a->status_text), "receiver.status.waiting_for_sender");
+        }
+    }
+}
+
+static void tb_pwe_on_conn_event(struct tb_conn *c, int ev, void *ud) {
+    struct app *a = (struct app *)ud;
+    if (ev & TB_CONN_EV_READY) {
+        a->session_plaintext = (ev & TB_CONN_EV_PLAINTEXT) != 0;
+        fprintf(stderr, "[sec] session ready (%s)\n", a->session_plaintext ? "unencrypted" : "encrypted");
+        send_receiver_info(a);
+    }
+    if (ev & PWE_SEC_EV_PAIRED) {
+        char text[192];
+        struct tb_i18n_pair pairs[] = { { "name", pwe_sec_peer_name(c->sec) } };
+        tb_format_i18n(text, sizeof(text), "receiver.pairing.paired", pairs, 1);
+        tb_pwe_message(a, TB_DISP_NOTICE_INFO, text, TB_PWE_PAIRED_NOTICE_MS);
+    }
+    if (ev & PWE_SEC_EV_LOCKED) {
+        tb_pwe_message(a, TB_DISP_NOTICE_WARNING, tb_i18n_get("receiver.pairing.locked"), PWE_SEC_LOCK_MS);
+    }
+    if (ev & TB_CONN_EV_PLAINTEXT_REFUSED) {
+        tb_pwe_message(a, TB_DISP_NOTICE_WARNING, tb_i18n_get("receiver.pairing.refused_unencrypted"),
+                       TB_PWE_REFUSED_NOTICE_MS);
+    }
+#if TB_RECEIVER_TEST_HOOKS
+    /* Tests read the code the screen shows from this file. */
+    const char *code_file = getenv("TB_RECEIVER_TEST_CODE_FILE");
+    if ((ev & PWE_SEC_EV_SHOW_CODE) && code_file && a->gate.code[0]) {
+        FILE *f = fopen(code_file, "w");
+        if (f) { fprintf(f, "%s\n", a->gate.code); fclose(f); }
+    }
+#endif
+    tb_pwe_refresh_notice(a, now_ms());
+}
+
+static void tb_pwe_refresh_menu(struct app *a) {
+    tb_pairing_menu_update(tb_i18n_get("receiver.menu.allow_unencrypted"), a->allow_plaintext,
+                           tb_i18n_get("receiver.menu.forget_all"));
+}
+
+static void tb_pwe_toggle_unencrypted(void *ctx) {
+    struct app *a = (struct app *)ctx;
+    a->allow_plaintext = !a->allow_plaintext;
+    tb_pwe_set_pref_bool(a->app_id, CFSTR("AllowUnencryptedConnections"), a->allow_plaintext);
+    fprintf(stderr, "[sec] unencrypted connections %s\n", a->allow_plaintext ? "allowed" : "turned off");
+    tb_pwe_refresh_menu(a);
+    /* Turning it off ends an unencrypted session at once. */
+    if (!a->allow_plaintext && a->client_fd >= 0 && a->session_plaintext) close_client(a);
+}
+
+static void tb_pwe_forget_all(void *ctx) {
+    struct app *a = (struct app *)ctx;
+    if (!tb_pairing_menu_confirm(tb_i18n_get("receiver.menu.forget_all_confirm"),
+                                 tb_i18n_get("receiver.menu.forget"), tb_i18n_get("receiver.menu.cancel"))) return;
+    if (pwe_keystore_forget_all_peers(&a->keystore) == 0) {
+        fprintf(stderr, "[sec] forgot all paired Macs\n");
+        tb_pwe_message(a, TB_DISP_NOTICE_INFO, tb_i18n_get("receiver.pairing.forgot_all"), TB_PWE_FORGOT_NOTICE_MS);
+        tb_pwe_refresh_notice(a, now_ms());
+    }
+}
+
+/* This receiver's pairing key and the Macs it paired with, in the login keychain. */
+static void tb_pwe_load_keys(struct app *a) {
+    char service[192] = "";
+    if (!a->app_id || !CFStringGetCString(a->app_id, service, sizeof(service) - 16, kCFStringEncodingUTF8)) {
+        snprintf(service, sizeof(service), "%s", "receiver");
+    }
+    strncat(service, ".pairing", sizeof(service) - strlen(service) - 1);
+#if TB_RECEIVER_TEST_HOOKS
+    const char *test_service = getenv("TB_RECEIVER_TEST_KEYCHAIN_SERVICE");
+    if (test_service && *test_service) snprintf(service, sizeof(service), "%s", test_service);
+#endif
+    pwe_keystore_init(&a->keystore, service, PWE_SEC_MAX_PEERS);
+    pwe_keystore_as_store(&a->keystore, &a->store);
+
+    char name[PWE_SEC_NAME_MAX + 1] = "";
+    CFStringRef computer = SCDynamicStoreCopyComputerName(NULL, NULL);
+    if (!computer || !CFStringGetCString(computer, name, sizeof(name), kCFStringEncodingUTF8)) {
+        if (gethostname(name, sizeof(name)) != 0) snprintf(name, sizeof(name), "%s", "iMac");
+    }
+    if (computer) CFRelease(computer);
+
+    a->have_keys = pwe_sec_global_init() == 0 && pwe_keystore_load_identity(&a->keystore, name, &a->identity) == 0;
+    if (a->have_keys) {
+        char hex[2 * PWE_SEC_ID_BYTES + 1];
+        pwe_sec_id_hex(a->identity.id, hex);
+        fprintf(stderr, "[sec] pairing key ready (%.8s)\n", hex);
+    } else {
+        fprintf(stderr, "[sec] keychain unavailable (%d): encrypted connections refused\n", a->keystore.last_status);
+    }
+    a->allow_plaintext = tb_pwe_pref_bool(a->app_id, CFSTR("AllowUnencryptedConnections"), 1);
+#if TB_RECEIVER_TEST_HOOKS
+    const char *test_plain = getenv("TB_RECEIVER_TEST_ALLOW_UNENCRYPTED");
+    if (test_plain) a->allow_plaintext = strcmp(test_plain, "0") != 0;
+#endif
 }
 
 /* Build the display string for the host/IP line of the status screen.
@@ -2053,8 +2273,8 @@ int main(int argc, char **argv) {
     memset(&a, 0, sizeof(a));
     a.server_fd = -1;
     a.client_fd = -1;
-    if (tb_receiver_load_or_create_id(a.receiver_id, sizeof(a.receiver_id),
-                                     CFSTR("com.targetbridge.receiver")) == 0) {
+    a.app_id = CFSTR("com.targetbridge.receiver");
+    if (tb_receiver_load_or_create_id(a.receiver_id, sizeof(a.receiver_id), a.app_id) == 0) {
         fprintf(stderr, "[identity] receiver ID ready\n");
     } else {
         fprintf(stderr, "[identity] unable to persist receiver ID; using Bonjour name fallback\n");
@@ -2088,6 +2308,11 @@ int main(int argc, char **argv) {
 
     a.disp = tb_disp_create(fullscreen);
     if (!a.disp) { fprintf(stderr, "tb_disp_create failed\n"); return 1; }
+    /* PWE: pairing keys, and the menu items for unencrypted connections and forgetting. */
+    tb_pwe_load_keys(&a);
+    tb_pairing_menu_install(tb_pwe_toggle_unencrypted, tb_pwe_forget_all, &a);
+    tb_pwe_refresh_menu(&a);
+    tb_pwe_refresh_notice(&a, now_ms());
     tb_receiver_refresh_login_item(&a);
     /* The login offer is a modal dialog: show it over a drawn idle screen,
      * after the port is listening, never during a session. */
@@ -2110,8 +2335,6 @@ int main(int argc, char **argv) {
 
     a.dec = tb_dec_create(on_frame, &a);
     if (!a.dec) { fprintf(stderr, "tb_dec_create failed\n"); tb_disp_destroy(a.disp); return 1; }
-
-    tb_parser_init(&a.parser, on_packet, &a);
 
     /* Tests only: another port, so a sender running on the same Mac that
      * remembers this Mac's address cannot take the single client slot. */
@@ -2205,13 +2428,26 @@ int main(int argc, char **argv) {
                 a.reported_true_tone = -1;
                 a.last_recv_ms = t;
                 SDL_DisableScreenSaver();
-                fprintf(stderr, "[main] client connected\n");
-                tb_parser_free(&a.parser);
-                tb_parser_init(&a.parser, on_packet, &a);
+                /* PWE: pairing only over the cable, and loopback is not the cable. */
+                char ifname[IFNAMSIZ] = "";
+                int direct = tb_net_client_is_direct_link(c, ifname, sizeof(ifname)) &&
+                             strncmp(ifname, "lo", 2) != 0;
+#if TB_RECEIVER_TEST_HOOKS
+                if (getenv("TB_RECEIVER_TEST_LOOPBACK_IS_CABLE") && strncmp(ifname, "lo", 2) == 0) direct = 1;
+#endif
+                struct tb_conn_config conn_cfg = {
+                    a.have_keys ? &a.identity : NULL, &a.store, &a.gate, direct, a.allow_plaintext
+                };
+                tb_conn_init(&a.conn, c, &conn_cfg, on_packet, tb_pwe_on_conn_event, &a);
+                a.session_plaintext = 0;
+                a.pwe_test_frames_at_connect = a.frames;
+                fprintf(stderr, "[main] client connected (%s%s)\n", ifname[0] ? ifname : "?", direct ? ", cable" : "");
                 tb_receiver_refresh_input_capture(&a);
-                send_receiver_info(&a);
+                /* The display profile goes out once the connection is secure (or
+                 * accepted unencrypted): tb_pwe_on_conn_event, TB_CONN_EV_READY. */
             }
         } else {
+            tb_conn_tick(&a.conn);   /* PWE: an older sender that waits for the profile */
             int drain_result = drain_socket(&a);
             if (drain_result < 0) {
                 close_client(&a);
@@ -2223,6 +2459,8 @@ int main(int argc, char **argv) {
                 } else {
                     const uint64_t watchdog_now_ms = now_ms();
                     uint64_t idle_ms = 0;
+                    /* PWE: someone is typing the code shown (it lives 60 s). */
+                    if (a.gate.code[0] && tb_conn_is_pairing(&a.conn)) a.last_recv_ms = watchdog_now_ms;
                     enum tb_idle_watchdog_result watchdog_result =
                         tb_idle_watchdog_check(watchdog_now_ms,
                                                &a.last_recv_ms,
@@ -2251,6 +2489,9 @@ int main(int argc, char **argv) {
         if (t - a.last_permissions_poll_ms >= 250) {
             a.last_permissions_poll_ms = t;
             tb_receiver_poll_permissions(&a);
+            /* PWE: expire the pairing code; end short messages. */
+            (void)tb_conn_gate_tick(&a.gate, t);
+            tb_pwe_refresh_notice(&a, t);
         }
 
         /* Cheap enough to poll: two private-framework getters, twice a second. */
@@ -2362,11 +2603,15 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (a.client_fd >= 0) close(a.client_fd);
+    if (a.client_fd >= 0) close_client(&a);
+#if TB_RECEIVER_TEST_HOOKS
+    if (getenv("TB_RECEIVER_TEST_KEYCHAIN_SERVICE") && getenv("TB_RECEIVER_TEST_CLEAN_ON_EXIT")) {
+        (void)pwe_keystore_delete_everything(&a.keystore);
+    }
+#endif
     tb_receiver_stop_input_tap(&a);
     if (a.server_fd >= 0) close(a.server_fd);
     bonjour_deinit(&a);
-    tb_parser_free(&a.parser);
     tb_dec_destroy(a.dec);
     tb_audio_close_for_idle(&a);
     tb_disp_destroy(a.disp);

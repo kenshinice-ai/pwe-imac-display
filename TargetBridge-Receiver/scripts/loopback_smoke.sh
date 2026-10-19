@@ -55,13 +55,20 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 phase "Build receiver"
-if ! make -C "$SRC" >/dev/null; then
+# PWE: TEST_HOOKS=1 so the receiver keeps its pairing key under a throwaway
+# keychain service, deleted when it exits: a rebuilt ad-hoc binary would
+# otherwise stop at the keychain's access prompt for the previous build's item.
+SMOKE_KEYCHAIN="com.pwegroup.pweimacdisplay.test.smoke.$$"
+make -C "$SRC" clean >/dev/null   # the hook switch is a compile flag
+if ! make -C "$SRC" TEST_HOOKS=1 >/dev/null; then
     print "receiver build failed"; exit 1
 fi
 pass "build"
 
 phase "Launch receiver (windowed, log -> $LOG)"
-TB_LANG=en TB_RECEIVER_NO_BONJOUR=1 TB_RECEIVER_TEST_PORT=$PORT "$SRC/tbreceiver" --windowed 2>"$LOG" &
+TB_LANG=en TB_RECEIVER_NO_BONJOUR=1 TB_RECEIVER_TEST_PORT=$PORT \
+    TB_RECEIVER_TEST_KEYCHAIN_SERVICE="$SMOKE_KEYCHAIN" TB_RECEIVER_TEST_CLEAN_ON_EXIT=1 \
+    "$SRC/tbreceiver" --windowed 2>"$LOG" &
 RECEIVER_PID=$!
 sleep 2
 if ! kill -0 "$RECEIVER_PID" 2>/dev/null; then
@@ -100,7 +107,9 @@ relaunch() {
     [[ -n "$RECEIVER_PID" ]] && kill "$RECEIVER_PID" 2>/dev/null
     wait "$RECEIVER_PID" 2>/dev/null
     LOG="$(mktemp -t tb_smoke_receiver.err)"
-    env TB_LANG=en TB_RECEIVER_NO_BONJOUR=1 TB_RECEIVER_TEST_PORT=$PORT TB_RECEIVER_TRACE=1 "$@" "$SRC/tbreceiver" --windowed 2>"$LOG" &
+    env TB_LANG=en TB_RECEIVER_NO_BONJOUR=1 TB_RECEIVER_TEST_PORT=$PORT TB_RECEIVER_TRACE=1 \
+        TB_RECEIVER_TEST_KEYCHAIN_SERVICE="$SMOKE_KEYCHAIN" TB_RECEIVER_TEST_CLEAN_ON_EXIT=1 \
+        "$@" "$SRC/tbreceiver" --windowed 2>"$LOG" &
     RECEIVER_PID=$!
     sleep 2
 }

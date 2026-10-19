@@ -205,5 +205,20 @@
   "sender.input_bindings.add": "Add",
   "sender.input_bindings.empty": "No shortcuts yet. Add one to map a shortcut pressed on the receiver to an action on this Mac.",
   "sender.input_bindings.details": "Available when Receiver is Master. Trigger is pressed on the receiver; Action runs on this Mac. The trigger cannot be a macOS-reserved shortcut, such as Ctrl+Left for Spaces: use Ctrl+Option+Left instead. The action may use reserved shortcuts, including Ctrl+Left to switch this Mac's Space.",
-  "sender.input_bindings.record": "Press keys..."
+  "sender.input_bindings.record": "Press keys...",
+  "receiver.pairing.code": "Pairing code %{code}",
+  "receiver.pairing.enter_on_mac": "Enter these 6 digits on your Mac",
+  "receiver.pairing.not_you": "Not you? Just unplug the cable.",
+  "receiver.pairing.paired": "Paired with “%{name}”",
+  "receiver.pairing.locked": "Too many attempts. Try again in a minute.",
+  "receiver.pairing.refused_unencrypted": "Refused an unpaired computer using the old, unencrypted connection.",
+  "receiver.pairing.unencrypted": "Not encrypted: picture and sound only.",
+  "receiver.pairing.unencrypted_hint": "Turn off unencrypted connections in the app menu.",
+  "receiver.pairing.keychain": "Encrypted connections are unavailable: the keychain can’t be read.",
+  "receiver.pairing.forgot_all": "All paired Macs were forgotten.",
+  "receiver.menu.allow_unencrypted": "Allow Unencrypted Connections",
+  "receiver.menu.forget_all": "Forget All Paired Macs…",
+  "receiver.menu.forget_all_confirm": "Forget all paired Macs? Each one will need its pairing code again.",
+  "receiver.menu.forget": "Forget",
+  "receiver.menu.cancel": "Cancel"
 }

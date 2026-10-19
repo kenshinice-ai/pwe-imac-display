@@ -550,6 +550,29 @@ static void test_conn_layer(void) {
     tb_conn_close(&c, 0);
     close(sv[1]);
 
+    /* A silent older sender gets the unencrypted session after a while, if allowed. */
+    socketpair(AF_UNIX, SOCK_STREAM, 0, sv);
+    memset(&seen, 0, sizeof(seen));
+    tb_conn_init(&c, sv[0], &cfg, seen_packet, seen_event, &seen);
+    tb_conn_tick(&c);
+    CHECK(!(seen.events & TB_CONN_EV_READY), "silent sender: nothing at once");
+    c.opened_ms -= TB_CONN_SILENT_SENDER_MS + 1;
+    tb_conn_tick(&c);
+    CHECK((seen.events & TB_CONN_EV_READY) && (seen.events & TB_CONN_EV_PLAINTEXT) && c.mode == TB_CONN_PLAINTEXT,
+          "silent sender: unencrypted session after the wait");
+    tb_conn_close(&c, 0);
+    close(sv[1]);
+    socketpair(AF_UNIX, SOCK_STREAM, 0, sv);
+    memset(&seen, 0, sizeof(seen));
+    cfg.allow_plaintext = 0;
+    tb_conn_init(&c, sv[0], &cfg, seen_packet, seen_event, &seen);
+    c.opened_ms -= TB_CONN_SILENT_SENDER_MS + 1;
+    tb_conn_tick(&c);
+    CHECK(seen.events == 0 && c.mode == TB_CONN_UNDECIDED, "silent sender, protected mode: still waiting");
+    tb_conn_close(&c, 0);
+    close(sv[1]);
+    cfg.allow_plaintext = 1;
+
     /* Oversized length prefix. */
     socketpair(AF_UNIX, SOCK_STREAM, 0, sv);
     memset(&seen, 0, sizeof(seen));

@@ -205,5 +205,20 @@
   "sender.input_bindings.add": "Ajouter",
   "sender.input_bindings.empty": "Aucun raccourci pour le moment. Ajoutez-en un pour associer un raccourci saisi sur le receiver à une action sur ce Mac.",
   "sender.input_bindings.details": "Disponible lorsque le receiver est Master. Le déclencheur est pressé sur le receiver ; l’action s’exécute sur ce Mac. Le déclencheur ne peut pas être un raccourci réservé à macOS, tel que Ctrl+Gauche pour les Espaces : utilisez plutôt Ctrl+Option+Gauche. L’action peut utiliser des raccourcis réservés, notamment Ctrl+Gauche pour changer d’Espace sur ce Mac.",
-  "sender.input_bindings.record": "Appuyez sur les touches..."
+  "sender.input_bindings.record": "Appuyez sur les touches...",
+  "receiver.pairing.code": "Code de jumelage %{code}",
+  "receiver.pairing.enter_on_mac": "Saisissez ces 6 chiffres sur votre Mac",
+  "receiver.pairing.not_you": "Ce n’est pas vous ? Débranchez simplement le câble.",
+  "receiver.pairing.paired": "Jumelé avec « %{name} »",
+  "receiver.pairing.locked": "Trop de tentatives. Réessayez dans une minute.",
+  "receiver.pairing.refused_unencrypted": "Un ordinateur non jumelé utilisant l’ancienne connexion non chiffrée a été refusé.",
+  "receiver.pairing.unencrypted": "Non chiffré : image et son uniquement.",
+  "receiver.pairing.unencrypted_hint": "Désactivez les connexions non chiffrées dans le menu de l’app.",
+  "receiver.pairing.keychain": "Connexions chiffrées indisponibles : le trousseau est illisible.",
+  "receiver.pairing.forgot_all": "Tous les Mac jumelés ont été oubliés.",
+  "receiver.menu.allow_unencrypted": "Autoriser les connexions non chiffrées",
+  "receiver.menu.forget_all": "Oublier tous les Mac jumelés…",
+  "receiver.menu.forget_all_confirm": "Oublier tous les Mac jumelés ? Chacun devra de nouveau saisir son code.",
+  "receiver.menu.forget": "Oublier",
+  "receiver.menu.cancel": "Annuler"
 }

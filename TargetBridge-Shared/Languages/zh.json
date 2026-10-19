@@ -205,5 +205,20 @@
   "sender.input_bindings.add": "添加",
   "sender.input_bindings.empty": "还没有快捷键。添加后，在接收端按下的组合键会变成这台 Mac 上的操作。",
   "sender.input_bindings.details": "仅在“由接收端控制”时可用。触发键在接收端上按下，操作在这台 Mac 上执行。触发键不能是 macOS 保留的快捷键，比如切换空间用的 Ctrl+左箭头，请改用 Ctrl+Option+左箭头。操作可以使用保留快捷键，比如用 Ctrl+左箭头切换这台 Mac 的空间。",
-  "sender.input_bindings.record": "请按下快捷键…"
+  "sender.input_bindings.record": "请按下快捷键…",
+  "receiver.pairing.code": "配对码 %{code}",
+  "receiver.pairing.enter_on_mac": "在 Mac 上输入这 6 位数字",
+  "receiver.pairing.not_you": "不是你在配对？拔掉线即可。",
+  "receiver.pairing.paired": "已与“%{name}”配对",
+  "receiver.pairing.locked": "尝试次数太多，请 1 分钟后再试。",
+  "receiver.pairing.refused_unencrypted": "已拒绝一台未配对的电脑：它用的是不加密的旧连接方式。",
+  "receiver.pairing.unencrypted": "未加密：只传画面和声音。",
+  "receiver.pairing.unencrypted_hint": "可在应用菜单里关闭不加密连接。",
+  "receiver.pairing.keychain": "无法加密连接：读不到钥匙串。",
+  "receiver.pairing.forgot_all": "已忘记所有已配对的 Mac。",
+  "receiver.menu.allow_unencrypted": "允许不加密连接",
+  "receiver.menu.forget_all": "忘记所有已配对的 Mac…",
+  "receiver.menu.forget_all_confirm": "忘记所有已配对的 Mac？每台都需要重新输入配对码。",
+  "receiver.menu.forget": "忘记",
+  "receiver.menu.cancel": "取消"
 }

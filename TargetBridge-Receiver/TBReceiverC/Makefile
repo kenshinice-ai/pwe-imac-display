@@ -2,7 +2,7 @@
 #
 # Prerequisites on the iMac (Intel) running OCLP macOS 14:
 #   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-#   brew install ffmpeg sdl2 pkgconf
+#   brew install ffmpeg sdl2 pkgconf libsodium   (libsodium: PWE pairing and encryption)
 #
 # Build:
 #   make
@@ -45,7 +45,11 @@ SODIUM_CFLAGS = $(shell $(PKG) --cflags libsodium)
 SODIUM_LIBS   = $(shell $(PKG) --libs libsodium)
 CFLAGS   += -I$(SEC_DIR) $(SODIUM_CFLAGS)
 LDFLAGS  += $(SODIUM_LIBS) -framework Security
-SEC_OBJ  = src/tb_conn.o src/pwe_secure.o src/pwe_keystore.o
+SEC_OBJ  = src/tb_conn.o src/pwe_secure.o src/pwe_keystore.o src/tb_pairing_menu.o
+# 1 = test hooks (code file, loopback counts as the cable, test keychain
+# service); never in a release build.
+TEST_HOOKS ?= 0
+CFLAGS   += -DTB_RECEIVER_TEST_HOOKS=$(TEST_HOOKS)
 # ---- end PWE ---------------------------------------------------------------
 
 UNAME_S  := $(shell uname -s)

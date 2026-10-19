@@ -972,7 +972,8 @@ int pwe_sec_plaintext_allowed(uint8_t type, int to_receiver) {
         case 0x10:   /* hello */
         case 0x12:   /* create session ack */
         case 0x20: case 0x21: case 0x22: case 0x23:   /* picture and sound */
-        case 0x30: case 0x31: case 0x32:              /* heartbeat, teardown, cursor */
+        case 0x30: case 0x31: case 0x32:              /* heartbeat, teardown, pointer position */
+        case 0x39:                                    /* pointer picture */
         case 0x35: case 0x37: case 0x38:              /* brightness, volume, display tweaks */
         case 0x40:                                    /* link test */
             return 1;
