@@ -3,7 +3,7 @@
  * loopback tests of pairing and encrypted sessions before main.c uses them.
  *
  *   secure_receiver --port 54399 [--service <keychain service>] [--code-file f]
- *                   [--plaintext-off] [--not-direct] [--connections N]
+ *                   [--plaintext-off] [--not-direct] [--connections N] [--no-profile]
  *
  * Prints one line per event ("CODE 482913", "READY secure=1", ...) and one
  * "SESSION ..." line per connection. Replies like a receiver would: a display
@@ -56,6 +56,7 @@ static uint64_t mono_ms(void) {
 struct session {
     struct tb_conn conn;
     const char *code_file;
+    int no_profile;
     int packets, by_type[256], ready, secure, closing;
     size_t bytes;
 };
@@ -98,6 +99,7 @@ static void on_event(struct tb_conn *c, int ev, void *ud) {
         s->ready = 1;
         s->secure = tb_conn_is_secure(c);
         printf("READY secure=%d\n", s->secure);
+        if (s->no_profile) { fflush(stdout); return; }
         char profile[160];
         int n = snprintf(profile, sizeof(profile),
                          "{\"name\":\"Loopback iMac\",\"width\":5120,\"height\":2880,\"secure\":%s}",
@@ -108,7 +110,7 @@ static void on_event(struct tb_conn *c, int ev, void *ud) {
 }
 
 int main(int argc, char **argv) {
-    int port = 54399, connections = 1, plaintext = 1, direct = 1;
+    int port = 54399, connections = 1, plaintext = 1, direct = 1, no_profile = 0;
     const char *service = NULL, *code_file = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--port") && i + 1 < argc) port = atoi(argv[++i]);
@@ -117,6 +119,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--connections") && i + 1 < argc) connections = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--plaintext-off")) plaintext = 0;
         else if (!strcmp(argv[i], "--not-direct")) direct = 0;
+        else if (!strcmp(argv[i], "--no-profile")) no_profile = 1;
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     if (pwe_sec_global_init() != 0) return 1;
@@ -154,6 +157,7 @@ int main(int argc, char **argv) {
         fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
         struct session *s = calloc(1, sizeof(*s));
         s->code_file = code_file;
+        s->no_profile = no_profile;
         struct tb_conn_config cfg = { &idn, &store, &gate, direct, plaintext };
         tb_conn_init(&s->conn, fd, &cfg, on_packet, on_event, s);
         uint8_t *buf = malloc(1 << 20);
@@ -170,9 +174,11 @@ int main(int argc, char **argv) {
                 break;
             }
         }
-        printf("SESSION secure=%d packets=%d bytes=%zu hello=%d frames=%d clipboard=%d input=%d mode=%d test=%d\n",
+        printf("SESSION secure=%d packets=%d bytes=%zu hello=%d frames=%d clipboard=%d input=%d mode=%d test=%d "
+               "language=%d brightness=%d volume=%d heartbeat=%d teardown=%d\n",
                s->secure, s->packets, s->bytes, s->by_type[0x10], s->by_type[0x21], s->by_type[0x36],
-               s->by_type[0x33], s->by_type[0x34], s->by_type[0x40]);
+               s->by_type[0x33], s->by_type[0x34], s->by_type[0x40], s->by_type[0x13], s->by_type[0x35],
+               s->by_type[0x37], s->by_type[0x30], s->by_type[0x31]);
         fflush(stdout);
         tb_conn_close(&s->conn, mono_ms());
         free(buf);

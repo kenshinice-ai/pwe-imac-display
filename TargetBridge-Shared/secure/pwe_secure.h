@@ -20,7 +20,9 @@
  *   R→S 0x58 KK_2          Noise <- e, ee, se          → both sides SECURE
  *  not paired yet:
  *   S→R 0x52 PAIR_REQUEST                              → receiver shows a code
- *   R→S 0x53 PAIR_READY    BE16 seconds until the code expires
+ *   R→S 0x53 PAIR_READY    BE16 seconds until the code expires, u8 flags
+ *                          (bit 0: the code was made just now, so a code
+ *                          typed earlier is stale and is not sent)
  *   S→R 0x54 PAIR_A        Ya
  *   R→S 0x55 PAIR_B        Yb, sealed(receiver static key, receiver name)
  *   S→R 0x56 PAIR_CONFIRM  sealed(sender static key, sender name)
@@ -165,9 +167,16 @@ struct pwe_sec_out {
 
 /* Initiator: send HELLO. expected_id (may be NULL) is the receiver id stored
  * for the receiver being dialled; a different id raises IDENTITY_CHANGED.
- * code (may be NULL) is a code the user already typed: pair with it at once. */
+ * code (may be NULL) is a code the user already typed: pair with it at once.
+ * An empty code asks to pair again even when both sides have keys (the user
+ * is then asked for the code the receiver shows). */
 int  pwe_sec_start(struct pwe_sec *sec, const uint8_t *expected_id, const char *code,
                    struct pwe_sec_out *out, uint64_t now_ms);
+
+/* Initiator, before start: never pair on this connection. If the receiver does
+ * not already know this sender, close instead of asking it to show a code
+ * (background connections, e.g. pushing the UI language to an idle receiver). */
+void pwe_sec_set_resume_only(struct pwe_sec *sec);
 
 /* Initiator: the user typed the code (after NEED_CODE) or cancelled (code NULL). */
 int  pwe_sec_submit_code(struct pwe_sec *sec, const char *code, struct pwe_sec_out *out);
@@ -202,7 +211,7 @@ int  pwe_sec_local_error(const struct pwe_sec *sec);            /* why this side
  * *inner_type is set and the inner payload is (*inner)[0 .. *inner_len),
  * inside payload, followed by at least PWE_SEC_TAG_BYTES spare bytes. Any
  * failure is final: close the connection. */
-#define PWE_SEC_SEAL_OVERHEAD (5 + 1 + PWE_SEC_TAG_BYTES)
+#define PWE_SEC_SEAL_OVERHEAD 22   /* 5 header + 1 inner type + 16 tag; a literal so Swift imports it */
 int  pwe_sec_seal(struct pwe_sec *sec, uint8_t inner_type, const uint8_t *inner, size_t inner_len,
                   uint8_t *out, size_t out_cap, size_t *out_len);
 int  pwe_sec_open(struct pwe_sec *sec, uint8_t *payload, size_t len,

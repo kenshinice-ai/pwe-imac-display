@@ -47,9 +47,9 @@ if ./secure_peer --port "$PORT" --service "$SSVC" --frames 10 --expect-no-code >
   ok "reconnect: encrypted with the stored keys, no code ($(grep -o 'after [0-9]* ms' "$WORK/peer2.log"))"
 else bad "reconnect"; cat "$WORK/peer2.log"; fi
 
-# 3. Wrong code (forces pairing even though paired).
-rm -f "$CODE"
-if ./secure_peer --port "$PORT" --service "$SSVC" --code 000001 >"$WORK/peer3.log" 2>&1; then
+# 3. Wrong code: pair again on request (empty --code) and type a wrong one.
+print 000001 >"$WORK/wrong"
+if ./secure_peer --port "$PORT" --service "$SSVC" --code "" --code-file "$WORK/wrong" >"$WORK/peer3.log" 2>&1; then
   bad "a wrong code was accepted"
 else
   grep -q "local 3" "$WORK/peer3.log" && ok "wrong code refused" || { bad "wrong code: unexpected failure"; cat "$WORK/peer3.log"; }

@@ -306,6 +306,16 @@ static void test_pair_then_resume(void) {
     CHECK(pwe_sec_open(r.sec, pkt + 5, n - 5, &type, &inner, &inner_len) != 0, "one flipped bit rejected");
     close_pair(&s, &r, now);
 
+    /* An empty code pairs again although both sides have keys. */
+    open_pair(&f, &s, &r, 1);
+    pwe_sec_start(s.sec, NULL, "", &s.out, now);
+    pump(&s, &r, now);
+    CHECK((s.events & PWE_SEC_EV_NEED_CODE) && (r.events & PWE_SEC_EV_SHOW_CODE), "re-pair on request: code shown");
+    pwe_sec_submit_code(s.sec, "482913", &s.out);
+    pump(&s, &r, now);
+    CHECK(pwe_sec_is_secure(s.sec) && f.mac_store.n == 1 && f.imac_store.n == 1, "re-pair: secure, records replaced");
+    close_pair(&s, &r, now);
+
     /* Resume over a non-direct link is fine; pairing over it is not (next test). */
     open_pair(&f, &s, &r, 0);
     pwe_sec_start(s.sec, NULL, NULL, &s.out, now);
@@ -396,6 +406,14 @@ static void test_wrong_codes_and_lock(void) {
     close_pair(&s, &r, now);
     CHECK(f.gate.failures == 1 && strcmp(f.gate.code, before) != 0, "hang-up after a guess counts");
 
+    /* A code typed against an expired one is not sent: the iMac shows a fresh code. */
+    open_pair(&f, &s, &r, 1);
+    pwe_sec_start(s.sec, NULL, "123456", &s.out, now + 10 * PWE_SEC_CODE_LIFETIME_MS);
+    pump(&s, &r, now + 10 * PWE_SEC_CODE_LIFETIME_MS);
+    CHECK((s.events & PWE_SEC_EV_NEED_CODE) && f.gate.failures == 1, "stale typed code: asks again, no failure counted");
+    close_pair(&s, &r, now);
+    now += 10 * PWE_SEC_CODE_LIFETIME_MS;
+
     /* Expiry. */
     open_pair(&f, &s, &r, 1);
     pwe_sec_start(s.sec, NULL, NULL, &s.out, now);
@@ -426,6 +444,15 @@ static void test_refusals(void) {
     CHECK(pwe_sec_peer_error(s.sec) == PWE_SEC_ERR_STORE, "unreadable keychain is reported, not skipped");
     close_pair(&s, &r, 0);
     f.imac_store.fail_reads = 0;
+
+    /* A background connection never makes the iMac show a code. */
+    open_pair(&f, &s, &r, 1);
+    pwe_sec_set_resume_only(s.sec);
+    pwe_sec_start(s.sec, NULL, NULL, &s.out, 0);
+    pump(&s, &r, 0);
+    CHECK((s.events & PWE_SEC_EV_CLOSE) && !(r.events & PWE_SEC_EV_SHOW_CODE) && f.gate.code[0] == '\0',
+          "resume-only: unpaired receiver shows no code");
+    close_pair(&s, &r, 0);
 
     /* Out-of-order handshake message. */
     open_pair(&f, &s, &r, 1);
