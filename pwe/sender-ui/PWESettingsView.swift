@@ -250,7 +250,10 @@ struct PWEInputSettings: View {
                 }
                 .pickerStyle(.radioGroup)
             } footer: {
-                footnote(strings.inputHint)
+                VStack(alignment: .leading, spacing: 4) {
+                    footnote(strings.inputHint)
+                    footnote(strings.inputNeedsEncryption)
+                }
             }
             if model.inputRole != .off {
                 Section(strings.permissionsNeeded) {
@@ -314,9 +317,32 @@ struct PWEAdvancedSettings: View {
     var openConsole: () -> Void = {}
 
     @State private var checks: [PWESenderModel.Check] = []
+    @State private var forgetting: PWEPairedReceiver?
 
     var body: some View {
         Form {
+            Section {
+                Toggle(isOn: $model.allowUnencrypted) {
+                    Text(strings.allowUnencrypted)
+                    Text(strings.allowUnencryptedHint)
+                }
+            } header: {
+                Text(strings.securitySection)
+            }
+            Section(strings.pairedIMacs) {
+                if model.pairedIMacs.isEmpty {
+                    Text(strings.noPairedIMacs).foregroundStyle(.secondary)
+                } else {
+                    ForEach(model.pairedIMacs) { paired in
+                        LabeledContent {
+                            Button(strings.forget) { forgetting = paired }
+                        } label: {
+                            Label(paired.name, systemImage: "desktopcomputer")
+                            Text(strings.pairedOn(paired.pairedAt))
+                        }
+                    }
+                }
+            }
             Section {
                 Toggle(isOn: $model.networkLinkEnabled) {
                     HStack(spacing: 6) {
@@ -404,6 +430,17 @@ struct PWEAdvancedSettings: View {
             }
         }
         .formStyle(.grouped)
-        .frame(height: 620)
+        .frame(height: 660)
+        .onAppear { model.refreshPairedIMacs() }
+        .alert(forgetting.map { strings.forgetConfirm($0.name) } ?? "", isPresented: Binding(
+            get: { forgetting != nil },
+            set: { if !$0 { forgetting = nil } }
+        )) {
+            Button(strings.forget, role: .destructive) {
+                if let forgetting { model.forget(forgetting) }
+                forgetting = nil
+            }
+            Button(strings.cancel, role: .cancel) { forgetting = nil }
+        }
     }
 }

@@ -30,6 +30,20 @@ final class PWEStatusMenu: NSObject {
             .removeDuplicates()
             .sink { [weak self] phase in self?.updateButton(phase) }
             .store(in: &cancellables)
+        // A code to type or a question to answer needs the window, even when the
+        // person only ever uses the menu bar: bring it up once per question.
+        model.$phase
+            .map { phase -> String? in
+                guard case .security(_, let security) = phase else { return nil }
+                switch security {
+                case .needsCode, .wrongCode, .codeExpired, .checkingCode: return "code"
+                default: return "question"
+                }
+            }
+            .removeDuplicates()
+            .dropFirst()
+            .sink { asks in if asks != nil { PWEWindows.shared.showMain() } }
+            .store(in: &cancellables)
     }
 
     private var strings: PWEStrings { PWEStrings(language: model.service?.language ?? .english) }
@@ -76,6 +90,12 @@ final class PWEStatusMenu: NSObject {
         let strings = strings
 
         menu.addItem(disabled(strings.status(model.phase)))
+        if model.isUnencrypted {
+            let warning = disabled(strings.notEncrypted)
+            warning.image = NSImage(systemSymbolName: "lock.open.fill", accessibilityDescription: nil)
+            menu.addItem(warning)
+            menu.addItem(action(strings.turnOffUnencrypted) { [weak model] in model?.turnOffUnencrypted() })
+        }
 
         if model.isShowing {
             menu.addItem(.separator())

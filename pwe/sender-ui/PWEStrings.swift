@@ -173,7 +173,108 @@ struct PWEStrings {
         case .connected(let receiver): return connectedTitle(receiver?.name)
         case .interrupted(_, let reason, let retrying):
             return retrying ? interruptedTitle(reason) + " · " + t("trying again", "正在重试") : interruptedTitle(reason)
+        case .security(_, let security):
+            switch security {
+            case .needsCode, .wrongCode, .codeExpired: return waitingForCode
+            case .checkingCode: return codeChecking
+            default: return needsAnswer
+            }
         }
+    }
+
+    // Pairing and encryption. Text from docs/pwe/DESIGN-pairing-2026-10-19.md §3.2
+    // where it has one; the lines marked DRAFT wait for Lee (listed in the hand-over note).
+    var codeTitle: String { t("Enter the code shown on your iMac", "输入 iMac 上的配对码") }
+    var codeBody: String {
+        t("Your iMac is showing a 6-digit code. Enter it once, and this Mac will connect automatically from now on.",
+          "iMac 屏幕上显示了 6 位数字。输入一次，以后插线就会自动连接。")
+    }
+    var codeIdentityChanged: String {
+        t("This iMac’s identity has changed — it may have been reinstalled. Enter its pairing code again.",
+          "这台 iMac 的身份变了，可能重装过。请重新输入配对码。")
+    }
+    var codeWrong: String {
+        t("That code didn’t match. Your iMac is showing a new one.", "配对码不对。iMac 上已换了新码，请重新输入。")
+    }
+    /// DRAFT
+    var codeExpired: String {
+        t("That code expired. Your iMac will show a new one — enter it to pair.", "配对码已过期。iMac 会显示新码，请重新输入。")
+    }
+    var codeLocked: String { t("Too many attempts. Try again in a minute.", "尝试次数太多，请 1 分钟后再试。") }
+    /// DRAFT
+    var codeChecking: String { t("Checking the code…", "正在核对配对码…") }
+    var codePlaceholder: String { t("6 digits", "6 位数字") }
+    var pair: String { t("Pair", "配对") }
+    var legacyTitle: String { t("Connect without encryption?", "不加密连接？") }   // DRAFT (title only)
+    var legacyOriginal: String {
+        t("This iMac runs the original TargetBridge receiver. The connection won’t be encrypted or verified. Connect anyway?",
+          "这台 iMac 运行的是 TargetBridge 原版接收端。连接不会加密，也无法确认对方身份。仍然连接？")
+    }
+    var connectAnyway: String { t("Connect Anyway", "仍然连接") }
+    /// §3.4 gives the Chinese only; the English is a DRAFT.
+    var legacyOlderPWE: String { t("Update the receiver on your iMac to 1.1", "请把 iMac 上的接收端更新到 1.1") }
+    var connectAnywayUnencrypted: String { t("Connect Anyway (Unencrypted)", "仍然连接（不加密）") }
+    /// DRAFT
+    var legacyPreviouslyPaired: String {
+        t("This iMac was paired for encrypted connections but now offers only an unencrypted one. Update the receiver on your iMac to 1.1 first.",
+          "这台 iMac 配对过加密连接，现在却只提供不加密连接。请先把 iMac 上的接收端更新到 1.1。")
+    }
+    var forgetThisIMac: String { t("Forget This iMac", "忘记这台 iMac") }   // DRAFT
+    var refusedTitle: String { t("Could not connect securely", "无法安全连接") }   // DRAFT
+    /// DRAFT (protocolError has no text in the design or the engine's note)
+    func refused(_ reason: PWESecurityRefusal) -> String {
+        switch reason {
+        case .notOnCable:
+            return t("Pairing needs the Thunderbolt cable the first time. Plug it in and try again.",
+                     "第一次配对需要用雷雳线连接。插上线再试。")
+        case .receiverKeychain:
+            return t("Your iMac can’t read its keychain (it may be locked), so the connection can’t be encrypted. Log in on the iMac and try again.",
+                     "iMac 读不到它的钥匙串（可能已锁定），无法加密连接。请在 iMac 上登录后再试。")
+        case .senderKeychain:
+            return t("This Mac can’t read its keychain, so the connection can’t be encrypted.", "这台 Mac 读不到钥匙串，无法加密连接。")
+        case .version:
+            return t("The receiver on your iMac is a different version. Update both to the same version.",
+                     "iMac 上的接收端版本不同。请把两台都更新到同一版本。")
+        case .protocolError:
+            return t("The connection to your iMac failed a security check. Try again.", "与 iMac 的连接没通过安全检查。请重试。")
+        case .cancelled:
+            return t("Pairing was cancelled.", "配对已取消。")
+        case .unencryptedNotAllowed:
+            return t("This iMac can only connect without encryption, and unencrypted connections are turned off.",
+                     "这台 iMac 只能不加密连接，而你已关闭不加密连接。")
+        }
+    }
+    /// DRAFT
+    var unencryptedBanner: String {
+        t("Not encrypted: picture and sound only. Keyboard, mouse and clipboard are off.",
+          "未加密：只传画面和声音，键鼠和剪贴板已关闭。")
+    }
+    /// DRAFT
+    var turnOffUnencrypted: String { t("Turn Off Unencrypted Connections", "关闭不加密连接") }
+    var notEncrypted: String { t("Not encrypted", "未加密") }   // DRAFT (menu status)
+    var waitingForCode: String { t("Waiting for the pairing code", "等待输入配对码") }   // DRAFT (menu status)
+    var needsAnswer: String { t("Waiting for your answer in the window", "请在窗口里回答") }   // DRAFT (menu status)
+    // Settings › Advanced › Security
+    var securitySection: String { t("Pairing and Encryption", "配对与加密") }   // DRAFT
+    var allowUnencrypted: String { t("Allow unencrypted connections", "允许不加密的连接") }   // DRAFT
+    var allowUnencryptedHint: String {
+        t("For iMacs that run the original TargetBridge or PWE iMac Display 1.0: picture and sound only, always with a warning.",
+          "用于运行 TargetBridge 原版或 PWE iMac Display 1.0 的 iMac：只传画面和声音，并始终提示未加密。")
+    }   // DRAFT
+    var pairedIMacs: String { t("Paired iMacs", "已配对的 iMac") }
+    var noPairedIMacs: String { t("None yet. An iMac is paired the first time you enter its code.", "还没有。第一次输入 iMac 的配对码时就会配对。") }   // DRAFT
+    func pairedOn(_ date: Date) -> String {
+        let formatted = date.formatted(date: .abbreviated, time: .omitted)
+        return t("Paired \(formatted)", "\(formatted) 配对")
+    }   // DRAFT
+    var forget: String { t("Forget", "忘记") }
+    /// DRAFT
+    func forgetConfirm(_ name: String) -> String {
+        t("Forget “\(name)”? You’ll enter its pairing code again next time.", "忘记“\(name)”？下次连接要重新输入配对码。")
+    }
+    /// DRAFT (D3)
+    var inputNeedsEncryption: String {
+        t("Works only on an encrypted connection.", "只在加密连接中可用。")
     }
 
     // Settings

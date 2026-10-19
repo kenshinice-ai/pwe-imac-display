@@ -49,4 +49,9 @@ final class PWEReceiverRulesTests: XCTestCase {
         XCTAssertEqual(PWEPictureRules.defaultPicture(supportsHEVC: true, panelWidth: nil, engineDefault: .standard1440p),
                        .standard1440p)
     }
+
+    func testPWEOrUpstreamReceiver() {
+        XCTAssertTrue(PWEReceiverNaming.isPWE(receiverName: "PWE iMac Display LL-iMac-2017.local", serviceName: ""))
+        XCTAssertFalse(PWEReceiverNaming.isPWE(receiverName: "TargetBridge Den.local", serviceName: "TargetBridge Den.local"))
+    }
 }

@@ -140,6 +140,23 @@ enum PWESnapshot {
         let imac = PWEReceiver(id: "preview", name: "LL-iMac-2017", detail: "5120 × 2880",
                                supportsHEVC: true, panelWidth: 5120)
         let other = PWEReceiver(id: "preview-2", name: "Studio iMac", detail: "5120 × 2880")
+        let upstream = PWEReceiver(id: "preview-3", name: "Den", detail: "5120 × 2880", runsPWE: false)
+        // Pairing and encryption: (name, phase, the session's security state).
+        let pairing: [(String, PWEPhase, PWESecurityState)] = [
+            ("p01-code", .security(imac, .needsCode(secondsLeft: 60, identityChanged: false)), .none),
+            ("p02-code-identity-changed", .security(imac, .needsCode(secondsLeft: 60, identityChanged: true)), .none),
+            ("p03-checking", .security(imac, .checkingCode), .none),
+            ("p04-wrong-code", .security(imac, .wrongCode), .none),
+            ("p05-code-expired", .security(imac, .codeExpired), .none),
+            ("p06-locked", .security(imac, .locked(seconds: 60)), .none),
+            ("p07-original-receiver", .security(upstream, .legacyReceiver(previouslyPaired: false)), .none),
+            ("p08-pwe-1.0-receiver", .security(imac, .legacyReceiver(previouslyPaired: false)), .none),
+            ("p09-paired-before-now-unencrypted", .security(imac, .legacyReceiver(previouslyPaired: true)), .none),
+            ("p10-not-on-cable", .security(imac, .refused(.notOnCable)), .none),
+            ("p11-unencrypted-turned-off", .security(upstream, .refused(.unencryptedNotAllowed)), .none),
+            ("p12-imac-keychain", .security(imac, .refused(.receiverKeychain)), .none),
+            ("p13-connected-unencrypted", .connected(upstream), .unencrypted),
+        ]
         let phases: [(String, PWEPhase, Bool)] = [
             ("1-permission", .needsPermission, true),
             ("2-searching", .searching, true),
@@ -161,9 +178,18 @@ enum PWESnapshot {
             }
             write(PWEAboutView(updates: UpdateCheck(), strings: strings),
                   to: directory.appendingPathComponent("\(stem)-9-about.png"))
+            for (name, phase, security) in pairing {
+                let view = PWEMainView(model: PWESenderModel(preview: phase, security: security), strings: strings)
+                write(view, to: directory.appendingPathComponent("\(stem)-\(name).png"))
+            }
 
             let connected = PWESenderModel(preview: .connected(imac))
             let sharing = PWESenderModel(preview: .connected(imac), inputRole: .macControlsIMac)
+            let day = Date(timeIntervalSince1970: 1_792_368_000)   // 2026-10-19
+            let paired = PWESenderModel(preview: .connected(imac), paired: [
+                PWEPairedReceiver(id: "a1", name: "LL-iMac-2017", pairedAt: day),
+                PWEPairedReceiver(id: "b2", name: "Studio iMac", pairedAt: day.addingTimeInterval(-86_400 * 3)),
+            ])
             let tabs: [(String, String, AnyView)] = [
                 ("s1-general", strings.general, AnyView(PWEGeneralSettings(model: connected, updates: UpdateCheck(), strings: strings))),
                 ("s2-display", strings.display, AnyView(PWEDisplaySettings(model: connected, strings: strings))),
@@ -171,6 +197,7 @@ enum PWESnapshot {
                 ("s4-keyboard-mouse", strings.keyboardMouse, AnyView(PWEInputSettings(model: connected, strings: strings))),
                 ("s4b-keyboard-mouse-on", strings.keyboardMouse, AnyView(PWEInputSettings(model: sharing, strings: strings))),
                 ("s5-advanced", strings.advancedTab, AnyView(PWEAdvancedSettings(model: connected, strings: strings))),
+                ("s5b-advanced-paired", strings.advancedTab, AnyView(PWEAdvancedSettings(model: paired, strings: strings))),
             ]
             for (name, title, tab) in tabs {
                 write(settingsFrame(title: title, tab), to: directory.appendingPathComponent("\(stem)-\(name).png"))
