@@ -23,4 +23,9 @@ test_input_queue
 test_idle_watchdog
 test_receiver_profile
 test_monitor_shield
+# PWE: secure layer tests and loopback hooks
+test_secure
+bench_secure
+secure_receiver
+secure_peer
 *.dSYM/

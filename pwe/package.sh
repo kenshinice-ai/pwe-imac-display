@@ -85,6 +85,18 @@ VERSION="$(<"$SRC/pwe/VERSION")"
 DMG="$DIST/PWE-iMac-Display-$VERSION.dmg"   # the name the release and the cask use
 python3 -I "$SRC/pwe/rebrand.py" "$SRC" --version "$VERSION" --build "$BUILD"
 
+# ---------------------------------------------------------------- libraries
+
+# Before the sender: it links libsodium from here too (pairing and encryption).
+if [[ "$OWN_DEPS" == 1 ]]; then
+  echo "▸ Using the receiver's libraries as built in $DEPS"
+else
+  echo "▸ Building the receiver's libraries (cached in $DEPS)…"
+  "$SRC/pwe/receiver-deps.sh" "$DEPS"
+fi
+[[ -f "$DEPS/universal/lib/libsodium.a" ]] \
+  || { echo "✗ no $DEPS/universal/lib/libsodium.a: run pwe/receiver-deps.sh $DEPS"; exit 1; }
+
 # ---------------------------------------------------------------- sender
 
 echo "▸ Building the sender (arm64 + x86_64)…"
@@ -95,6 +107,7 @@ echo "▸ Building the sender (arm64 + x86_64)…"
     -scheme TBDisplaySender -configuration Release \
     -derivedDataPath "$WORK/DerivedData" \
     ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
+    PWE_SODIUM_DIR="$DEPS/universal" \
     CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
     ENABLE_DEBUG_DYLIB=NO \
     build >"$WORK/sender-build.log" 2>&1 \
@@ -104,13 +117,6 @@ SENDER="$OUT/$NAME.app"
 ditto "$WORK/DerivedData/Build/Products/Release/$NAME.app" "$SENDER"
 
 # ---------------------------------------------------------------- receiver
-
-if [[ "$OWN_DEPS" == 1 ]]; then
-  echo "▸ Using the receiver's libraries as built in $DEPS"
-else
-  echo "▸ Building the receiver's libraries (cached in $DEPS)…"
-  "$SRC/pwe/receiver-deps.sh" "$DEPS"
-fi
 
 echo "▸ Building the receiver (arm64 + x86_64, macOS 11)…"
 for ARCH in arm64 x86_64; do
@@ -164,6 +170,7 @@ printf 'APPL????' > "$RECEIVER/Contents/PkgInfo"
 # relink it ship with it, and its source goes next to the image.
 FFMPEG_SRC="$(sed -n 's/^FFMPEG=//p' "$SRC/pwe/receiver-deps.sh").tar.xz"
 SDL_SRC="$(sed -n 's/^SDL=//p' "$SRC/pwe/receiver-deps.sh").tar.gz"
+SODIUM_SRC="$(sed -n 's/^SODIUM=//p' "$SRC/pwe/receiver-deps.sh").tar.gz"
 DEPS_SRC="${PWE_DEPS_SRC:-$DEPS/src}"
 LICENSES="$WORK/Licenses"
 mkdir -p "$LICENSES"
@@ -171,6 +178,7 @@ cp "$SRC/LICENSE" "$LICENSES/TargetBridge LICENSE (MIT).txt"
 cp "$SRC/pwe/NOTICE.txt" "$LICENSES/NOTICE.txt"
 tar -xJf "$DEPS_SRC/$FFMPEG_SRC" -O '*/COPYING.LGPLv2.1' > "$LICENSES/FFmpeg COPYING.LGPLv2.1.txt"
 tar -xzf "$DEPS_SRC/$SDL_SRC" -O '*/LICENSE.txt' > "$LICENSES/SDL2 LICENSE (zlib).txt"
+tar -xzf "$DEPS_SRC/$SODIUM_SRC" -O '*/LICENSE' > "$LICENSES/libsodium LICENSE (ISC).txt"
 for ARCH in arm64 x86_64; do
   if [[ -f "$DEPS/$ARCH/ffmpeg-configuration.txt" ]]; then
     # The prefix is the builder's own path; it says nothing about the build.

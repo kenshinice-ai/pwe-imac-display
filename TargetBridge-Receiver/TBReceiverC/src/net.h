@@ -52,4 +52,76 @@ int  tb_net_get_wifi_ip(char *buf, size_t bufsz);
 /* Address classifier exposed for hardware-free unit tests. */
 int  tb_net_is_link_local_ipv4(const char *host);
 
+/* ---- PWE: secure connection (tb_conn.c) ----------------------------------
+ * One client connection: bytes in -> packets -> handshake or decryption ->
+ * the usual packet callback. A connection whose first packet is SEC_HELLO is
+ * encrypted from the handshake on; any other first packet makes it an
+ * unencrypted (compatibility) connection, accepted only when allowed and then
+ * limited to picture, sound, brightness and volume (pwe_sec_plaintext_allowed).
+ *
+ * Until the connection is decided (TB_CONN_SECURE or TB_CONN_PLAINTEXT),
+ * tb_conn_send withholds everything: send the display profile on the
+ * TB_CONN_EV_READY event, not on accept. */
+struct pwe_sec;
+struct pwe_sec_identity;
+struct pwe_sec_store;
+struct pwe_sec_gate;
+
+enum tb_conn_mode {
+    TB_CONN_UNDECIDED = 0,
+    TB_CONN_HANDSHAKE,
+    TB_CONN_SECURE,
+    TB_CONN_PLAINTEXT,
+    TB_CONN_CLOSED
+};
+
+struct tb_conn_config {
+    const struct pwe_sec_identity *identity;
+    const struct pwe_sec_store    *store;
+    struct pwe_sec_gate           *gate;
+    int direct_link;       /* the peer is on the cable: pairing is allowed */
+    int allow_plaintext;   /* compatibility mode: accept unencrypted senders */
+};
+
+/* Events: pwe_sec_event bits (code to show, paired, locked, ...) plus these. */
+#define TB_CONN_EV_READY              (1 << 16)  /* secure or plaintext: start the session */
+#define TB_CONN_EV_PLAINTEXT          (1 << 17)  /* this session is not encrypted: warn */
+#define TB_CONN_EV_PLAINTEXT_REFUSED  (1 << 18)  /* an unencrypted sender was turned away */
+#define TB_CONN_EV_SECURITY_FAILED    (1 << 19)  /* handshake or record failure: closing */
+
+struct tb_conn;
+typedef void (*tb_conn_ev_cb)(struct tb_conn *c, int events, void *ud);
+
+struct tb_conn {
+    int                   fd;
+    enum tb_conn_mode     mode;
+    struct tb_parser      parser;
+    struct pwe_sec       *sec;
+    struct tb_conn_config cfg;
+    tb_pkt_cb             on_packet;
+    tb_conn_ev_cb         on_event;
+    void                 *ud;
+    uint8_t              *tx;
+    size_t                tx_cap;
+    int                   want_close;
+    uint64_t              now_ms;
+    unsigned long         withheld;   /* plaintext packets dropped by policy */
+};
+
+int  tb_conn_init (struct tb_conn *c, int fd, const struct tb_conn_config *cfg,
+                   tb_pkt_cb on_packet, tb_conn_ev_cb on_event, void *ud);
+/* Returns -1 when the connection must be closed. */
+int  tb_conn_feed (struct tb_conn *c, const uint8_t *data, size_t n, uint64_t now_ms);
+/* 0 sent, 1 withheld (not decided yet, or not allowed unencrypted), -1 error. */
+int  tb_conn_send (struct tb_conn *c, uint8_t type, const uint8_t *payload, size_t len);
+/* The same for an already framed packet [BE32 len][type][payload]. */
+int  tb_conn_send_packet(struct tb_conn *c, const uint8_t *pkt, size_t len);
+/* About once a second, connected or not (gate may be shared): expires the code. */
+int  tb_conn_gate_tick(struct pwe_sec_gate *gate, uint64_t now_ms);
+int  tb_conn_is_secure (const struct tb_conn *c);
+int  tb_conn_is_pairing(const struct tb_conn *c);
+/* Closes the socket and wipes the keys; reports a pairing attempt cut short. */
+void tb_conn_close(struct tb_conn *c, uint64_t now_ms);
+/* ---- end PWE ------------------------------------------------------------- */
+
 #endif
