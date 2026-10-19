@@ -16,6 +16,7 @@ What it changes, and what it leaves alone on purpose:
   they are: a PWE sender finds a TargetBridge receiver and the other way round.
 - The About text credits TargetBridge and its authors.
 - Network Link is off by default; the sender's language follows the system.
+- The virtual display is called PWE iMac Display in System Settings › Displays.
 
 Every edit is anchored to text that must be found exactly as often as expected.
 If upstream changes that text, the script stops instead of guessing, and the
@@ -279,6 +280,14 @@ def rebrand_sender(root: Path, version: str, build: str) -> None:
          "        }\n"
          "        NSApp.terminate(nil)\n"
          "    }\n")
+    # The name System Settings › Displays shows for the virtual display. Upstream
+    # writes "TB Extend - iMac" (the iMac's panel always calls itself "iMac").
+    virtual = swift / "ReceiverBackedVirtualDisplaySession.swift"
+    edit(virtual, 'displayNamePrefix: "TB Mirror",', f'displayNamePrefix: "{NAME} (Mirror)",')
+    edit(virtual, 'displayNamePrefix: "TB Extend",', f'displayNamePrefix: "{NAME}",')
+    edit(virtual, 'descriptor.name = "\\(identity.displayNamePrefix) - \\(profile.receiverName)"',
+         "descriptor.name = identity.displayNamePrefix")
+
     pwe_ui = swift / "PWE"
     pwe_ui.mkdir()
     for source in sorted((root / "pwe/sender-ui").glob("*.swift")):
@@ -332,6 +341,9 @@ def leftovers(root: Path) -> list[str]:
     for key, value in zh.items():
         if re.search(r"\b(sender|receiver|master|slave)\b", value.replace(RECEIVER_NAME, ""), re.IGNORECASE):
             found.append(f"zh.json: {key}: English role word in {value!r}")
+    virtual = (root / "TargetBridge-Sender/TBDisplaySender/ReceiverBackedVirtualDisplaySession.swift").read_text(encoding="utf-8")
+    if re.search(r'"TB (Extend|Mirror)', virtual):
+        found.append("ReceiverBackedVirtualDisplaySession.swift: the virtual display is still named TB Extend / TB Mirror")
     automation = (root / "TargetBridge-Sender/TBDisplaySender/TBDisplaySenderAutomation.swift").read_text(encoding="utf-8")
     if '== "targetbridge"' in automation:
         found.append("TBDisplaySenderAutomation.swift: URL scheme check still says targetbridge")
