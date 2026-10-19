@@ -504,7 +504,7 @@ enum TBInputGestureMode: String, CaseIterable, Identifiable {
 private final class TBReceiverPointerSource: @unchecked Sendable {
     private static let minimumInterval: CFTimeInterval = 1.0 / 240.0
 
-    private let connection: NWConnection
+    private let connection: PWESecureLink   // PWE: seals once the session is encrypted
     private let displayID: CGDirectDisplayID
     private let frameWidth: Int
     private let frameHeight: Int
@@ -523,7 +523,7 @@ private final class TBReceiverPointerSource: @unchecked Sendable {
     private var lastSent: TBMonitorCursor?
     private var lastSendTime: CFTimeInterval = 0
 
-    init(connection: NWConnection, displayID: CGDirectDisplayID, frameWidth: Int, frameHeight: Int) {
+    init(connection: PWESecureLink, displayID: CGDirectDisplayID, frameWidth: Int, frameHeight: Int) {
         self.connection = connection
         self.displayID = displayID
         self.frameWidth = frameWidth
@@ -1532,6 +1532,14 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     private var pweAllowUnencrypted = false
     private var pweIdentityChanged = false
     private var pweHelloTimeout: DispatchWorkItem?
+    #if DEBUG
+    /// Tests only: stream this many generated frames through the real encoder
+    /// and the encrypted send path instead of capturing the screen (needs no
+    /// Screen Recording permission and no unlocked screen).
+    var pweTestSyntheticFrames: (count: Int, fps: Int)?
+    private(set) var pweTestFramesSent = 0
+    private(set) var pweTestStreamFinished = false
+    #endif
     private let connectionQueue = DispatchQueue(label: "fd.tbmonitor.sender.connection", qos: .userInteractive)
     private var recvBuffer = Data()
 
@@ -2902,6 +2910,13 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                 self.stop(resetStatusTo: .stopped)
                 return
             }
+            #if DEBUG
+            // PWE: tests only — generated frames instead of the screen (pweTestSyntheticFrames).
+            if let frames = self.pweTestSyntheticFrames {
+                self.pweRunSyntheticStream(profile: profile, frames: frames.count, fps: frames.fps)
+                return
+            }
+            #endif
 
             // A headless Sender may still expose a sleeping physical display.
             // Wake and hold the graphical session before virtual display setup.
@@ -3719,7 +3734,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     }
 
     private func startReceiverDrawnPointer(displayID: CGDirectDisplayID) {
-        guard let connection else { return }
+        guard let connection = pweLink else { return }
         let source = TBReceiverPointerSource(connection: connection, displayID: displayID,
                                              frameWidth: capturePreset.width, frameHeight: capturePreset.height)
         pointerSource = source
@@ -4616,3 +4631,51 @@ extension TBDisplaySenderSession {
         stop(resetStatusTo: nil)
     }
 }
+
+#if DEBUG
+// PWE: tests only. The same pipeline, codec choice, sealing and pointer source as
+// a capture; only the pixels are generated here (a moving gradient, 5K BGRA).
+extension TBDisplaySenderSession {
+    fileprivate func pweRunSyntheticStream(profile: TBMonitorDisplayProfile, frames: Int, fps: Int) {
+        guard let connection = pweLink,
+              let decision = resolvedCodecDecision(for: capturePreset, profile: profile) else {
+            TBLog.connection.error("synthetic stream: no link or codec")
+            return
+        }
+        let preset = capturePreset
+        let pipeline = TBVideoPipeline(
+            preset: preset, codecType: decision.codecType, connection: connection,
+            displayName: "PWE synthetic", displayID: CGMainDisplayID(), usesRawNV12: false,
+            ackAlreadySent: sessionAckSent, onFirstFrame: {}
+        )
+        guard pipeline.start() else {
+            TBLog.connection.error("synthetic stream: encoder did not start")
+            return
+        }
+        self.pipeline = pipeline
+        if profile.cursorImage == true { startReceiverDrawnPointer(displayID: CGMainDisplayID()) }
+        let props: [CFString: Any] = [
+            kIOSurfaceWidth: preset.width, kIOSurfaceHeight: preset.height,
+            kIOSurfaceBytesPerElement: 4, kIOSurfacePixelFormat: kCVPixelFormatType_32BGRA,
+        ]
+        guard let surface = IOSurfaceCreate(props as CFDictionary) else { return }
+        TBLog.connection.info("synthetic stream: \(frames, privacy: .public) frames \(preset.width, privacy: .public)x\(preset.height, privacy: .public) at \(fps, privacy: .public) fps")
+        Task { @MainActor [weak self] in
+            for index in 0..<frames {
+                guard let self, self.pipeline === pipeline else { return }
+                IOSurfaceLock(surface, [], nil)
+                let base = IOSurfaceGetBaseAddress(surface).assumingMemoryBound(to: UInt8.self)
+                let rowBytes = IOSurfaceGetBytesPerRow(surface)
+                for y in stride(from: 0, to: preset.height, by: 1) {
+                    memset(base + y * rowBytes, Int32((y / 8 + index * 6) & 0xff), preset.width * 4)
+                }
+                IOSurfaceUnlock(surface, [], nil)
+                pipeline.encodeDisplaySurface(surface, displayTime: mach_absolute_time())
+                self.pweTestFramesSent = index + 1
+                try? await Task.sleep(nanoseconds: UInt64(1_000_000_000 / max(fps, 1)))
+            }
+            self?.pweTestStreamFinished = true
+        }
+    }
+}
+#endif
