@@ -13,6 +13,9 @@
 #                       the copy fallback and the OpenGL fallback, each in a
 #                       fresh receiver (also skipped without ffmpeg)
 #
+# The receiver runs with TB_RECEIVER_NO_BONJOUR=1 on TB_RECEIVER_TEST_PORT, so a
+# sender running on the same Mac cannot find or redial it and take its single
+# client slot.
 # Needs a GUI session (SDL window) and the receiver build deps
 # (brew install ffmpeg sdl2 pkgconf). Exits non-zero on any failed phase.
 
@@ -22,7 +25,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SRC="$ROOT/TBReceiverC"
 LOG="$(mktemp -t tb_smoke_receiver.err)"
-MOCK="$SRC/tests/mock_sender.py"
+PORT=54399
+MOCK_PY="$SRC/tests/mock_sender.py"
+mock() { python3 "$MOCK_PY" --port "$PORT" "$@"; }
 NO_STREAM=0
 [[ "${1:-}" == "--no-stream" ]] && NO_STREAM=1
 
@@ -56,7 +61,7 @@ fi
 pass "build"
 
 phase "Launch receiver (windowed, log -> $LOG)"
-TB_LANG=en "$SRC/tbreceiver" --windowed 2>"$LOG" &
+TB_LANG=en TB_RECEIVER_NO_BONJOUR=1 TB_RECEIVER_TEST_PORT=$PORT "$SRC/tbreceiver" --windowed 2>"$LOG" &
 RECEIVER_PID=$!
 sleep 2
 if ! kill -0 "$RECEIVER_PID" 2>/dev/null; then
@@ -65,19 +70,19 @@ fi
 pass "receiver running (pid $RECEIVER_PID)"
 
 phase "Phase 1: handshake"
-python3 "$MOCK" --mode handshake --duration 3 || fail "mock handshake exited non-zero"
+mock --mode handshake --duration 3 || fail "mock handshake exited non-zero"
 expect_log "[main] hello from sender" "receiver saw HELLO"
 expect_log "[main] teardown requested by sender" "receiver honored TEARDOWN"
 sleep 1
 
 phase "Phase 2: corrupt length"
-python3 "$MOCK" --mode badlen || fail "mock badlen exited non-zero"
+mock --mode badlen || fail "mock badlen exited non-zero"
 expect_log "bad pkt_len=4294967295" "parser rejected corrupt length"
 expect_log "[main] client disconnected" "receiver dropped the corrupt session"
 sleep 1
 
 phase "Phase 3: silent sender (idle watchdog)"
-python3 "$MOCK" --mode hang --duration 14 || fail "mock hang exited non-zero"
+mock --mode hang --duration 14 || fail "mock hang exited non-zero"
 expect_log "closing stale session" "idle watchdog reaped silent sender"
 sleep 1
 
@@ -85,7 +90,7 @@ phase "Phase 4: H.264 stream"
 if (( NO_STREAM )) || ! command -v ffmpeg >/dev/null; then
     print "skipped (no ffmpeg or --no-stream)"
 else
-    python3 "$MOCK" --mode stream --duration 4 || fail "mock stream exited non-zero"
+    mock --mode stream --duration 4 || fail "mock stream exited non-zero"
     expect_log "param sets changed, opening decoder" "decoder accepted param sets"
     expect_log "[disp] texture " "receiver rendered decoded video"
 fi
@@ -95,7 +100,7 @@ relaunch() {
     [[ -n "$RECEIVER_PID" ]] && kill "$RECEIVER_PID" 2>/dev/null
     wait "$RECEIVER_PID" 2>/dev/null
     LOG="$(mktemp -t tb_smoke_receiver.err)"
-    env TB_LANG=en TB_RECEIVER_TRACE=1 "$@" "$SRC/tbreceiver" --windowed 2>"$LOG" &
+    env TB_LANG=en TB_RECEIVER_NO_BONJOUR=1 TB_RECEIVER_TEST_PORT=$PORT TB_RECEIVER_TRACE=1 "$@" "$SRC/tbreceiver" --windowed 2>"$LOG" &
     RECEIVER_PID=$!
     sleep 2
 }
@@ -104,19 +109,19 @@ if (( ! NO_STREAM )) && command -v ffmpeg >/dev/null; then
     phase "Phase 5: Metal zero-copy + receiver-drawn pointer"
     relaunch TB_RECEIVER_RENDER_DRIVER=metal
     expect_log "[metal] zero-copy video on" "Metal path passed its start-up checks"
-    python3 "$MOCK" --mode pointer --fps 60 --duration 4 || fail "mock pointer exited non-zero (no cursorImage in the profile?)"
+    mock --mode pointer --fps 60 --duration 4 || fail "mock pointer exited non-zero (no cursorImage in the profile?)"
     expect_log "Metal zero-copy: first frame" "Metal path took a decoded frame"
     expect_log "pointer picture arrived" "receiver took the pointer picture"
     expect_log "[trace] in=" "trace summary lines"
 
     phase "Phase 6: decoder buffers refused -> copy fallback"
     relaunch TB_RECEIVER_RENDER_DRIVER=metal TB_RECEIVER_METAL_FAIL=wrap
-    python3 "$MOCK" --mode stream --duration 3 || fail "mock stream exited non-zero"
+    mock --mode stream --duration 3 || fail "mock stream exited non-zero"
     expect_log "copying each frame" "Metal path copies frames it cannot texture"
 
     phase "Phase 7: Metal unusable -> OpenGL fallback"
     relaunch TB_RECEIVER_RENDER_DRIVER=metal TB_RECEIVER_METAL_FAIL=texture
-    python3 "$MOCK" --mode stream --duration 3 || fail "mock stream exited non-zero"
+    mock --mode stream --duration 3 || fail "mock stream exited non-zero"
     expect_log "falling back to OpenGL" "renderer fell back to OpenGL"
     expect_log "[disp] texture " "OpenGL rendered decoded video after the fallback"
 fi
