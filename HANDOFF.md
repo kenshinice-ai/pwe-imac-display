@@ -6,7 +6,7 @@
 > 候选版验证（2026-10-20，这台 Mac）：发送端 313 个测试、接收端全部单元测试、Apple 芯片和 Intel 冒烟都通过，DMG 挂载验签通过；**没上真机**，清单 `docs/pwe/TEST-1.1-rc-2026-10-21.md`。
 > 方案和决定：`docs/pwe/PLAN-1.1-2026-10-19.md`、`DESIGN-pairing-2026-10-19.md`、`RESEARCH-Metal-2026-10-19.md`（三份都不入库）。
 > 2026-10-20 申请了 OpenAI Codex for Open Source 和 Claude for Open Source（Lee 提交；名字 Li Liu，lee.liu.melbourne@gmail.com）。结果会发邮件，滚动审核。
-> pwestudio.site 产品页冻结中（Lee），方案在 `docs/pwe/SITE-PLAN.md`。
+> pwestudio.site 产品页 2026-10-21 解冻，随网站改版由工具站会话制作；本仓库只提供事实和素材（`docs/pwe/site-handoff-2026-10-21/`）。
 > 2026-10-19 在真机 iMac18,3（macOS 13.7.8）上做了基线：画面、真 5K（48 和 60 帧）、拔线和睡眠恢复都能用；声音不工作。
 > 结果和证据在 `docs/pwe/BASELINE-iMac18,3.md`（未入库），本文件「八」节是摘要。
 > 仓库：`kenshinice-ai/pwe-imac-display`，公开，是 `swellweb/targetBridge` 的 fork。`main` 从上游 3.6.0 起。
@@ -20,7 +20,7 @@
 - **[决定] iMac 上默认用哪种渲染方式** — 推荐按测试清单第 5 节用同口径计时重测；在那之前默认 OpenGL · 不定则按 OpenGL 发 · 自 2026-10-20
 - **[决定] Homebrew cask 改名** — 推荐新 cask `pwe-screen-encore`，旧的 `pwe-imac-display` 已删，不再恢复 · 不定则 1.1 用旧名字的 cask · 自 2026-10-20
 - **[决定] 推广按 `docs/pwe/LAUNCH-PLAN-2026-10-20.md` 走** — 推荐：1.1 过真机测试、站点解冻后再推广，中文渠道先、英文后 · 不定则不影响发布 · 自 2026-10-20
-- **[决定] 解冻 pwestudio.site** — 产品页方案 `docs/pwe/SITE-PLAN.md`（已改成 `/screenencore/`）；检查更新要在 `functions/_release.js` 加 `screenencore` · 不定则「检查更新」只会说「已经是最新版本」 · 自 2026-10-14
+- **[动手] 发布当天在工具站 `functions/_release.js` 加 `screenencore`** — Lee 2026-10-21 解冻了产品页，工具站会话（「PWE Tools AI 设计」）正在做本地原型，素材和事实在 `docs/pwe/site-handoff-2026-10-21/`（不入库）；地址 `/screenencore/`，字标 SCREEN ENCORE · 不加则 1.1 的检查更新会一直说「已是最新」 · 自 2026-10-21
 - **[动手] 推送 paradise-production 的品牌标准 08 v2.7** — 本地提交 aaa2ffb（§4.6 登记 Screen Encore 的 iMac 框）；在 paradise-production 运行 `git push origin main` · 不推则另一台 Mac 看不到 · 自 2026-10-20
 - **[决定] 本仓库 Sponsor 按钮** — 组规矩 §0.9 要求放 `custom: [pwestudio.site/support]`，并由 Lee 同意打开 Sponsorships 开关 · 不定则仓库页没有支持入口 · 自 2026-10-15
 
