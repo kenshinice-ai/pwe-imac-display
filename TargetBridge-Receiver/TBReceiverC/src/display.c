@@ -97,6 +97,11 @@ struct tb_display {
     char          pwe_notice[3][192];
     int           pwe_notice_dirty;
 
+    /* PWE (COMPACT_IDLE): Esc quits only when pressed twice; the first press
+     * arms quitting until this tick and the screen says so (T36). 0 = not armed. */
+    uint64_t      quit_armed_until;
+    int           last_quit_hint;
+
     /* Receiver rendering (PWE 1.1): the Metal zero-copy path and its pacing. */
     struct tb_mtl   *mtl;            /* non-NULL = Metal draws the video */
     int              metal_unusable; /* Metal failed once: OpenGL for the rest of this run */
@@ -126,6 +131,14 @@ struct tb_display {
     uint32_t         cursor_img_id;
     SDL_Texture     *cursor_tex;       /* the picture on the SDL renderer */
 };
+
+#define TB_DISP_QUIT_CONFIRM_MS 2000u
+
+/* Whether the screen should say "Press Esc again to quit" now (PWE build). */
+static int tb_disp_quit_hint(const struct tb_display *d) {
+    return TB_RECEIVER_COMPACT_IDLE &&
+           d->quit_armed_until != 0 && SDL_GetTicks64() < d->quit_armed_until;
+}
 
 static uint16_t tb_disp_mac_keycode_for_sdl_scancode(SDL_Scancode scancode) {
     switch (scancode) {
@@ -717,7 +730,13 @@ static void tb_disp_draw_waiting_screen(CGContextRef ctx, const struct tb_displa
     char footer[160];
     if (connecting) snprintf(footer, sizeof(footer), "%s", TB_RECEIVER_VERSION);
     else snprintf(footer, sizeof(footer), "%s · %s", TB_RECEIVER_VERSION, tb_i18n_get("receiver.ui.compact_details"));
-    tb_pwe_text_centered(ctx, footer, ".system-digits", 12.0 * u, cx, H - 34.0 * u, TB_PWE_LABEL_2);
+    /* After one Esc the footer says what a second one does, in full white. */
+    if (tb_disp_quit_hint(d)) {
+        tb_pwe_text_centered(ctx, tb_i18n_get("receiver.ui.quit_confirm"), ".system", 12.0 * u, cx, H - 34.0 * u,
+                             TB_PWE_LABEL);
+    } else {
+        tb_pwe_text_centered(ctx, footer, ".system-digits", 12.0 * u, cx, H - 34.0 * u, TB_PWE_LABEL_2);
+    }
 }
 
 /* The details screen of the PWE build (COMPACT_IDLE or OFFER_LOGIN_ITEM): the
@@ -822,7 +841,12 @@ static void tb_disp_draw_details_scaled(CGContextRef ctx,
         snprintf(keys, sizeof(keys), "%s", tb_i18n_get("receiver.ui.help_4"));
     }
     tb_pwe_text(ctx, tb_i18n_get("receiver.ui.help_1"), body_font, 15 * s, outer_x, H - 66 * s, TB_PWE_LABEL_2);
-    tb_pwe_text(ctx, keys, body_font, 15 * s, outer_x, H - 42 * s, TB_PWE_LABEL_2);
+    if (tb_disp_quit_hint(d)) {
+        tb_pwe_text(ctx, tb_i18n_get("receiver.ui.quit_confirm"), body_font, 15 * s, outer_x, H - 42 * s,
+                    TB_PWE_LABEL);
+    } else {
+        tb_pwe_text(ctx, keys, body_font, 15 * s, outer_x, H - 42 * s, TB_PWE_LABEL_2);
+    }
 }
 
 static void tb_disp_rebuild_status_texture(struct tb_display *d,
@@ -1191,6 +1215,13 @@ struct tb_display *tb_disp_create(int fullscreen) {
         fprintf(stderr, "[disp] CreateWindow: %s\n", SDL_GetError());
         free(d); return NULL;
     }
+
+    /* SDL starts text input with the video subsystem, so every key also went to
+     * the input method: with Pinyin on, I opened a candidate bar (T36). Nothing
+     * here reads text: the shortcuts and the keys relayed to the Mac are key
+     * events. Off for the whole run; SDL turns it back on only when asked. */
+    SDL_StopTextInput();
+    fprintf(stderr, "[disp] text input %s\n", SDL_IsTextInputActive() ? "still on" : "off: keys only");
 
     /* The SDL renderer path has no VSYNC: it presents as fast as decode
      * produces frames. On Intel iMac with Radeon Pro 570 + 5K display, VSYNC
@@ -2216,13 +2247,38 @@ void tb_disp_set_cursor_image(struct tb_display *d, const struct tb_cursor_image
     d->cursor_dirty = 1;
 }
 
-/* A fresh press of `sym` with no Command, Control or Option: holding a key
- * must not repeat a toggle, and Cmd-A or Ctrl-L are not these commands. */
-static int tb_disp_is_plain_keypress(const SDL_Event *ev, SDL_Keycode sym) {
-    return ev->type == SDL_KEYDOWN &&
-           !ev->key.repeat &&
-           (ev->key.keysym.mod & (KMOD_GUI | KMOD_CTRL | KMOD_ALT)) == 0 &&
-           ev->key.keysym.sym == sym;
+/* A fresh press of a shortcut key with no Command, Control or Option: holding
+ * a key must not repeat a toggle, and Cmd-A or Ctrl-L are not these commands.
+ * Key events only, never text input, which an input method takes first (T36).
+ * The key is the one the layout labels with the letter (`sym`), so an AZERTY A
+ * is A; on a layout whose key types no Latin letter (Cyrillic, Greek) the key
+ * in the letter's physical place (`scancode`) counts instead. */
+static int tb_disp_is_shortcut(const SDL_Event *ev, SDL_Keycode sym, SDL_Scancode scancode) {
+    if (ev->type != SDL_KEYDOWN || ev->key.repeat) return 0;
+    if (ev->key.keysym.mod & (KMOD_GUI | KMOD_CTRL | KMOD_ALT)) return 0;
+    const SDL_Keycode got = ev->key.keysym.sym;
+    if (got == sym) return 1;
+    return !(got >= SDLK_a && got <= SDLK_z) && ev->key.keysym.scancode == scancode;
+}
+
+/* Esc on the receiver's own screens. Upstream quits at once; the PWE build
+ * quits on a second press within 2 s, and the first press puts the hint on
+ * screen. While the Mac's picture is up there is nowhere to show the hint, so
+ * Esc does nothing there (T36); Command-Q and the window's close button quit. */
+static void tb_disp_escape(struct tb_display *d) {
+#if TB_RECEIVER_COMPACT_IDLE
+    if (d->is_connected) return;
+    if (tb_disp_quit_hint(d)) {
+        fprintf(stderr, "[disp] quit: Esc pressed twice\n");
+        d->quit = 1;
+        return;
+    }
+    d->quit_armed_until = SDL_GetTicks64() + TB_DISP_QUIT_CONFIRM_MS;
+    fprintf(stderr, "[disp] Esc: press again within 2 s to quit\n");
+#else
+    fprintf(stderr, "[disp] quit: Esc\n");
+    d->quit = 1;
+#endif
 }
 
 unsigned int tb_disp_poll_actions(struct tb_display *d) {
@@ -2230,23 +2286,22 @@ unsigned int tb_disp_poll_actions(struct tb_display *d) {
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
         const int idle = !d->is_connected && !d->is_connecting;
-        if (ev.type == SDL_QUIT) d->quit = 1;
-        else if (!d->input_capture_active &&
-                 !d->input_intercept_active &&
-                 ev.type == SDL_KEYDOWN &&
-                 ev.key.keysym.sym == SDLK_ESCAPE) d->quit = 1;
-        else if (!d->input_capture_active &&
-                 !d->input_intercept_active &&
-                 tb_disp_is_plain_keypress(&ev, SDLK_l)) actions |= TB_DISP_ACTION_CYCLE_LANGUAGE;
-        else if (!d->input_capture_active &&
-                 !d->input_intercept_active &&
+        const int own_keys = !d->input_capture_active && !d->input_intercept_active;
+        if (ev.type == SDL_QUIT) {
+            fprintf(stderr, "[disp] quit: Command-Q, the close button or a signal\n");
+            d->quit = 1;
+        }
+        else if (own_keys &&
+                 tb_disp_is_shortcut(&ev, SDLK_ESCAPE, SDL_SCANCODE_ESCAPE)) tb_disp_escape(d);
+        else if (own_keys &&
+                 tb_disp_is_shortcut(&ev, SDLK_l, SDL_SCANCODE_L)) actions |= TB_DISP_ACTION_CYCLE_LANGUAGE;
+        else if (own_keys &&
                  idle &&
-                 tb_disp_is_plain_keypress(&ev, SDLK_i)) d->show_details = !d->show_details;
+                 tb_disp_is_shortcut(&ev, SDLK_i, SDL_SCANCODE_I)) d->show_details = !d->show_details;
         /* A changes a setting, so only where its state is on screen. */
-        else if (!d->input_capture_active &&
-                 !d->input_intercept_active &&
+        else if (own_keys &&
                  (!TB_RECEIVER_COMPACT_IDLE || d->show_details) &&
-                 tb_disp_is_plain_keypress(&ev, SDLK_a)) actions |= TB_DISP_ACTION_TOGGLE_LOGIN_ITEM;
+                 tb_disp_is_shortcut(&ev, SDLK_a, SDL_SCANCODE_A)) actions |= TB_DISP_ACTION_TOGGLE_LOGIN_ITEM;
         else if (d->input_capture_active) {
             struct tb_input_event input_event;
             memset(&input_event, 0, sizeof(input_event));
@@ -2490,6 +2545,12 @@ int tb_disp_window_on_active_space(struct tb_display *d) {
     return tb_window_on_active_space(d->win);
 }
 
+/* The title bar, set only when it changes: this runs on every loop. */
+static void tb_disp_set_title(struct tb_display *d, const char *title) {
+    const char *now = SDL_GetWindowTitle(d->win);
+    if (!now || strcmp(now, title) != 0) SDL_SetWindowTitle(d->win, title);
+}
+
 void tb_disp_render_status(struct tb_display *d,
                            const char *ip,
                            const char *status,
@@ -2517,6 +2578,7 @@ void tb_disp_render_status(struct tb_display *d,
         drawable_h = 620;
     }
 
+    const int quit_hint = tb_disp_quit_hint(d);
     if (strcmp(d->last_ip, ip) != 0 ||
         strcmp(d->last_status, status) != 0 ||
         strcmp(d->last_sender, sender) != 0 ||
@@ -2528,6 +2590,7 @@ void tb_disp_render_status(struct tb_display *d,
         d->last_drawable_h != drawable_h ||
         d->last_show_details != d->show_details ||
         d->last_login_item_state != d->login_item_state ||
+        d->last_quit_hint != quit_hint ||
         d->status_tex == NULL ||
         d->pwe_notice_dirty ||
         d->status_is_connecting) {
@@ -2543,14 +2606,21 @@ void tb_disp_render_status(struct tb_display *d,
         d->last_drawable_h = drawable_h;
         d->last_show_details = d->show_details;
         d->last_login_item_state = d->login_item_state;
+        d->last_quit_hint = quit_hint;
         d->status_is_connecting = 0;
         tb_disp_rebuild_status_texture(d, ip, status, sender, panel, mode, language, permissions,
                                        drawable_w, drawable_h, 0);
     }
 
+#if TB_RECEIVER_COMPACT_IDLE
+    /* PWE: the product's name alone. The host name and address are on the
+     * details screen only, not in the title bar (T35). */
+    tb_disp_set_title(d, tb_i18n_get("common.app_name"));
+#else
     char title[256];
     snprintf(title, sizeof(title), "%s %s — %s — %s", tb_i18n_get("common.app_name"), TB_RECEIVER_VERSION, ip, status);
-    SDL_SetWindowTitle(d->win, title);
+    tb_disp_set_title(d, title);
+#endif
 
     /* On the Metal layer a covered window may wait a second for a drawable. */
     if (d->mtl && !tb_mtl_window_visible(d->mtl)) return;
@@ -2572,20 +2642,27 @@ void tb_disp_render_connecting(struct tb_display *d) {
         drawable_h = 620;
     }
 
+    const int quit_hint = tb_disp_quit_hint(d);
     if (d->status_tex == NULL ||
         !d->status_is_connecting ||
         d->pwe_notice_dirty ||
+        d->last_quit_hint != quit_hint ||
         d->last_drawable_w != drawable_w ||
         d->last_drawable_h != drawable_h) {
         d->pwe_notice_dirty = 0;
         d->last_drawable_w = drawable_w;
         d->last_drawable_h = drawable_h;
         d->status_is_connecting = 1;
+        d->last_quit_hint = quit_hint;
         tb_disp_rebuild_status_texture(d, "", "", "", "", "", "", "",
                                        drawable_w, drawable_h, 1);
     }
 
-    SDL_SetWindowTitle(d->win, "TargetBridge Receiver — Connecting");
+#if TB_RECEIVER_COMPACT_IDLE
+    tb_disp_set_title(d, tb_i18n_get("common.app_name"));
+#else
+    tb_disp_set_title(d, "TargetBridge Receiver — Connecting");
+#endif
     if (d->mtl && !tb_mtl_window_visible(d->mtl)) return;
     SDL_RenderClear(d->ren);
     if (d->status_tex) SDL_RenderCopy(d->ren, d->status_tex, NULL, NULL);
