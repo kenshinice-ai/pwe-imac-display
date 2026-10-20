@@ -45,6 +45,7 @@
     2. 在 `site/chrome.py` 把 `ACTION["screenencore"]` 设成下载链接和文字；把 `site/public/screenencore/index.html` 首屏的状态行换成下载按钮。
     3. 把首页卡片（`site/public/index.html` 的「Coming late October」）和 `/help` 的 Screen Encore 卡片改成已发布。
     4. 运行 `python3 site/chrome.py`，看 `git status`，再运行 `./site/deploy.sh`。成功判据：它核对每个 sitemap 页面和下载校验值，全部通过；`curl 'https://pwestudio.site/app/check?product=screenencore&version=1.0.0'` 返回 1.1.0。
+    5. 把新的 pwe-tools 知识提交号发给 PWE Assist 会话（「PWE Assist 项目总规划」）。号码看 `deploy.sh` 的输出，或 `https://pwestudio.site/_pwe/status.json`。成功判据：那边回复已按新的 Screen Encore 事实重跑问题集。
 8. 回信告诉 Marco 已发布（10-14 那封的线程）。
 9. 删除本地分支 `security-1.0.1`（已全部并进 1.1）。
 
