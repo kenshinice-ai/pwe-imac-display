@@ -9,7 +9,7 @@
 - 上游合并后：在「状态」一栏写「已合并」和上游的提交号。下次合并上游时，冲突应当自动消失。
 - 上游拒绝：写明原因，以及 PWE 是否继续保留。
 
-| 提交 | 改了什么 | 为什么 | 上游 | 状态（2026-10-19） |
+| 提交 | 改了什么 | 为什么 | 上游 | 状态（2026-10-20） |
 |---|---|---|---|---|
 | `3ee1bff`（经 `2a5319b` 合并） | 简体中文：`zh.json` 和发送端 Swift 里的中文 | 夹杂英文、术语不统一、用词与 macOS 不一致 | [#212](https://github.com/swellweb/targetBridge/pull/212) | 已合并进上游 `maint-3.6`（`5c4ec84`），上游 3.6.1 未发布 |
 | `081c7a5` | 接收端连接画面按字宽居中；新键 `receiver.splash.role`（五种语言） | 文字偏离中心，「RECEIVER」没有翻译 | [#214](https://github.com/swellweb/targetBridge/pull/214) | 已合并进上游 `maint-3.6`（`320be5d`），上游 3.6.1 未发布 |
@@ -29,6 +29,15 @@
 | `9c46530`（`claude/pwe-pairing-r2`） | 接收端 `net.c`/`net.h`：`tb_net_client_is_direct_link()` 及其测试，逐字取自 `security-1.0.1` 的 `b2316e8`（不含该提交的接收策略 `DIRECT_LINK_ONLY`） | 配对只允许经线缆；合并 `security-1.0.1` 时这几处改动相同，应无冲突 | 随 1.0.1 的加固一起提 | 本地提交，未推 |
 | `994386f`（`claude/pwe-pairing-r2`） | 接收端 R2：`main.c` 每个连接走 `tb_conn`（读、全部发送、关闭）、显示配置在就绪后发、钥匙串、配对码与提示、Bonjour 只在线缆网卡上发布并加 `pweSec=2`（偏好 `AllowLocalNetwork` 恢复原样）、静默 2 秒的旧发送端走不加密会话；`display.c/.h` 加 `tb_disp_set_notice`；新文件 `src/tb_pairing_menu.{h,m}`（应用菜单两项）；`tb_conn.c` 加 `tb_conn_tick`；`Makefile` 加 `TEST_HOOKS`；`Languages/*.json` 加 15 个键；`scripts/loopback_smoke.sh` 用测试钩子和临时钥匙串 | 同上 | upstream PR after disclosure | 本地提交，未推 |
 | `af14af7`（`claude/pwe-pairing-r2`） | 发送端：`TBReceiverPointerSource` 经 `PWESecureLink` 发送；Debug 构建的生成帧测试流（`pweTestSyntheticFrames`） | 指针线程直写连接，会在加密会话里发出未封装的包 | upstream PR after disclosure | 本地提交，未推 |
+| `32bc70f`、`8b50a60` | 接收端日志记下配对码的显示、隐藏、输错、过期（不记码本身）；发送端 `stop()` 清掉等码状态，码过期时通知 iMac | 真机：断线、锁定、过期后 Mac 停在输码框（2026-10-20） | 随配对一起提 | PWE 保留 |
+| `7f423e7` | 发现：Network Link 只拨网络地址，从不拨雷雳或 USB 地址 | 真机：网络模式拨了雷雳地址，超时 | 待提 | PWE 保留 |
+| `8900764` | 自动化：线插回或醒来后先拨上次的雷雳地址；重试间隔不再重启 Bonjour | 真机：插回到出画面 22–27 秒，其中约 20 秒在等 Bonjour | 待提 | 等真机复测 |
+| `28057e1`、`edfe45e` | 声音转发在会话内开关；只在转发时采集系统声音 | 真机：切换声音时断开约 1 秒 | 待提 | 等真机复测 |
+| `9800ea7` | 醒来之后才开始的采集，不再「醒来重启」 | 真机：出画面 3 秒后采集又重启一次 | 待提 | 等真机复测 |
+| `b17e32e` | 接收端日志文件（`~/Library/Logs`，2 MB 轮转）；日志不写按键内容；去掉无限增长的 `input-debug.log` | 从「应用程序」打开时没有日志，没法排查 | 待提 | 等真机复测 |
+| `404cf98` | hello 包加可选字段 `receiverRenderer`；接收端默认 OpenGL，可在第一帧前换渲染器 | Lee 2026-10-20 定：OpenGL 和 Metal 都留，让用户选 | 待提 | 等真机复测 |
+| `9dd440f` | 计时加 `handoff` 阶段，两种渲染器同一口径 | 原来 OpenGL 和 Metal 的计时终点不同，对比不公平 | 待提 | — |
+| `43bd8bf` | 转发的指针从真实位置出发；跨过两屏之间的空隙时保留仍在屏上的那一轴 | 真机：iMac 鼠标控制 Mac 时指针找不到、有些地方过不去 | 待提 | 等真机复测 |
 | `3055222` | 删除 `.github/FUNDING.yml` | Lee 2026-10-14 定：本仓库不显示上游的赞助按钮 | 不提交（只属于 PWE） | 保留 |
 
 打包时的改名（`pwe/rebrand.py`）不改仓库里的文件，所以不在这张表里。它的锚点由脚本自己检查：上游改了对应的文字，脚本就会停下。
