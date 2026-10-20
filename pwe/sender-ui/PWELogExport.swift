@@ -2,9 +2,18 @@ import AppKit
 import OSLog
 import UniformTypeIdentifiers
 
-/// This process's own log lines, for the diagnostic report in Settings › Advanced.
+/// This app's own log lines, for the diagnostic report in Settings › Advanced.
 /// Reading the current process's entries needs no entitlement.
 enum PWELogExport {
+    /// A line the app wrote itself: the engine's loggers and NSLog (the
+    /// `[pwe]`, `[automation]` lines). The frameworks in this process log far
+    /// more (window scenes, Spotlight, privacy checks): 4,109 lines, 12 about
+    /// the connection, in the test Mac's report (T16, 2026-10-20).
+    static func isOwn(subsystem: String, sender: String) -> Bool {
+        if subsystem.hasPrefix("com.targetbridge") || subsystem.hasPrefix("com.pwegroup") { return true }
+        return subsystem.isEmpty && sender == "Foundation"   // NSLog
+    }
+
     static func recentLines(minutes: Int) -> [String] {
         do {
             let store = try OSLogStore(scope: .currentProcessIdentifier)
@@ -13,6 +22,7 @@ enum PWELogExport {
             formatter.dateFormat = "HH:mm:ss.SSS"
             return try store.getEntries(at: since)
                 .compactMap { $0 as? OSLogEntryLog }
+                .filter { isOwn(subsystem: $0.subsystem, sender: $0.sender) }
                 .suffix(3000)
                 .map { "\(formatter.string(from: $0.date)) \($0.composedMessage)" }
         } catch {

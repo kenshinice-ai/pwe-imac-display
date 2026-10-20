@@ -1116,6 +1116,7 @@ final class PWESenderModel: ObservableObject {
             lines.append("Session: status=\(session.statusText) transport=\(session.transportKind.rawValue) preset=\(session.capturePreset.rawValue) source=\(session.captureSource.rawValue) codec=\(session.codecPreference.rawValue) renderMatching=\(session.matchRenderToStream)")
             lines.append("Capture: \(session.captureDisplayText) · \(session.displayStateText)")
             if let rate = session.cableTestResult { lines.append(String(format: "Cable test: %.2f Gbit/s", rate)) }
+            lines.append("Security: \(session.pweSecurity)")
         }
         lines.append("PWE: picture=\(picture.rawValue) sound=\(sound.rawValue) mode=\(displayMode.rawValue) autoConnect=\(autoConnect) login=\(launchAtLogin) input=\(inputRole.rawValue)")
         lines.append("")
