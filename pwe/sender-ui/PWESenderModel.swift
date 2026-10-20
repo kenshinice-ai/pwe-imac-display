@@ -97,6 +97,18 @@ enum PWEPhaseRules {
         security.waitsForUser || security == .checkingCode
     }
 
+    /// The engine keeps the last failure as its status until the next attempt
+    /// dials. A connection the person just started must not show it: "no longer
+    /// connected" flashed between Use as Display and Connecting (T28, test Mac
+    /// 2026-10-20). `stale` describes the status at the press; while the status
+    /// is still that one, it reads as connecting. Returns the status to use and
+    /// whether it is still stale.
+    static func freshStatus(_ status: TBDisplaySenderStatusState?, stale: String?)
+        -> (status: TBDisplaySenderStatusState?, stillStale: Bool) {
+        guard let stale, let status, String(describing: status) == stale else { return (status, false) }
+        return (.connecting(""), true)
+    }
+
     static func phase(_ state: PWEEngineState, held: PWEReason?) -> PWEPhase {
         guard state.hasPermission else { return .needsPermission }
         let target = state.target
@@ -258,6 +270,11 @@ final class PWESenderModel: ObservableObject {
     private var sessionCancellables: Set<AnyCancellable> = []
     /// The last failure while the engine retries (PWEPhaseRules.heldFailure).
     private var heldFailure: PWEReason?
+    /// The engine's failure status when the person started a connection
+    /// (PWEPhaseRules.freshStatus); nil once the engine has moved on, or after
+    /// a few seconds, so a dial that never starts shows the failure again.
+    private var staleFailure: String?
+    private var staleFailureUntil = Date.distantPast
     /// Whether the engine was retrying at the last look. When it stops without
     /// PWE asking (a Stop from the menu bar, a capture failure), that counts as
     /// the person's Disconnect: nothing resumes until the iMac is replugged.
@@ -447,9 +464,12 @@ final class PWESenderModel: ObservableObject {
     }
 
     private func engineState(_ service: TBDisplaySenderService, retrying: Bool) -> PWEEngineState {
-        PWEEngineState(
+        if Date() > staleFailureUntil { staleFailure = nil }
+        let fresh = PWEPhaseRules.freshStatus(session?.statusState, stale: staleFailure)
+        if !fresh.stillStale { staleFailure = nil }
+        return PWEEngineState(
             hasPermission: CGPreflightScreenCaptureAccess(),
-            status: session?.statusState,
+            status: fresh.status,
             isConnected: session?.isConnected ?? false,
             isStreaming: session?.isStreaming ?? false,
             retrying: retrying,
@@ -498,6 +518,10 @@ final class PWESenderModel: ObservableObject {
     private func startConnecting() {
         pausedUntilReplug = false
         heldFailure = nil
+        if let status = session?.statusState, PWEPhaseRules.failure(status) != nil {
+            staleFailure = String(describing: status)
+            staleFailureUntil = Date().addingTimeInterval(5)
+        }
         inputRoleApplied = false
         var components = URLComponents()
         components.scheme = "pweimacdisplay"

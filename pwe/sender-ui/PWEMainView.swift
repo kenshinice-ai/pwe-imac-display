@@ -27,7 +27,7 @@ struct PWEMainView: View {
             ZStack(alignment: .leading) {
                 phaseView
                     .id(phaseKey)
-                    .transition(.opacity)
+                    .transition(reduceMotion ? .identity : Self.phaseChange)
             }
             // One height for every phase, content centred in it: the window never
             // jumps when the connection changes state.
@@ -37,6 +37,13 @@ struct PWEMainView: View {
         }
         .frame(width: 440)
     }
+
+    /// One phase on screen at a time (T28): the old one fades out in 0.08 s,
+    /// then the new one fades in, 0.2 s in all. A symmetric cross-fade showed
+    /// "no longer connected" and "Connecting" on top of each other.
+    private static let phaseChange = AnyTransition.asymmetric(
+        insertion: .opacity.animation(.easeOut(duration: 0.12).delay(0.08)),
+        removal: .opacity.animation(.easeIn(duration: 0.08)))
 
     // MARK: - Header
 

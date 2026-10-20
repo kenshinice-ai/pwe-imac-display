@@ -218,3 +218,41 @@ final class PWEPhaseRulesTests: XCTestCase {
                        [false, true])
     }
 }
+
+/// Use as Display after a failure shows Connecting, not the old failure (T28).
+final class PWEFreshStatusTests: XCTestCase {
+    private let imac = PWEReceiver(id: "imac", name: "iMac", detail: "")
+
+    private func phase(_ status: TBDisplaySenderStatusState, stale: String?) -> (PWEPhase, Bool) {
+        let fresh = PWEPhaseRules.freshStatus(status, stale: stale)
+        let state = PWEEngineState(status: fresh.status, retrying: true, receivers: [imac], target: imac)
+        let held = PWEPhaseRules.heldFailure(after: nil, state)
+        return (PWEPhaseRules.phase(state, held: held), fresh.stillStale)
+    }
+
+    func testTheOldFailureReadsAsConnecting() {
+        let old = TBDisplaySenderStatusState.connectionClosed("unplugged")
+        let (shown, stale) = phase(old, stale: String(describing: old))
+        XCTAssertEqual(shown, .connecting(imac, .reaching))
+        XCTAssertTrue(stale)
+    }
+
+    func testANewStatusEndsIt() {
+        let old = TBDisplaySenderStatusState.connectionClosed("unplugged")
+        let (shown, stale) = phase(.waitingDisplayProfile, stale: String(describing: old))
+        XCTAssertEqual(shown, .connecting(imac, .preparing))
+        XCTAssertFalse(stale)
+    }
+
+    func testANewFailureShows() {
+        let old = TBDisplaySenderStatusState.connectionClosed("unplugged")
+        let (shown, stale) = phase(.connectionFailed("timed out"), stale: String(describing: old))
+        XCTAssertEqual(shown, .interrupted(imac, .couldNotConnect, retrying: true))
+        XCTAssertFalse(stale)
+    }
+
+    func testWithoutAPressNothingChanges() {
+        let (shown, _) = phase(.connectionClosed("unplugged"), stale: nil)
+        XCTAssertEqual(shown, .interrupted(imac, .cableOrReceiverGone, retrying: true))
+    }
+}
