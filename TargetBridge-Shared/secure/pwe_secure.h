@@ -1,4 +1,4 @@
-/* pwe_secure.h — PWE iMac Display: pairing, authentication and encrypted
+/* pwe_secure.h — PWE Screen Encore: pairing, authentication and encrypted
  * sessions. One copy, compiled into both apps (receiver: Makefile; sender:
  * Xcode, through the bridging header). Pure functions over packets: no I/O,
  * no clock, no keychain. The caller passes the time and a peer store.

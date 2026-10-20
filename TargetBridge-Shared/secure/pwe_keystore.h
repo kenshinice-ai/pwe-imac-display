@@ -1,4 +1,4 @@
-/* pwe_keystore.h — PWE iMac Display: pairing keys in the login keychain.
+/* pwe_keystore.h — PWE Screen Encore: pairing keys in the login keychain.
  *
  * Generic-password items under one service name per app:
  *   account "identity"         this side's X25519 private key

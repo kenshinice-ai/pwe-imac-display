@@ -3,9 +3,14 @@ import Foundation
 /// How an iMac is named and described in PWE's windows and menu. Pure functions,
 /// so every rule has a test (PWEReceiverRulesTests).
 enum PWEReceiverNaming {
-    /// The receiver advertises "<app name> <host name>", e.g. "PWE iMac Display
+    /// The receiver advertises "<app name> <host name>", e.g. "PWE Screen Encore
     /// LL-iMac-2017.local". A person calls that iMac "LL-iMac-2017".
-    private static let appPrefixes = ["PWE iMac Display Receiver ", "PWE iMac Display ", "TargetBridge Receiver ", "TargetBridge "]
+    private static let appPrefixes = ["PWE Screen Encore Receiver ", "PWE Screen Encore "]
+        + legacyAppNames.flatMap { ["\($0) Receiver ", "\($0) "] }
+        + ["TargetBridge Receiver ", "TargetBridge "]
+    /// What PWE receivers built before the 2026-10-20 rename advertise. Kept so
+    /// that an iMac still running one is named and recognised the same way.
+    static let legacyAppNames = ["PWE iMac Display"]
 
     static func friendlyName(receiverName: String, serviceName: String, hostName: String?) -> String {
         for candidate in [receiverName, serviceName, hostName ?? ""] {
@@ -31,7 +36,7 @@ enum PWEReceiverNaming {
     /// PWE's receiver advertises its own name; upstream's says TargetBridge. Used
     /// only to word a message (update to 1.1, or the original receiver), never to trust.
     static func isPWE(receiverName: String, serviceName: String) -> Bool {
-        receiverName.hasPrefix("PWE iMac Display") || serviceName.hasPrefix("PWE iMac Display")
+        (["PWE Screen Encore"] + legacyAppNames).contains { receiverName.hasPrefix($0) || serviceName.hasPrefix($0) }
     }
 
     /// The receiver's "iMac (5120x2880)" becomes "5120 × 2880": the panel always

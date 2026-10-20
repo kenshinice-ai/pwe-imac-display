@@ -378,12 +378,12 @@ struct PWEBrightnessStrings {
           "指针在 iMac 上时，F1、F2 调 iMac 的亮度。有触控栏的 Mac：按住 fn 再按 F1 或 F2。")
     }
     var why: String {
-        t("To notice these keys, PWE iMac Display needs Accessibility permission. It looks only at F1, F2 and the brightness keys, and records nothing.",
-          "要识别这些按键，PWE iMac Display 需要「辅助功能」权限。它只看 F1、F2 和亮度键，不记录任何按键。")
+        t("To notice these keys, PWE Screen Encore needs Accessibility permission. It looks only at F1, F2 and the brightness keys, and records nothing.",
+          "要识别这些按键，PWE Screen Encore 需要「辅助功能」权限。它只看 F1、F2 和亮度键，不记录任何按键。")
     }
     var needsPermission: String {
-        t("Turn on PWE iMac Display in System Settings › Privacy & Security › Accessibility. Until then, the keys stay with this Mac.",
-          "请在「系统设置 › 隐私与安全性 › 辅助功能」里打开 PWE iMac Display。在那之前，按键仍归这台 Mac。")
+        t("Turn on PWE Screen Encore in System Settings › Privacy & Security › Accessibility. Until then, the keys stay with this Mac.",
+          "请在「系统设置 › 隐私与安全性 › 辅助功能」里打开 PWE Screen Encore。在那之前，按键仍归这台 Mac。")
     }
     var openSettings: String { t("Open System Settings", "打开系统设置") }
     var hudLabel: String { t("iMac brightness", "iMac 亮度") }

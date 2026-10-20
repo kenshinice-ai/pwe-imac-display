@@ -106,8 +106,8 @@ static void test_default_dir(void) {
     setenv("HOME", "/Users/someone", 1);
     unsetenv("TB_RECEIVER_LOG");
     unsetenv("TB_RECEIVER_LOG_DIR");
-    CHECK(tb_log_default_dir("PWE iMac Display Receiver", out, sizeof(out)) == 1 &&
-          strcmp(out, "/Users/someone/Library/Logs/PWE iMac Display Receiver") == 0, "default dir: %s", out);
+    CHECK(tb_log_default_dir("PWE Screen Encore Receiver", out, sizeof(out)) == 1 &&
+          strcmp(out, "/Users/someone/Library/Logs/PWE Screen Encore Receiver") == 0, "default dir: %s", out);
     setenv("TB_RECEIVER_LOG_DIR", "/tmp/x", 1);
     CHECK(tb_log_default_dir("App", out, sizeof(out)) == 1 && strcmp(out, "/tmp/x") == 0, "override: %s", out);
     setenv("TB_RECEIVER_LOG", "0", 1);

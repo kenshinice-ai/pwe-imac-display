@@ -10,6 +10,9 @@
 /* ---- Constants ------------------------------------------------------------ */
 
 static const char k_magic[4] = { 'P', 'W', 'E', 'S' };
+/* Protocol constants: they enter the key derivation and the handshake, so they
+ * keep the product's name from before the 2026-10-20 rename (PWE Screen Encore).
+ * Changing one breaks pairing with every receiver and sender already out. */
 static const char k_id_label[] = "PWE iMac Display id";
 static const char k_cpace_ci[] = "PWE iMac Display pairing v2";
 static const char k_pair_keys_label[] = "PWE iMac Display pair keys";

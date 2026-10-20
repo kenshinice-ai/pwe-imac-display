@@ -3,7 +3,7 @@ import ApplicationServices
 import Darwin
 import SwiftUI
 
-/// The PWE iMac Display app: TargetBridge's engine behind PWE's own window,
+/// The PWE Screen Encore app: TargetBridge's engine behind PWE's own window,
 /// menu bar item, settings and About.
 ///
 /// pwe/rebrand.py removes `@main` from TargetBridge's `TBDisplaySenderApp` and

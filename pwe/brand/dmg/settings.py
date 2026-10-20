@@ -1,4 +1,4 @@
-# dmgbuild settings for the PWE iMac Display disk image (pwe/package.sh runs it).
+# dmgbuild settings for the PWE Screen Encore disk image (pwe/package.sh runs it).
 #
 #   dmgbuild -s pwe/brand/dmg/settings.py -D stage=<dir> -D icon=<AppIcon.icns> \
 #            -D background=pwe/brand/dmg/background.png "<volume name>" <out.dmg>
@@ -11,8 +11,8 @@ import os.path
 
 stage = defines["stage"]   # noqa: F821 (dmgbuild provides `defines`)
 
-SENDER = "PWE iMac Display.app"
-RECEIVER = "PWE iMac Display Receiver.app"
+SENDER = "PWE Screen Encore.app"
+RECEIVER = "PWE Screen Encore Receiver.app"
 README = "读我 Read Me First.txt"
 LICENCES = "Licenses"
 

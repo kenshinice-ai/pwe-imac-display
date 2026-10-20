@@ -10,9 +10,15 @@ final class PWEReceiverRulesTests: XCTestCase {
 
     func testTheAppNameAndLocalSuffixGo() {
         // What the iMac18,3 baseline showed (2026-10-19).
-        XCTAssertEqual(name("PWE iMac Display LL-iMac-2017.local"), "LL-iMac-2017")
+        XCTAssertEqual(name("PWE Screen Encore LL-iMac-2017.local"), "LL-iMac-2017")
         XCTAssertEqual(name("TargetBridge Studio-iMac.local."), "Studio-iMac")
+        XCTAssertEqual(name("PWE Screen Encore Receiver Office"), "Office")
+    }
+
+    func testReceiversFromBeforeTheRenameAreNamedTheSameWay() {
+        XCTAssertEqual(name("PWE iMac Display LL-iMac-2017.local"), "LL-iMac-2017")
         XCTAssertEqual(name("PWE iMac Display Receiver Office"), "Office")
+        XCTAssertEqual(name("PWE iMac Display ", service: "", host: "Den.local."), "Den")
     }
 
     func testAPlainNameStays() {
@@ -20,8 +26,8 @@ final class PWEReceiverRulesTests: XCTestCase {
     }
 
     func testEmptyNamesFallBack() {
-        XCTAssertEqual(name("", service: "PWE iMac Display Den.local"), "Den")
-        XCTAssertEqual(name("PWE iMac Display ", service: "", host: "LL-iMac-2017.local."), "LL-iMac-2017")
+        XCTAssertEqual(name("", service: "PWE Screen Encore Den.local"), "Den")
+        XCTAssertEqual(name("PWE Screen Encore ", service: "", host: "LL-iMac-2017.local."), "LL-iMac-2017")
         XCTAssertEqual(name("", service: "", host: nil), "iMac")
     }
 
@@ -51,7 +57,8 @@ final class PWEReceiverRulesTests: XCTestCase {
     }
 
     func testPWEOrUpstreamReceiver() {
-        XCTAssertTrue(PWEReceiverNaming.isPWE(receiverName: "PWE iMac Display LL-iMac-2017.local", serviceName: ""))
+        XCTAssertTrue(PWEReceiverNaming.isPWE(receiverName: "PWE Screen Encore LL-iMac-2017.local", serviceName: ""))
+        XCTAssertTrue(PWEReceiverNaming.isPWE(receiverName: "", serviceName: "PWE iMac Display LL-iMac-2017"))
         XCTAssertFalse(PWEReceiverNaming.isPWE(receiverName: "TargetBridge Den.local", serviceName: "TargetBridge Den.local"))
     }
 }

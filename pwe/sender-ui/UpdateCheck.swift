@@ -17,7 +17,7 @@ import Foundation
 /// that. Failure is silent: someone on a plane or behind a corporate proxy must never see an
 /// error from a convenience.
 /// **This file is duplicated in four apps, deliberately, and the duplication is checked.**
-/// PWE AI Bar, PWE Monitor, PWE Lumen Bar and PWE iMac Display each carry a copy differing only in `product`, in
+/// PWE AI Bar, PWE Monitor, PWE Lumen Bar and PWE Screen Encore each carry a copy differing only in `product`, in
 /// `downloadPage`, and in which function answers "is the interface in Chinese".
 ///
 /// A shared package was designed and then measured against what it would buy. Three repositories
@@ -72,7 +72,7 @@ final class UpdateCheck: ObservableObject {
     nonisolated static let interval: TimeInterval = 24 * 60 * 60
 
     /// Which product is asking. The endpoint serves every PWE app, so the answer depends on it.
-    nonisolated static let product = "imacdisplay"
+    nonisolated static let product = "screenencore"
 
     nonisolated static var currentVersion: String {
         (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PWE iMac Display brand assets, drawn from numbers. Nothing here is traced by hand.
+"""PWE Screen Encore brand assets, drawn from numbers. Nothing here is traced by hand.
 
     <venv>/bin/python -I pwe/brand/make.py [--brand-source <01 BRAND ASSETS/source>]
 

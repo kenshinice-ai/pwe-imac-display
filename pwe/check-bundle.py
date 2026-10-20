@@ -21,8 +21,14 @@ in a mounted release image, to check what was actually shipped.
    incompatible add-on is off whatever its switch says. 1.0.0 shipped upstream
    manifests asking for sender 3.0, so audio, input sharing and Network Link
    were all dead.
+4. No text a person sees may carry the old product name, "PWE iMac Display"
+   (renamed PWE Screen Encore on 2026-10-20: a product name must not contain
+   Apple's "iMac"). Checked: the bundle's file name, every string in Info.plist
+   and in the bundled language and .strings files. The bundle identifiers keep
+   the old spelling on purpose; written in lower case, they do not match.
 """
 import json
+import plistlib
 import re
 import subprocess
 import sys
@@ -42,6 +48,7 @@ KEPT_PREFIXES = (b"_", b"com.")
 
 
 SENDER_ID = "com.pwegroup.pweimacdisplay"
+OLD_NAME = re.compile(r"iMac ?Display")
 
 
 def run(*cmd):
@@ -133,6 +140,39 @@ def check_add_ons(app):
     return faults
 
 
+def plist_strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from plist_strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from plist_strings(item)
+
+
+def check_old_name(app):
+    faults = []
+    if OLD_NAME.search(app.name):
+        faults.append(f"{app.name}: the bundle still carries the old product name")
+    with open(app / "Contents/Info.plist", "rb") as handle:
+        for text in plist_strings(plistlib.load(handle)):
+            if OLD_NAME.search(text):
+                faults.append(f"{app.name} Info.plist: old product name in {text[:80]!r}")
+    resources = app / "Contents/Resources"
+    for path in sorted(resources.rglob("*.json")) + sorted(resources.rglob("*.strings")):
+        data = path.read_bytes()
+        if data.startswith(b"bplist"):   # a compiled .strings file
+            lines = list(plist_strings(plistlib.loads(data)))
+        else:
+            encoding = "utf-16" if data[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8"
+            lines = data.decode(encoding, errors="replace").splitlines()
+        for line in lines:
+            if OLD_NAME.search(line):
+                faults.append(f"{app.name} {path.relative_to(resources)}: old product name in {line.strip()[:80]!r}")
+    return faults
+
+
 def main(paths):
     if not paths:
         sys.exit(__doc__.strip().splitlines()[2].strip())
@@ -145,6 +185,7 @@ def main(paths):
                     faults += check_weak_imports(binary, arch)
                 faults += check_old_scheme(binary, scratch)
             faults += check_add_ons(path)
+            faults += check_old_name(path)
     finally:
         scratch.rmdir()
     for fault in faults:

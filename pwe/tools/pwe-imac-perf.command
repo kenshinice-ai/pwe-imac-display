@@ -1,5 +1,5 @@
 #!/bin/bash
-# PWE iMac Display — receiver rendering comparison (1.1).
+# PWE Screen Encore — receiver rendering comparison (1.1).
 #
 # Double-click on the iMac while the Mac is streaming to it. The script restarts
 # the receiver once per renderer, waits for the Mac to reconnect, and records
@@ -20,13 +20,15 @@ out="$here/pwe-perf-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$out"
 
 app="${PWE_RECEIVER_APP:-}"   # for testing the script elsewhere
-[ -n "$app" ] || for c in "/Applications/PWE iMac Display Receiver.app" "$HOME/Applications/PWE iMac Display Receiver.app" \
-         "$HOME/Desktop/PWE iMac Display Receiver.app" "$HOME/Downloads/PWE iMac Display Receiver.app"; do
-  [ -d "$c" ] && { app="$c"; break; }
+# The receiver's name before the 2026-10-20 rename is searched for too.
+[ -n "$app" ] || for n in "PWE Screen Encore Receiver" "PWE iMac Display Receiver"; do
+  for d in /Applications "$HOME/Applications" "$HOME/Desktop" "$HOME/Downloads"; do
+    [ -d "$d/$n.app" ] && { app="$d/$n.app"; break 2; }
+  done
 done
 [ -z "$app" ] && app="$(mdfind "kMDItemCFBundleIdentifier == 'com.pwegroup.pweimacdisplay.receiver'" | head -1)"
 if [ -z "$app" ] || [ ! -d "$app" ]; then
-  echo "Could not find PWE iMac Display Receiver.app. Nothing was changed." | tee "$out/ERROR"
+  echo "Could not find PWE Screen Encore Receiver.app. Nothing was changed." | tee "$out/ERROR"
   exit 1
 fi
 exe="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")"
@@ -170,7 +172,7 @@ echo "Opening the receiver again the normal way..."
 open "$app"
 
 {
-  echo "PWE iMac Display — renderer comparison, $(date)"
+  echo "PWE Screen Encore — renderer comparison, $(date)"
   echo "Pass (PLAN-1.1): Metal CPU not above OpenGL; Metal shown/s not below OpenGL;"
   echo "replaced + repeat ≤ 1%; total p95 ≤ decode p95 + one refresh (16.7 ms at 60 Hz)."
   echo

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turn a copy of the TargetBridge source tree into the PWE iMac Display build.
+"""Turn a copy of the TargetBridge source tree into the PWE Screen Encore build.
 
 Run it on a scratch copy, never on the repository: `main` keeps upstream's code
 unchanged so that merging a new TargetBridge release stays a plain merge. The
@@ -10,13 +10,19 @@ PWE build is what this script makes of that code at packaging time.
 What it changes, and what it leaves alone on purpose:
 
 - Names, bundle identifiers, the URL scheme, the settings folders and the icon
-  become PWE iMac Display's, so the app never shares an identity, a privacy
-  permission or a settings file with an installed TargetBridge.
+  become PWE's, so the app never shares an identity, a privacy permission or a
+  settings file with an installed TargetBridge.
+- The product was called PWE iMac Display until 2026-10-20 and is now PWE Screen
+  Encore (a product name must not contain Apple's "iMac"). What existing installs
+  already rely on keeps the old spelling: the bundle identifiers, the
+  `pweimacdisplay://` scheme and the settings folders under Application Support
+  (DATA_NAME). People never see those; everything they do see says the new name,
+  and the final check fails the build if a user-visible "iMac Display" is left.
 - The wire protocol and the Bonjour service type `_targetbridge._tcp` stay as
   they are: a PWE sender finds a TargetBridge receiver and the other way round.
 - The About text credits TargetBridge and its authors.
 - Network Link is off by default; the sender's language follows the system.
-- The virtual display is called PWE iMac Display in System Settings › Displays.
+- The virtual display is called PWE Screen Encore in System Settings › Displays.
 - PWE's window, menu bar item, Settings and About (pwe/sender-ui) replace
   upstream's; upstream's dashboard stays, as the "Full Console".
 - `pweimacdisplay://brightness` reaches PWE's brightness code, and each session
@@ -36,8 +42,14 @@ import shutil
 import sys
 from pathlib import Path
 
-NAME = "PWE iMac Display"
-RECEIVER_NAME = "PWE iMac Display Receiver"
+NAME = "PWE Screen Encore"
+RECEIVER_NAME = "PWE Screen Encore Receiver"
+# The settings folders keep the name 1.0 created them under, so an update finds
+# the person's settings, add-ons and pairing state where they already are.
+DATA_NAME = "PWE iMac Display"
+RECEIVER_DATA_NAME = "PWE iMac Display Receiver"
+# The old product name, which no user-visible text may contain (leftovers()).
+OLD_NAME = re.compile(r"iMac ?Display")
 SENDER_ID = "com.pwegroup.pweimacdisplay"
 RECEIVER_ID = "com.pwegroup.pweimacdisplay.receiver"
 SCHEME = "pweimacdisplay"
@@ -72,14 +84,6 @@ CREDITS = {
         f"dont ThomasWaldmann, DrDavidL et potar712 — {UPSTREAM}, licence MIT. "
         f"Cette version est compilée et signée par PWE Group."
     ),
-}
-
-RECEIVER_TITLES = {
-    "en": "PWE iMac Display Receiver",
-    "zh": "PWE iMac Display 接收端",
-    "it": "PWE iMac Display Receiver",
-    "de": "PWE iMac Display Empfänger",
-    "fr": "PWE iMac Display Receiver",
 }
 
 # The receiver's words in PWE's two languages (docs/pwe/BRAND-iMac-Display-2026-10-20.md
@@ -178,9 +182,9 @@ def rebrand_languages(root: Path) -> None:
         data = json.loads(path.read_text(encoding="utf-8"))
         for key, value in data.items():
             data[key] = value.replace("TargetBridge", NAME)
-        # Upstream sets this title in capitals. "iMac" is never written in
-        # capitals, so the PWE title is in ordinary case in every language.
-        data["receiver.ui.title"] = RECEIVER_TITLES[path.stem]
+        # Upstream sets this title in capitals; PWE's is the product name, in
+        # ordinary case and never translated (brand rule), in every language.
+        data["receiver.ui.title"] = RECEIVER_NAME
         for key, value in PWE_STRINGS.get(path.stem, {}).items():
             if key not in data:
                 raise RebrandError(f"{path}: no key {key!r} to override")
@@ -200,7 +204,7 @@ def rebrand_addons(root: Path) -> None:
         if "summary" in data:
             data["summary"] = data["summary"].replace("TargetBridge", NAME)
         if data.get("id") == "targetbridge.network-link":
-            # PWE iMac Display 1.0 is a Thunderbolt cable product. Network Link
+            # PWE's 1.0 is a Thunderbolt cable product. Network Link
             # stays available, but a person has to turn it on.
             data["defaultEnabled"] = False
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -272,14 +276,20 @@ def rebrand_sender(root: Path, version: str, build: str) -> None:
          "              let language = TBDisplaySenderLanguage(rawValue: raw) else {\n            return .italian\n",
          "              let language = TBDisplaySenderLanguage(rawValue: raw) else {\n" + LANGUAGE_FALLBACK + "\n")
 
+    # Settings folders first, so the generic rename below does not reach them.
+    edit(swift / "TBDisplaySenderAutomation.swift", '"Library/Application Support/TargetBridge/Sender"',
+         f'"Library/Application Support/{DATA_NAME}/Sender"')
+    for name, count in (("TBAddonStore.swift", 1), ("TBInputDebugLog.swift", 2)):
+        edit(sender / "TBDisplayShared" / name, '.appendingPathComponent("TargetBridge", isDirectory: true)',
+             f'.appendingPathComponent("{DATA_NAME}", isDirectory: true)', count)
     for path in sorted(swift.glob("*.swift")) + sorted((sender / "TBDisplayShared").glob("*.swift")):
         rename_in_literals(path, keep=("TargetBridge-Shared", "⟪TB⟫"))
         path.write_text(path.read_text(encoding="utf-8").replace("⟪TB⟫", "TargetBridge"), encoding="utf-8")
 
-    # The one test that pins the settings folder follows it to the PWE name.
+    # The one test that pins the settings folder follows it to the PWE folder.
     edit(sender / "TBDisplaySenderTests/TBSenderAutomationParsingTests.swift",
          '"Library/Application Support/TargetBridge/Sender/enabled"',
-         f'"Library/Application Support/{NAME}/Sender/enabled"')
+         f'"Library/Application Support/{DATA_NAME}/Sender/enabled"')
 
     # The engine is TargetBridge's; the window is PWE's (pwe/sender-ui). The PWE
     # App replaces upstream's entry point, and reads the session phase the engine
@@ -393,6 +403,12 @@ def rebrand_sender(root: Path, version: str, build: str) -> None:
 def rebrand_receiver(root: Path) -> None:
     src = root / "TargetBridge-Receiver/TBReceiverC/src"
     edit(src / "main.c", 'CFSTR("com.targetbridge.receiver")', f'CFSTR("{RECEIVER_ID}")')
+    # The settings folder keeps 1.0's name; the log folder and the Bonjour name
+    # take the new one (generic rename below).
+    edit(src / "main.c", '"%s/Library/Application Support/TargetBridge Receiver/settings.json"',
+         f'"%s/Library/Application Support/{RECEIVER_DATA_NAME}/settings.json"')
+    edit(src / "main.c", '"%s/Library/Application Support/TargetBridge Receiver"',
+         f'"%s/Library/Application Support/{RECEIVER_DATA_NAME}"')
     for path in sorted(src.glob("*.c")) + sorted(src.glob("*.m")):
         rename_in_literals(path)
     assets = root / "TargetBridge-Receiver/TargetBridgeAssets/Assets.xcassets/AppIcon.appiconset"
@@ -406,6 +422,41 @@ ALLOWED = (
     "swellweb",              # the credit line
     "Based on TargetBridge",  # Info.plist copyright
 )
+
+# Lines that may still say "iMac Display", and why: the settings folders keep
+# 1.0's name (DATA_NAME), and the sender still recognises receivers built before
+# the rename by the name they advertise.
+OLD_NAME_KEPT = (
+    f"Application Support/{DATA_NAME}",
+    f'.appendingPathComponent("{DATA_NAME}", isDirectory: true)',
+    "legacyAppNames = ",
+)
+
+
+def old_name_leftovers(root: Path) -> list[str]:
+    """User-visible text that still carries the product's old name."""
+    found = []
+    sender = root / "TargetBridge-Sender"
+    files = (list((sender / "TBDisplaySender").glob("*.swift"))
+             + list((sender / "TBDisplaySender/PWE").glob("*.swift"))
+             + list((sender / "TBDisplayShared").glob("*.swift"))
+             + list((root / "TargetBridge-Receiver/TBReceiverC/src").glob("*.[cm]")))
+    for path in files:
+        for number, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
+            if line.lstrip().startswith(("//", "*", "/*")) or any(k in line for k in OLD_NAME_KEPT):
+                continue
+            for match in SWIFT_LITERAL.finditer(line):
+                if OLD_NAME.search(match.group(1)):
+                    found.append(f"{path.relative_to(root)}:{number}: {match.group(1)[:80]}")
+    for path in (root / "TargetBridge-Shared/Languages").glob("*.json"):
+        for key, value in json.loads(path.read_text(encoding="utf-8")).items():
+            if OLD_NAME.search(value):
+                found.append(f"{path.relative_to(root)}: {key}: {value[:80]}")
+    for path in (sender / "TargetBridgeSupport/Info.plist", sender / "project.yml"):
+        for number, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
+            if OLD_NAME.search(line):
+                found.append(f"{path.relative_to(root)}:{number}: {line.strip()[:80]}")
+    return found
 
 
 def leftovers(root: Path) -> list[str]:
@@ -442,7 +493,7 @@ def leftovers(root: Path) -> list[str]:
         if "<string>" in line and re.search("targetbridge", line, re.IGNORECASE) \
                 and "_targetbridge._tcp" not in line and not any(a in line for a in ALLOWED):
             found.append(f"Info.plist: {line.strip()}")
-    return found
+    return found + old_name_leftovers(root)
 
 
 def main() -> int:
@@ -465,7 +516,7 @@ def main() -> int:
         return 1
     left = leftovers(root)
     if left:
-        print("rebrand: user-visible TargetBridge left over:", file=sys.stderr)
+        print("rebrand: user-visible TargetBridge or old product name left over:", file=sys.stderr)
         for line in left:
             print(f"  {line}", file=sys.stderr)
         return 1

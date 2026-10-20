@@ -1,6 +1,6 @@
 #!/bin/zsh
 #
-# Build, sign and package PWE iMac Display as one disk image holding both apps.
+# Build, sign and package PWE Screen Encore as one disk image holding both apps.
 #
 #   pwe/package.sh                 build + sign + dmg   (local check, not for release)
 #   pwe/package.sh --notarize      also notarise and staple the apps and the image
@@ -9,11 +9,11 @@
 #                                  and SDL2 already built in <dir>/{arm64,x86_64}
 #                                  (how NOTICE.txt tells users to relink FFmpeg)
 #
-# Output: pwe/dist/PWE-iMac-Display-<version>.dmg, SHA256SUMS.txt, and the FFmpeg
+# Output: pwe/dist/PWE-Screen-Encore-<version>.dmg, SHA256SUMS.txt, and the FFmpeg
 # source the receiver was built from (LGPL: offered from the same place).
 #
 # The repository holds TargetBridge's code unchanged. Everything here happens to
-# a scratch copy in $TMPDIR: pwe/rebrand.py turns it into PWE iMac Display, the
+# a scratch copy in $TMPDIR: pwe/rebrand.py turns it into PWE Screen Encore, the
 # two apps are built and signed there (iCloud Drive re-attaches
 # com.apple.FinderInfo to anything inside it, and codesign refuses a bundle that
 # carries it), and only the finished image comes back.
@@ -22,14 +22,19 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO="$PWD"
 
-NAME="PWE iMac Display"
-RECEIVER_NAME="PWE iMac Display Receiver"
+NAME="PWE Screen Encore"
+RECEIVER_NAME="PWE Screen Encore Receiver"
+RECEIVER_EXE="PWEScreenEncoreReceiver"
+# Kept from before the 2026-10-20 rename: privacy permissions, pairing keys and
+# settings belong to the bundle identifier (pwe/rebrand.py, DATA_NAME).
 RECEIVER_ID="com.pwegroup.pweimacdisplay.receiver"
 IDENTITY="Developer ID Application: Li Liu (2SQV3H5MH9)"
 PROFILE="${NOTARY_PROFILE:-PWE_NOTARY}"
 BUILD="$(date +%Y%m%d%H%M%S)"
 
 # A fresh directory per run, so two builds never delete or mix each other's files.
+# The caches under $TMPDIR keep their pre-rename names: renaming them would only
+# rebuild FFmpeg, SDL2 and libsodium for nothing.
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/pwe-imacdisplay-release.XXXXXX")"
 DEPS="${PWE_DEPS:-${TMPDIR:-/tmp}/pwe-imacdisplay-deps}"
 SRC="$WORK/src"
@@ -82,7 +87,7 @@ git ls-files -z | rsync -a --from0 --files-from=- ./ "$SRC/"
 # change what gets built. (2026-10-14: a branch switch mid-build removed
 # pwe/receiver-deps.sh and the build stopped halfway.)
 VERSION="$(<"$SRC/pwe/VERSION")"
-DMG="$DIST/PWE-iMac-Display-$VERSION.dmg"   # the name the release and the cask use
+DMG="$DIST/PWE-Screen-Encore-$VERSION.dmg"   # the name the release and the cask use
 python3 -I "$SRC/pwe/rebrand.py" "$SRC" --version "$VERSION" --build "$BUILD"
 
 # ---------------------------------------------------------------- disk-image tool
@@ -154,7 +159,7 @@ done
 RECEIVER="$OUT/$RECEIVER_NAME.app"
 mkdir -p "$RECEIVER/Contents/MacOS" "$RECEIVER/Contents/Resources/Languages"
 lipo -create "$WORK/tbreceiver-arm64" "$WORK/tbreceiver-x86_64" \
-  -output "$RECEIVER/Contents/MacOS/PWEiMacDisplayReceiver"
+  -output "$RECEIVER/Contents/MacOS/$RECEIVER_EXE"
 cp "$SRC/TargetBridge-Shared/Languages/"*.json "$RECEIVER/Contents/Resources/Languages/"
 # The receiver has its own icon: the same iMac, its frame in paper (pwe/icon/main.swift).
 iconutil -c icns "$SRC/pwe/assets/receiver/AppIcon.iconset" -o "$RECEIVER/Contents/Resources/AppIcon.icns"
@@ -167,7 +172,7 @@ cat > "$RECEIVER/Contents/Info.plist" <<EOF
 <dict>
     <key>CFBundleDevelopmentRegion</key><string>en</string>
     <key>CFBundleDisplayName</key><string>$RECEIVER_NAME</string>
-    <key>CFBundleExecutable</key><string>PWEiMacDisplayReceiver</string>
+    <key>CFBundleExecutable</key><string>$RECEIVER_EXE</string>
     <key>CFBundleIdentifier</key><string>$RECEIVER_ID</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
@@ -215,11 +220,11 @@ done
 
 echo "▸ Checking the bundles…"
 for ARCH in arm64 x86_64; do
-  MIN="$(vtool -arch $ARCH -show-build "$RECEIVER/Contents/MacOS/PWEiMacDisplayReceiver" | awk '/minos/ {print $2}')"
+  MIN="$(vtool -arch $ARCH -show-build "$RECEIVER/Contents/MacOS/$RECEIVER_EXE" | awk '/minos/ {print $2}')"
   [[ "$MIN" == 11.0 ]] || { echo "✗ receiver $ARCH needs macOS $MIN, not 11.0"; exit 1; }
 done
 # Dependency lines are indented; a universal binary also prints one header per slice.
-if otool -L "$RECEIVER/Contents/MacOS/PWEiMacDisplayReceiver" | awk '/^[[:space:]]/ {print $1}' \
+if otool -L "$RECEIVER/Contents/MacOS/$RECEIVER_EXE" | awk '/^[[:space:]]/ {print $1}' \
      | grep -v -E '^(/System/Library/|/usr/lib/)'; then
   echo "✗ the receiver links a library outside the system"; exit 1
 fi

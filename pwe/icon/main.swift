@@ -2,7 +2,7 @@ import AppKit
 import CoreGraphics
 import Foundation
 
-// The PWE iMac Display icon pair, drawn once and rasterised to every size the
+// The PWE Screen Encore icon pair, drawn once and rasterised to every size the
 // sender's asset catalogue and the receiver's .icns need. Nothing is hand-traced.
 //
 //     swiftc pwe/icon/main.swift pwe/icon/BrandMark.swift -o <tmp>/pwe-icon && <tmp>/pwe-icon pwe/assets

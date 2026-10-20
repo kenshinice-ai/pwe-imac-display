@@ -1,7 +1,7 @@
-PWE iMac Display
+PWE Screen Encore
 ================
 
-PWE iMac Display is made and signed by PWE Group. It is a build of TargetBridge,
+PWE Screen Encore is made and signed by PWE Group. It is a build of TargetBridge,
 with PWE's name, icon and signature, and with its own builds of FFmpeg, SDL2 and libsodium.
 
 Source code: https://github.com/kenshinice-ai/pwe-imac-display
@@ -14,12 +14,12 @@ Copyright (c) Marco Caciotti (swellweb) and the TargetBridge contributors.
 https://github.com/swellweb/targetBridge
 Licensed under the MIT License; the full text is in "TargetBridge LICENSE (MIT).txt".
 
-PWE iMac Display is not TargetBridge's official build, and TargetBridge's
+PWE Screen Encore is not TargetBridge's official build, and TargetBridge's
 authors are not responsible for it. Report problems with this build to
 https://github.com/kenshinice-ai/pwe-imac-display/issues.
 
 
-FFmpeg (in PWE iMac Display Receiver)
+FFmpeg (in PWE Screen Encore Receiver)
 -------------------------------------
 
 This software uses code of FFmpeg (https://ffmpeg.org), licensed under the
@@ -29,7 +29,7 @@ GNU Lesser General Public License version 2.1 or later. The full text is in
 Version: FFmpeg 9.0.2, unmodified source from
 https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz
 (SHA-256 8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e).
-The same file is attached to every PWE iMac Display release on GitHub, next to
+The same file is attached to every PWE Screen Encore release on GitHub, next to
 the disk image: https://github.com/kenshinice-ai/pwe-imac-display/releases
 
 It is configured as LGPL (no GPL or non-free parts), with only H.264 and HEVC
@@ -55,7 +55,7 @@ account or signing identity). This works from release 1.0.1 on:
      the disk image to pwe/dist/local/.
 
 
-SDL2 (in PWE iMac Display Receiver)
+SDL2 (in PWE Screen Encore Receiver)
 -----------------------------------
 
 Simple DirectMedia Layer, copyright (C) Sam Lantinga, licensed under the zlib

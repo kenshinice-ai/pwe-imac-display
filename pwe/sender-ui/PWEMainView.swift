@@ -320,7 +320,7 @@ struct PWEAboutView: View {
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(strings.appName).font(.title3.weight(.semibold))
-                    Text("\(strings.version) \(UpdateCheck.currentVersion)")
+                    Text("\(strings.forIMac) · \(strings.version) \(UpdateCheck.currentVersion)")
                         .font(.callout).foregroundStyle(.secondary)
                 }
             }

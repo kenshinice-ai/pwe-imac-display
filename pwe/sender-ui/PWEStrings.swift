@@ -30,20 +30,20 @@ struct PWEStrings {
     private func t(_ en: String, _ cn: String) -> String { zh ? cn : en }
 
     // Window
-    var appName: String { "PWE iMac Display" }
+    var appName: String { "PWE Screen Encore" }
     /// The full TargetBridge console's window title.
     var consoleTitle: String { t("Full Console", "完整控制台") }
     var about: String { t("About", "关于") }
-    var aboutApp: String { t("About PWE iMac Display", "关于 PWE iMac Display") }
+    var aboutApp: String { t("About PWE Screen Encore", "关于 PWE Screen Encore") }
 
     // Permission
     var permissionTitle: String { t("Allow Screen Recording", "允许录屏") }
     var permissionBody: String {
-        t("To show this Mac's screen on your iMac, PWE iMac Display needs your permission. It records only the screen it shows on your iMac, and sends it nowhere else.",
-          "要把这台 Mac 的画面显示到 iMac 上，PWE iMac Display 需要你的允许。它只录制要显示在 iMac 上的画面，不发往其他任何地方。")
+        t("To show this Mac's screen on your iMac, PWE Screen Encore needs your permission. It records only the screen it shows on your iMac, and sends it nowhere else.",
+          "要把这台 Mac 的画面显示到 iMac 上，PWE Screen Encore 需要你的允许。它只录制要显示在 iMac 上的画面，不发往其他任何地方。")
     }
     var permissionOpen: String { t("Open System Settings", "打开系统设置") }
-    var permissionRestart: String { t("Reopen PWE iMac Display", "重新打开 PWE iMac Display") }
+    var permissionRestart: String { t("Reopen PWE Screen Encore", "重新打开 PWE Screen Encore") }
     var permissionRestartHint: String {
         t("If it still asks after you allowed it, reopen the app once.",
           "如果允许之后仍然提示，重新打开一次 App。")
@@ -51,7 +51,7 @@ struct PWEStrings {
 
     // Searching
     var searchingTitle: String { t("Looking for your iMac", "正在找你的 iMac") }
-    var searchingStep1: String { t("On the iMac, open PWE iMac Display Receiver.", "在 iMac 上打开「PWE iMac Display Receiver」。") }
+    var searchingStep1: String { t("On the iMac, open PWE Screen Encore Receiver.", "在 iMac 上打开「PWE Screen Encore Receiver」。") }
     var searchingStep2: String { t("Connect the two Macs with a Thunderbolt cable.", "用雷雳线连接两台电脑。") }
     var searchingHint: String {
         t("Your iMac appears here by itself. A 2014 or 2015 iMac needs Apple's Thunderbolt 3 to Thunderbolt 2 Adapter.",
@@ -125,15 +125,15 @@ struct PWEStrings {
                 ? t("Check the cable. It connects again when the iMac is back.", "检查一下线。iMac 回来后会自动重新连接。")
                 : t("Check the cable. When the iMac is back, choose Try Again.", "检查一下线。iMac 回来后，点「重试」。")
         case .receiverQuit:
-            return t("Open PWE iMac Display Receiver on the iMac again.", "在 iMac 上重新打开「PWE iMac Display Receiver」。")
+            return t("Open PWE Screen Encore Receiver on the iMac again.", "在 iMac 上重新打开「PWE Screen Encore Receiver」。")
         case .couldNotConnect where overNetwork:
             // The cable hint would be wrong here: a network connection also needs the
             // receiver to allow it (local-network mode, see the install guide).
             return t("Over a network, the receiver on the iMac must allow network connections first. See the install guide.",
                      "经网络连接时，要先在 iMac 的接收端打开局域网模式，步骤见安装指南。")
         case .couldNotConnect:
-            return t("Check that PWE iMac Display Receiver is open on the iMac and the cable is in.",
-                     "确认 iMac 上的「PWE iMac Display Receiver」开着、线插好了。")
+            return t("Check that PWE Screen Encore Receiver is open on the iMac and the cable is in.",
+                     "确认 iMac 上的「PWE Screen Encore Receiver」开着、线插好了。")
         case .captureFailed:
             return t("Try again, or choose Standard under Picture in the menu bar.", "再试一次，或在菜单栏的「画面」里选「标准」。")
         }
@@ -149,8 +149,8 @@ struct PWEStrings {
            : ("From now on, brightness, picture and sound are under ", " in the menu bar.")
     }
     var menuBarTipSpoken: String {
-        t("From now on, brightness, picture and sound are under the PWE iMac Display icon in the menu bar.",
-          "以后在菜单栏的 PWE iMac Display 图标里调亮度、画面和声音。")
+        t("From now on, brightness, picture and sound are under the PWE Screen Encore icon in the menu bar.",
+          "以后在菜单栏的 PWE Screen Encore 图标里调亮度、画面和声音。")
     }
 
     // Preferences
@@ -161,7 +161,7 @@ struct PWEStrings {
     // Menu bar
     func menuConnectTo(_ name: String) -> String { t("Use \(name) as Display", "把 \(name) 用作显示器") }
     var settingsMenu: String { t("Settings…", "设置…") }
-    var quit: String { t("Quit PWE iMac Display", "退出 PWE iMac Display") }
+    var quit: String { t("Quit PWE Screen Encore", "退出 PWE Screen Encore") }
     func status(_ phase: PWEPhase) -> String {
         switch phase {
         case .needsPermission: return t("Needs Screen Recording permission", "需要录屏权限")
@@ -268,8 +268,8 @@ struct PWEStrings {
     // Settings › Advanced
     var allowUnencrypted: String { t("Allow unencrypted connections", "允许不加密的连接") }   // DRAFT
     var allowUnencryptedHint: String {
-        t("For iMacs that run the original TargetBridge or PWE iMac Display 1.0: picture and sound only, always with a warning.",
-          "用于运行 TargetBridge 原版或 PWE iMac Display 1.0 的 iMac：只传画面和声音，并始终提示未加密。")
+        t("For iMacs that run the original TargetBridge or a 1.0 receiver: picture and sound only, always with a warning.",
+          "用于运行 TargetBridge 原版或 1.0 版接收端的 iMac：只传画面和声音，并始终提示未加密。")
     }   // DRAFT
     var pairedIMacs: String { t("Paired iMacs", "已配对的 iMac") }
     var noPairedIMacs: String { t("None yet. An iMac is paired the first time you enter its code.", "还没有。第一次输入 iMac 的配对码时就会配对。") }   // DRAFT
@@ -321,8 +321,8 @@ struct PWEStrings {
     var accessibility: String { t("Accessibility", "辅助功能") }
     var open: String { t("Open…", "打开…") }
     func iMacPermissionHint(_ setting: String) -> String {
-        t("On the iMac: System Settings › Privacy & Security › \(setting) › PWE iMac Display Receiver.",
-          "在 iMac 上：系统设置 › 隐私与安全性 › \(setting) › PWE iMac Display Receiver。")
+        t("On the iMac: System Settings › Privacy & Security › \(setting) › PWE Screen Encore Receiver.",
+          "在 iMac 上：系统设置 › 隐私与安全性 › \(setting) › PWE Screen Encore Receiver。")
     }
     var networkLink: String { t("Also allow a network cable or Wi‑Fi", "也允许用网线或 Wi‑Fi 连接") }
     var networkLinkHint: String {
@@ -355,6 +355,8 @@ struct PWEStrings {
 
     // About
     var version: String { t("Version", "版本") }
+    /// Under the name in About: what the app is for. "for iMac" is a reference, not part of the name.
+    var forIMac: String { t("For iMac", "用于 iMac") }
     var credits: String {
         t("Based on TargetBridge by Marco Caciotti (swellweb) and its open-source community, MIT License. Built and signed by PWE Group.",
           "基于 TargetBridge（作者 Marco Caciotti，swellweb，及其开源社区，MIT 许可）。由 PWE Group 构建并签名。")

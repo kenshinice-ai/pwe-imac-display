@@ -9,7 +9,7 @@ import Foundation
 /// BrightnessControl.swift, MIT License, Copyright (c) 2026 Eriskhan Geshaev),
 /// as do the key codes below. The code here is written anew, not copied.
 enum PWEBrightnessRules {
-    /// Virtual displays made by TargetBridge, and so by PWE iMac Display, carry
+    /// Virtual displays made by TargetBridge, and so by PWE Screen Encore, carry
     /// this vendor ID (ReceiverBackedVirtualDisplaySession).
     static let virtualDisplayVendorID: UInt32 = 0xEEEE
 

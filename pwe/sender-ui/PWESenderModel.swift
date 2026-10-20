@@ -17,7 +17,7 @@ struct PWEReceiver: Equatable, Identifiable {
     /// What the receiver reports: hardware HEVC decode and its panel's width.
     var supportsHEVC = false
     var panelWidth: Int?
-    /// A PWE iMac Display receiver (any version), not upstream's TargetBridge.
+    /// A PWE receiver (any version), not upstream's TargetBridge.
     var runsPWE = true
 }
 
@@ -1169,7 +1169,7 @@ final class PWESenderModel: ObservableObject {
     func diagnosticReport() -> String {
         var lines: [String] = []
         let info = Bundle.main.infoDictionary ?? [:]
-        lines.append("PWE iMac Display \(info["CFBundleShortVersionString"] as? String ?? "?") (\(info["CFBundleVersion"] as? String ?? "?"))")
+        lines.append("PWE Screen Encore \(info["CFBundleShortVersionString"] as? String ?? "?") (\(info["CFBundleVersion"] as? String ?? "?"))")
         lines.append("macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
         lines.append("Date \(ISO8601DateFormatter().string(from: Date()))")
         lines.append("")

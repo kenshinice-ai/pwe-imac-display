@@ -120,7 +120,7 @@ int pwe_keystore_load_identity(struct pwe_keystore *ks, const char *name, struct
     if (pwe_sec_identity_generate(idn, name) != 0) return -1;
     buf[0] = RECORD_VERSION;
     memcpy(buf + 1, idn->priv, PWE_SEC_KEY_BYTES);
-    rc = item_write(ks, IDENTITY_ACCOUNT, "PWE iMac Display pairing key", buf, sizeof(buf));
+    rc = item_write(ks, IDENTITY_ACCOUNT, "PWE Screen Encore pairing key", buf, sizeof(buf));
     sodium_memzero(buf, sizeof(buf));
     return rc;
 }
@@ -242,7 +242,7 @@ int pwe_keystore_save_peer(void *ud, const uint8_t id[PWE_SEC_ID_BYTES],
     if (name_len) memcpy(buf + PEER_RECORD_MIN, name, name_len);
 
     char label[128];
-    snprintf(label, sizeof(label), "PWE iMac Display pairing: %.*s", (int)name_len, name ? name : "");
+    snprintf(label, sizeof(label), "PWE Screen Encore pairing: %.*s", (int)name_len, name ? name : "");
     return item_write(ks, account, label, buf, PEER_RECORD_MIN + name_len);
 }
 
