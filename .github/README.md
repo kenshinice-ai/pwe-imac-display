@@ -11,8 +11,8 @@
 
 ---
 
-> **1.0.0 已发布**：[下载 DMG](https://github.com/kenshinice-ai/pwe-imac-display/releases/latest)，或 `brew install --cask kenshinice-ai/tap/pwe-imac-display`。
-> 安装和连接步骤见 [安装指南](../docs/pwe/安装指南.md)。1.0 还没在真实的 Intel iMac 上运行过，遇到问题请开 issue。
+> **1.1 正在真机上测试，即将推出。**1.0.0 已撤下：它的声音功能不工作，1.1 会一起修好。
+> 想第一时间知道，可以点右上角的 Watch › Custom › Releases。
 
 ## 这是什么
 
