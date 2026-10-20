@@ -12,6 +12,7 @@
 #   5-7. renderers   -> Metal zero-copy with the receiver-drawn pointer, then
 #                       the copy fallback and the OpenGL fallback, each in a
 #                       fresh receiver (also skipped without ffmpeg)
+#   8. log file      -> every receiver above also wrote a stamped receiver.log
 #
 # The receiver runs with TB_RECEIVER_NO_BONJOUR=1 on TB_RECEIVER_TEST_PORT, so a
 # sender running on the same Mac cannot find or redial it and take its single
@@ -26,6 +27,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SRC="$ROOT/TBReceiverC"
 LOG="$(mktemp -t tb_smoke_receiver.err)"
+# PWE: the receivers' log file goes here, not to ~/Library/Logs.
+export TB_RECEIVER_LOG_DIR="$(mktemp -d -t tb_smoke_logs)"
 PORT=54399
 MOCK_PY="$SRC/tests/mock_sender.py"
 mock() { python3 "$MOCK_PY" --port "$PORT" "$@"; }
@@ -139,6 +142,16 @@ if (( ! NO_STREAM )) && command -v ffmpeg >/dev/null; then
     mock --mode stream --duration 3 || fail "mock stream exited non-zero"
     expect_log "falling back to OpenGL" "renderer fell back to OpenGL"
     expect_log "[disp] texture " "OpenGL rendered decoded video after the fallback"
+fi
+
+phase "Phase 8: log file"
+RECEIVER_LOG_FILE="$TB_RECEIVER_LOG_DIR/receiver.log"
+if [[ -s "$RECEIVER_LOG_FILE" ]] &&
+   grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:.]{12} \[main\] hello from sender$' "$RECEIVER_LOG_FILE" &&
+   grep -qF "[log] receiver " "$RECEIVER_LOG_FILE"; then
+    pass "receiver.log holds the stamped session lines"
+else
+    fail "receiver.log missing or without stamped lines ($RECEIVER_LOG_FILE)"
 fi
 
 print ""

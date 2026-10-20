@@ -23,6 +23,7 @@
 #include "tb_display_tweaks.h"
 #include "tb_i18n.h"
 #include "tb_login_item.h"
+#include "tb_log.h"
 #include "tb_trace.h"
 /* PWE: pairing and encrypted sessions */
 #include "pwe_secure.h"
@@ -171,34 +172,16 @@ static int tb_should_log_input_event(uint64_t count) {
     return count <= 20 || (count % 100) == 0;
 }
 
+/* PWE: stderr, like every other log line; tb_log.c copies it into the
+ * rotated receiver.log. (Upstream also appended each line to an
+ * input-debug.log that grew without limit.) Never pass a key code. */
 static void tb_receiver_input_log(const char *fmt, ...) {
     char message[1024];
     va_list args;
     va_start(args, fmt);
     vsnprintf(message, sizeof(message), fmt, args);
     va_end(args);
-
     fprintf(stderr, "%s\n", message);
-
-    const char *home = getenv("HOME");
-    if (!home || !*home) return;
-
-    char dir[PATH_MAX];
-    snprintf(dir, sizeof(dir), "%s/Library/Application Support/TargetBridge Receiver/Logs", home);
-    mkdir(dir, 0755);
-
-    char path[PATH_MAX];
-    snprintf(path, sizeof(path), "%s/input-debug.log", dir);
-    FILE *f = fopen(path, "a");
-    if (!f) return;
-
-    time_t now = time(NULL);
-    struct tm tm_now;
-    localtime_r(&now, &tm_now);
-    char timestamp[64];
-    strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%S%z", &tm_now);
-    fprintf(f, "%s %s\n", timestamp, message);
-    fclose(f);
 }
 
 static volatile sig_atomic_t g_term = 0;
@@ -234,7 +217,7 @@ static void tb_receiver_poll_permissions(struct app *a);
 static int tb_receiver_input_monitoring_trusted(void);
 static int tb_receiver_accessibility_trusted(void);
 static void send_receiver_info(struct app *a);
-static void tb_receiver_apply_input_event(const uint8_t *payload, size_t len);
+static void tb_receiver_apply_input_event(struct app *a, const uint8_t *payload, size_t len);
 static void tb_receiver_apply_input_control_mode(struct app *a, const uint8_t *payload, size_t len);
 static void tb_receiver_refresh_input_capture(struct app *a);
 static void tb_receiver_set_clipboard_text(const char *text);
@@ -928,12 +911,17 @@ static void tb_receiver_post_key(uint16_t key_code, int is_down) {
     CFRelease(event);
 }
 
-static void tb_receiver_apply_input_event(const uint8_t *payload, size_t len) {
+static void tb_receiver_apply_input_event(struct app *a, const uint8_t *payload, size_t len) {
     char kind[32];
     kind[0] = '\0';
     extract_json_string_field(payload, len, "\"kind\"", kind, sizeof(kind));
     if (kind[0] == '\0') return;
-    tb_receiver_input_log("[input][sender->receiver] received kind=%s len=%zu", kind, len);
+    /* PWE: sampled like the events sent, not one log line per mouse move. */
+    a->input_events_received += 1;
+    if (tb_should_log_input_event(a->input_events_received)) {
+        tb_receiver_input_log("[input][sender->receiver] received #%llu kind=%s len=%zu",
+                              (unsigned long long)a->input_events_received, kind, len);
+    }
 
     if (strcmp(kind, "move") == 0) {
         int dx = 0;
@@ -1407,7 +1395,7 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
         }
         break;
     case TB_PKT_INPUT_EVENT:
-        tb_receiver_apply_input_event(payload, len);
+        tb_receiver_apply_input_event(a, payload, len);
         break;
     case TB_PKT_INPUT_CONTROL:
         tb_receiver_apply_input_control_mode(a, payload, len);
@@ -1483,14 +1471,16 @@ static void tb_receiver_send_input_event(struct app *a,
     memcpy(pkt + 5, json, (size_t)len);
     a->input_events_sent += 1;
     if (tb_should_log_input_event(a->input_events_sent)) {
-        tb_receiver_input_log("[input][receiver->sender] send #%llu kind=%s dx=%d dy=%d sx=%d sy=%d key=%u mode=%s",
+        /* PWE: whether a key was sent, never which: the log is a file now,
+         * and the keys typed may be a password. */
+        tb_receiver_input_log("[input][receiver->sender] send #%llu kind=%s dx=%d dy=%d sx=%d sy=%d key=%s mode=%s",
                               (unsigned long long)a->input_events_sent,
                               kind ? kind : "?",
                               has_dx ? dx : 0,
                               has_dy ? dy : 0,
                               has_scroll_x ? scroll_x : 0,
                               has_scroll_y ? scroll_y : 0,
-                              has_key_code ? (unsigned int)key_code : 0,
+                              has_key_code ? "yes" : "no",
                               a->input_control_mode);
     }
     (void)tb_conn_send_packet(&a->conn, pkt, 5 + (size_t)len);
@@ -1518,14 +1508,14 @@ static void tb_receiver_send_input_button_event(struct app *a,
     memcpy(pkt + 5, json, (size_t)len);
     a->input_events_sent += 1;
     if (tb_should_log_input_event(a->input_events_sent)) {
-        tb_receiver_input_log("[input][receiver->sender] send #%llu kind=%s dx=%d dy=%d sx=%d sy=%d key=%u mode=%s",
+        tb_receiver_input_log("[input][receiver->sender] send #%llu kind=%s dx=%d dy=%d sx=%d sy=%d key=%s mode=%s",
                               (unsigned long long)a->input_events_sent,
                               kind ? kind : "?",
                               0,
                               0,
                               0,
                               0,
-                              0,
+                              "no",
                               a->input_control_mode);
     }
     (void)tb_conn_send_packet(&a->conn, pkt, 5 + (size_t)len);
@@ -2096,6 +2086,10 @@ static void tb_pwe_refresh_notice(struct app *a, uint64_t now) {
 
 static void tb_pwe_on_conn_event(struct tb_conn *c, int ev, void *ud) {
     struct app *a = (struct app *)ud;
+    /* That a code is on screen, never the code: the log is a file (tb_log.h). */
+    if (ev & PWE_SEC_EV_WRONG_CODE) fprintf(stderr, "[sec] the Mac sent a wrong pairing code\n");
+    if (ev & PWE_SEC_EV_SHOW_CODE) fprintf(stderr, "[sec] pairing code shown on screen\n");
+    if (ev & PWE_SEC_EV_HIDE_CODE) fprintf(stderr, "[sec] pairing code hidden\n");
     if (ev & TB_CONN_EV_READY) {
         a->session_plaintext = (ev & TB_CONN_EV_PLAINTEXT) != 0;
         fprintf(stderr, "[sec] session ready (%s)\n", a->session_plaintext ? "unencrypted" : "encrypted");
@@ -2228,6 +2222,16 @@ int main(int argc, char **argv) {
             return 0;
         }
         if (strcmp(argv[i], "--windowed") == 0) fullscreen = 0;
+    }
+
+    /* PWE: the log file, also when opened from Finder or at login (tb_log.h). */
+    {
+        char log_dir[PATH_MAX];
+        if (tb_log_default_dir("TargetBridge Receiver", log_dir, sizeof(log_dir)) &&
+            tb_log_start(log_dir, TB_LOG_MAX_BYTES) == 0) {
+            fprintf(stderr, "[log] receiver %s (%s) started, pid %d\n",
+                    TB_RECEIVER_VERSION, TB_RECEIVER_BUILD, (int)getpid());
+        }
     }
 
     char startup_language_pref[8];
