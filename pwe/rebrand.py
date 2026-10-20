@@ -82,6 +82,45 @@ RECEIVER_TITLES = {
     "fr": "PWE iMac Display Receiver",
 }
 
+# The receiver's words in PWE's two languages (docs/pwe/BRAND-iMac-Display-2026-10-20.md
+# R2). Upstream's flow has the person type an IP address on a MacBook; PWE finds
+# the iMac by itself, and a sender may be any Mac. macOS says "Open at Login",
+# and English labels take sentence case: emphasis is by weight, not capitals.
+PWE_STRINGS = {
+    "zh": {
+        "receiver.ui.subtitle": "等待 Mac 连接",
+        "receiver.ui.ip_thunderbolt_bridge": "雷雳网桥地址",
+        "receiver.ui.sender": "Mac",
+        "receiver.ui.stream_profile": "画面",
+        "receiver.ui.help_1": f"在 Mac 上打开 {NAME}，接上雷雳线即可。",
+        "receiver.ui.help_4": "按 L 切换语言",
+        "receiver.ui.details_back": "按 I 返回",
+        "receiver.ui.login_item": "登录时打开",
+        "receiver.login.title": "登录时打开接收端吗？",
+        "receiver.login.yes": "登录时打开",
+        "receiver.splash.connecting": "正在连接你的 Mac",
+        "receiver.status.waiting_for_sender": "等待 Mac 连接",
+    },
+    "en": {
+        "receiver.ui.subtitle": "Waiting for your Mac",
+        "receiver.ui.status": "Status",
+        "receiver.ui.sender": "Mac",
+        "receiver.ui.display": "Display",
+        "receiver.ui.stream_profile": "Picture",
+        "receiver.ui.language": "Language",
+        "receiver.ui.permissions": "Permissions",
+        "receiver.ui.login_item": "Open at Login",
+        "receiver.ui.ip_thunderbolt_bridge": "Thunderbolt Bridge address",
+        "receiver.ui.help_1": f"Open {NAME} on your Mac and connect a Thunderbolt cable.",
+        # Joined on one line on the details screen ("… · …"), like zh.
+        "receiver.ui.help_4": "Press L to change language",
+        "receiver.ui.details_back": "Press I to go back",
+        "receiver.splash.connecting": "Connecting to your Mac",
+        "receiver.status.waiting_for_sender": "Waiting for your Mac",
+        "receiver.login.title": "Open the receiver at login?",
+    },
+}
+
 LANGUAGE_FALLBACK = """\
             for code in Locale.preferredLanguages {
                 if code.hasPrefix("zh") { return .chinese }
@@ -142,6 +181,10 @@ def rebrand_languages(root: Path) -> None:
         # Upstream sets this title in capitals. "iMac" is never written in
         # capitals, so the PWE title is in ordinary case in every language.
         data["receiver.ui.title"] = RECEIVER_TITLES[path.stem]
+        for key, value in PWE_STRINGS.get(path.stem, {}).items():
+            if key not in data:
+                raise RebrandError(f"{path}: no key {key!r} to override")
+            data[key] = value
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
