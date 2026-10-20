@@ -1,9 +1,8 @@
-# PWE iMac Display — 交接
+# PWE Screen Encore（原名 PWE iMac Display）— 交接
 
 > 状态（2026-10-20）：1.0.0 已撤下（Lee 2026-10-20 定）：release 改回草稿、Homebrew cask 删除、README 写「1.1 即将推出」。不单独发 1.0.1，它的修复并进 1.1。
-> `security-1.0.1`（接收端加固 + 附加功能修复）正在合进 `pwe-1.1`（分支 `pwe-1.1-hardening`，未推送）。Marco 2026-10-20 已收到通知：修复改随 1.1 发，发布前至少提前一周告诉他。
+> 1.1 候选版（产品改名 **PWE Screen Encore**，Lee 2026-10-20 定；bundle ID、`pweimacdisplay://`、数据路径不变）在本地分支 `pwe-1.1`（0f82017，未推送），已含 1.0.1 的全部修复。包 `pwe/dist/local/PWE-Screen-Encore-1.1.0.dmg`（构建号 20261020225620）。**计划 2026-10-28（周三）发布**，Marco 2026-10-20 已收到一周通知。
 > 2026-10-20 给 Marco 发了补充报告（回在 10-14 那封的线程里）。他 10-16 把 #212–#216 合进了 `maint-3.6`，3.6.1 候选版是上游 PR #218。
-> 1.1 在本地分支 `pwe-1.1`（f2b39f8，未推送）。2026-10-20 合进了界面简化，并修了测试机清单 `docs/pwe/ISSUES-test-mac-2026-10-20.md` 里的 P1 和大部分 P2：菜单晚一拍、输码画面跟连接走、插拔和睡眠后直拨雷雳地址、Network Link 拨对地址、切换声音不重连、接收端日志文件、渲染方式可选（默认 OpenGL）、iMac 鼠标控制 Mac 的两处指针缺陷。发送端 312 个测试、接收端全部单元测试、两种架构的冒烟测试都通过；**都没上真机**。
 > 接收端 8 组单元测试、发送端 247 个测试、本地无签名打包都通过（2026-10-19，这台 M1）；**全部未在真机上验证**。测试清单 `docs/pwe/TEST-1.1-2026-10-19.md`。
 > 方案和决定：`docs/pwe/PLAN-1.1-2026-10-19.md`、`DESIGN-pairing-2026-10-19.md`、`RESEARCH-Metal-2026-10-19.md`（三份都不入库）。
 > pwestudio.site 产品页冻结中（Lee），方案在 `docs/pwe/SITE-PLAN.md`。
@@ -16,25 +15,25 @@
 
 ## 等 Lee
 
-- **[动手] 1.1 第二轮真机复测** — 按 `docs/pwe/TEST-1.1-round2-2026-10-20.md`（不入库）测 `pwe/dist/local/PWE-iMac-Display-1.1.0.dmg`（构建号 20261020193318）；重点是第 1–3 节（菜单、输码、插拔 ≤ 5 秒） · 不测则 2026-10-20 的修复都没有真机证据 · 自 2026-10-20
-- **[决定] iMac 上默认用哪种渲染方式** — 推荐先按复测第 5 节用新的同口径计时重测；在那之前默认 OpenGL · 不定则按 OpenGL 发 · 自 2026-10-20
-- **[决定] 确认新名字「PWE Screen Encore」** — Lee 2026-10-20 提出；符合品牌标准 08 的命名语法（PWE + 两个名词），网页搜索没有同名产品（相近的是 Barco Encore3、Encore Screens 幕布），商标库未查。确认后一次改完界面、文档、DMG 和接收端名（bundle ID 不动） · 不定则宣传物料出不了终稿 · 自 2026-10-20
-- **[决定] 推广按 `docs/pwe/LAUNCH-PLAN-2026-10-20.md` 走** — 推荐：1.0.1 安静发布不推广；1.1 过四道门（真机复测、名字、站点解冻、和 Marco 对过说法）再正式发布，中文渠道先、英文后 · 不定则不影响开发 · 自 2026-10-20
-- **[决定] `docs/pwe/TEST-1.1-2026-10-19.md`「G」节的六件事** — 推荐 E、F 组测完再定；不定则按现在的默认值发 · 不定不卡 1.0.1 · 自 2026-10-19
-- **[决定] 解冻 pwestudio.site 并加 `imacdisplay`** — 产品页方案在 `docs/pwe/SITE-PLAN.md`；1.1 的检查更新要在 `functions/_release.js` 加一条 `imacdisplay` · 不定则「检查更新」只会说「已经是最新版本」 · 自 2026-10-14
-- **[决定] 本仓库 Sponsor 按钮** — 组规矩 §0.9 要求放 `custom: [pwestudio.site/support]`，并由 Lee 同意打开 Sponsorships 开关；1.1 的「关于」里已有「支持 PWE…」 · 不定则仓库页没有支持入口 · 自 2026-10-15
-- **[决定] 下游发行版还是彻底分叉** — 推荐下游发行版；上游已合并我们的 5 个 PR，下游路线走得通 · 不定则不影响现在的工作 · 自 2026-10-14
+- **[动手] 在 iMac 上测候选版** — 按 `docs/pwe/TEST-1.1-rc-2026-10-21.md`（不入库）测 `pwe/dist/local/PWE-Screen-Encore-1.1.0.dmg`；先做 A 节（删掉旧名字的 App 再装）· 不测则 10-28 发不了，P1 要在 10-26 前修完 · 自 2026-10-21
+- **[决定] iMac 上默认用哪种渲染方式** — 推荐按测试清单第 5 节用同口径计时重测；在那之前默认 OpenGL · 不定则按 OpenGL 发 · 自 2026-10-20
+- **[决定] Homebrew cask 改名** — 推荐新 cask `pwe-screen-encore`，旧的 `pwe-imac-display` 已删，不再恢复 · 不定则 1.1 用旧名字的 cask · 自 2026-10-20
+- **[决定] 推广按 `docs/pwe/LAUNCH-PLAN-2026-10-20.md` 走** — 推荐：1.1 过真机测试、站点解冻后再推广，中文渠道先、英文后 · 不定则不影响发布 · 自 2026-10-20
+- **[决定] 解冻 pwestudio.site** — 产品页方案 `docs/pwe/SITE-PLAN.md`（已改成 `/screenencore/`）；检查更新要在 `functions/_release.js` 加 `screenencore` · 不定则「检查更新」只会说「已经是最新版本」 · 自 2026-10-14
+- **[动手] 推送 paradise-production 的品牌标准 08 v2.7** — 本地提交 aaa2ffb（§4.6 登记 Screen Encore 的 iMac 框）；在 paradise-production 运行 `git push origin main` · 不推则另一台 Mac 看不到 · 自 2026-10-20
+- **[决定] 本仓库 Sponsor 按钮** — 组规矩 §0.9 要求放 `custom: [pwestudio.site/support]`，并由 Lee 同意打开 Sponsorships 开关 · 不定则仓库页没有支持入口 · 自 2026-10-15
 
-## iMac 测试顺序（2026-10-20 起，Lee 做）
+## 1.1 发布步骤（2026-10-28，Claude 做，候选版测试的 P1 修完之后）
 
-先测 1.0.1，因为它决定 10-22 能不能发。
-
-1. **装 1.0.1 的接收端。** 按「八」节「升级 iMac 上的接收端」换上 `PWE-iMac-Display-1.0.1.dmg` 里的接收端，再给它重新允许辅助功能和输入监控。成功判据：「关于」里的构建号是 `20261020120408`。
-2. **真线连接。** MacBook 装 1.0.1 的发送端，用雷雳线连接。成功判据：几秒内 iMac 出画面。
-3. **声音和键鼠共享。** 打开声音和键鼠共享。成功判据：iMac 出声；在 iMac 上能操作 MacBook。
-4. **局域网被拒。** 拔掉雷雳线，只留 Wi‑Fi。在 1.0.1 发送端的「接收端」一栏选「手动输入」，填 iMac 的 Wi‑Fi 地址（「系统设置 > Wi‑Fi > 详细信息」里能看到）。成功判据：连不上。这证明 1.0.1 只接受直连。
-5. **换成 1.1。** 两边都换成 `PWE-iMac-Display-1.1.0.dmg` 里的 App，按 `docs/pwe/TEST-1.1-2026-10-19.md` 的 A–F 组测。
-6. **记结果。** 每一步的结果写进 `docs/pwe/BASELINE-iMac18,3.md`，第 1–4 步的结论写进本文件「八」节。
+1. 把 `pwe-1.1` 合进 `main`（不快进，留合并提交）。成功判据：`git merge-base --is-ancestor pwe-1.1 main` 退出码 0。
+2. 把 `docs/pwe/` 里还没入库、也不含安全细节的方案文档按需入库；`AUDIT-2026-10-15.md`、`DESIGN-pairing-2026-10-19.md`、`DRAFT-upstream-report-2026-10-19.md` 等含安全细节的继续不入库。
+3. 打标签 `git tag pwe-1.1.0`，在解锁的屏幕上运行 `pwe/package.sh --notarize`。成功判据：DMG 和两个 App 都是 `source=Notarized Developer ID`，`bundle checks passed`。
+4. 推送：`git push origin main pwe-1.1.0`，只推这一个标签。
+5. 发 release，上传 `pwe/dist/` 的三个文件；说明只写一般说法，不写复现细节。成功判据：`gh release download` 回来的文件通过 `shasum -c`。
+6. 在 `homebrew-tap` 加新 cask（按上面的决定）。成功判据：`brew fetch --cask` 显示 ✔。
+7. README 第一段改回下载说明。
+8. 回信告诉 Marco 已发布（10-14 那封的线程）。
+9. 删除本地分支 `security-1.0.1`（已全部并进 1.1）。
 
 ## 1.0.0 撤下后怎么恢复（2026-10-20）
 
