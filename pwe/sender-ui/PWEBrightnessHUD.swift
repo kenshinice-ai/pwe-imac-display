@@ -18,8 +18,10 @@ final class PWEBrightnessHUD {
     private var panel: NSPanel?
     private var hideWork: DispatchWorkItem?
 
-    func show(level: Double, on displayID: CGDirectDisplayID, label: String) {
-        guard let screen = NSScreen.screens.first(where: { $0.pweDisplayID == displayID }) else { return }
+    /// False when no screen has that display ID (nothing is shown).
+    @discardableResult
+    func show(level: Double, on displayID: CGDirectDisplayID, label: String) -> Bool {
+        guard let screen = NSScreen.screens.first(where: { $0.pweDisplayID == displayID }) else { return false }
         let workspace = NSWorkspace.shared
         model.level = PWEBrightnessRules.clamp(level)
         model.label = label
@@ -54,6 +56,7 @@ final class PWEBrightnessHUD {
         }
         hideWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.holdSeconds, execute: work)
+        return true
     }
 
     func hide() {

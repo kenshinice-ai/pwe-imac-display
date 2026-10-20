@@ -286,7 +286,14 @@ final class PWEBrightness: NSObject, ObservableObject {
         guard let session = session(for: display) else { return }
         let level = PWEBrightnessRules.step(from: session.brightness, up: key == .up, fine: fine)
         if level != session.brightness { session.brightness = level }
-        hud.show(level: level, on: display, label: PWEBrightnessStrings(language: service.language).hudLabel)
+        showHUD(level, on: display)
+    }
+
+    /// The keys' HUD, which a URL step shows too, so both look the same.
+    private func showHUD(_ level: Double, on display: CGDirectDisplayID) {
+        if !hud.show(level: level, on: display, label: PWEBrightnessStrings(language: service.language).hudLabel) {
+            NSLog("[pwe] brightness HUD: display \(display) is not among this Mac's screens")
+        }
     }
 
     // MARK: - URL
@@ -313,15 +320,20 @@ final class PWEBrightness: NSObject, ObservableObject {
             NSLog("[pwe] brightness URL: no iMac connected")
             return
         }
-        let label = PWEBrightnessStrings(language: service.language).hudLabel
         for session in targets {
             let level = PWEBrightnessRules.level(after: request, from: session.brightness)
             if level != session.brightness { session.brightness = level }
             // A step is a key press from another app, so it gets the key's HUD.
             // A level comes from a slider, which shows its own value.
-            if case .step = request, session.virtualDisplayID != kCGNullDirectDisplay {
-                hud.show(level: level, on: session.virtualDisplayID, label: label)
+            guard case .step = request else { continue }
+            let display = session.virtualDisplayID
+            guard display != kCGNullDirectDisplay else {
+                NSLog("[pwe] brightness URL: the iMac has no display yet; no HUD")
+                continue
             }
+            // After the Apple event has been answered, as a key's HUD shows after
+            // its event: `open` activates this app while the event is handled.
+            DispatchQueue.main.async { self.showHUD(level, on: display) }
         }
     }
 
@@ -362,8 +374,8 @@ struct PWEBrightnessStrings {
 
     var toggle: String { t("Brightness keys adjust the iMac", "用亮度键调 iMac") }
     var detail: String {
-        t("With the pointer on the iMac, F1 and F2 change its brightness.",
-          "指针在 iMac 上时，F1、F2 调 iMac 的亮度。")
+        t("With the pointer on the iMac, F1 and F2 change its brightness. On a Mac with a Touch Bar, hold fn and press F1 or F2.",
+          "指针在 iMac 上时，F1、F2 调 iMac 的亮度。有触控栏的 Mac：按住 fn 再按 F1 或 F2。")
     }
     var why: String {
         t("To notice these keys, PWE iMac Display needs Accessibility permission. It looks only at F1, F2 and the brightness keys, and records nothing.",
