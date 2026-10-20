@@ -53,6 +53,8 @@ struct PWEEngineState {
     var status: TBDisplaySenderStatusState?
     var isConnected = false
     var isStreaming = false
+    /// The current capture has sent its first encoded frame: the picture is up.
+    var hasFirstFrame = false
     /// The engine is keeping a connection up and retries it by itself.
     var retrying = false
     var receivers: [PWEReceiver] = []
@@ -61,6 +63,20 @@ struct PWEEngineState {
     var security: PWESecurityState = .none
     /// Why the code step asks for a new code (PWEPairingRules.note).
     var codeNote: PWECodeNote?
+}
+
+extension PWEEngineState {
+    /// What one engine session says. The model adds the permission, the
+    /// retrying, the receivers and the stale-failure rule; the connection
+    /// phase tests read a real session through this same initializer.
+    @MainActor init(session: TBDisplaySenderSession?) {
+        self.init()
+        status = session?.statusState
+        isConnected = session?.isConnected ?? false
+        isStreaming = session?.isStreaming ?? false
+        hasFirstFrame = session?.pweHasFirstFrame ?? false
+        security = session?.pweSecurity ?? .none
+    }
 }
 
 /// Engine state in, phase out: no engine, no clock, so every rule has a test
@@ -119,6 +135,10 @@ enum PWEPhaseRules {
         if asksPerson(state.security) { return .security(target, state.security) }
 
         if let status = state.status {
+            // The picture is up: the engine streams and this capture has sent a
+            // frame. A status that still reads connecting or "waiting for the
+            // picture" is stale, never the truth (T33, test Mac 2026-10-20).
+            if state.isStreaming, state.hasFirstFrame, failure(status) == nil { return .connected(target) }
             switch status {
             case .connecting, .testingCable:
                 // A retry reaching for an iMac that just failed: still the same failure.
@@ -149,6 +169,22 @@ enum PWEPhaseRules {
         if let target { return .ready(target) }
         if state.receivers.count > 1 { return .choose(state.receivers) }
         return .searching
+    }
+}
+
+extension PWEPhase {
+    /// The phase in a few words, for the log.
+    var logName: String {
+        switch self {
+        case .needsPermission: return "needsPermission"
+        case .searching: return "searching"
+        case .choose(let receivers): return "choose(\(receivers.count))"
+        case .ready: return "ready"
+        case .connecting(_, let stage): return "connecting(\(stage))"
+        case .connected: return "connected"
+        case .interrupted(_, let reason, let retrying): return "interrupted(\(reason)\(retrying ? ", retrying" : ""))"
+        case .security(_, let security): return "security(\(security))"
+        }
     }
 }
 
@@ -323,6 +359,8 @@ final class PWESenderModel: ObservableObject {
     private var previewSecurity: PWESecurityState = .none
     /// The iMacs this Mac has paired with (keychain), read when Settings asks.
     @Published private(set) var pairedIMacs: [PWEPairedReceiver] = []
+    /// The name of the iMac the last Forget could not forget; nil after a success.
+    @Published private(set) var forgetFailure: String?
     /// Why the code step asks for a new code (PWEPairingRules).
     @Published private(set) var codeNote: PWECodeNote?
     /// When the iMac's pairing lock ends, while it is locked.
@@ -359,6 +397,12 @@ final class PWESenderModel: ObservableObject {
     /// Console shows up too.
     static let pictureChoices: [TBDisplayCapturePreset] = [.native5k60Experimental, .native5k, .standard1440p]
 
+    /// Where engine changes reach the model. The main queue, not RunLoop.main:
+    /// Combine's RunLoop scheduler runs only in the default mode, so no change
+    /// reached the window or the menu bar while a menu was open or a window was
+    /// being dragged (PWEConnectionPhaseTests).
+    nonisolated static let engineUpdates = DispatchQueue.main
+
     init(service: TBDisplaySenderService, defaults: UserDefaults = .standard) {
         self.service = service
         self.defaults = defaults
@@ -374,7 +418,7 @@ final class PWESenderModel: ObservableObject {
         resetNetworkLinkOnce()
 
         service.objectWillChange
-            .receive(on: RunLoop.main)
+            .receive(on: Self.engineUpdates)
             .sink { [weak self] _ in
                 self?.observeSessions()
                 self?.refresh()
@@ -382,7 +426,7 @@ final class PWESenderModel: ObservableObject {
             .store(in: &cancellables)
         NotificationCenter.default
             .publisher(for: TBSenderAutomation.automaticConnectionDidChange)
-            .receive(on: RunLoop.main)
+            .receive(on: Self.engineUpdates)
             .sink { [weak self] _ in self?.refresh() }
             .store(in: &cancellables)
         // Coming back from System Settings is when a permission or a login item
@@ -414,9 +458,10 @@ final class PWESenderModel: ObservableObject {
     /// A fixed phase for snapshots: no engine, nothing changes.
     init(preview phase: PWEPhase, firstConnection: Bool = false, inputRole: PWEInputRole = .off,
          security: PWESecurityState = .none, paired: [PWEPairedReceiver] = [],
-         codeNote: PWECodeNote? = nil, lockEnd: Date? = nil) {
+         codeNote: PWECodeNote? = nil, lockEnd: Date? = nil, forgetFailure: String? = nil) {
         self.previewSecurity = security
         self.pairedIMacs = paired
+        self.forgetFailure = forgetFailure
         self.codeNote = codeNote
         self.lockEnd = lockEnd
         self.service = nil
@@ -456,6 +501,7 @@ final class PWESenderModel: ObservableObject {
         heldFailure = PWEPhaseRules.heldFailure(after: heldFailure, state)
         let next = PWEPhaseRules.phase(state, held: heldFailure)
         if next != phase { phase = next }
+        logTransition(state)
         followPairing(state.security)
         updateFirstConnection()
         rememberShowingPicture()
@@ -486,7 +532,7 @@ final class PWESenderModel: ObservableObject {
         sessionCancellables.removeAll()
         for session in service?.sessions ?? [] {
             session.objectWillChange
-                .receive(on: RunLoop.main)
+                .receive(on: Self.engineUpdates)
                 .sink { [weak self] _ in self?.refresh() }
                 .store(in: &sessionCancellables)
         }
@@ -496,15 +542,37 @@ final class PWESenderModel: ObservableObject {
         if Date() > staleFailureUntil { staleFailure = nil }
         let fresh = PWEPhaseRules.freshStatus(session?.statusState, stale: staleFailure)
         if !fresh.stillStale { staleFailure = nil }
-        return PWEEngineState(
-            hasPermission: CGPreflightScreenCaptureAccess(),
-            status: fresh.status,
-            isConnected: session?.isConnected ?? false,
-            isStreaming: session?.isStreaming ?? false,
-            retrying: retrying,
-            receivers: receivers(service),
-            target: current(service),
-            security: session?.pweSecurity ?? .none)
+        var state = PWEEngineState(session: session)
+        state.hasPermission = CGPreflightScreenCaptureAccess()
+        state.status = fresh.status
+        state.retrying = retrying
+        state.receivers = receivers(service)
+        state.target = current(service)
+        return state
+    }
+
+    /// Connection attempts so far: one each time the engine starts to dial.
+    private var attempt = 0
+    private var engineWasDialing = false
+    private var lastTransition = ""
+
+    /// One log line whenever the engine's status, the window's phase or the
+    /// menu bar's words change, numbered by connection attempt, so the three
+    /// can be matched in one log (T33). The menu's status line and its icon
+    /// are drawn from `phase` alone (PWEStatusMenu).
+    private func logTransition(_ state: PWEEngineState) {
+        let raw = session?.statusState
+        let dialing: Bool
+        if case .connecting = raw { dialing = true } else { dialing = false }
+        if dialing, !engineWasDialing { attempt += 1 }
+        engineWasDialing = dialing
+        let engine = raw.map { String(describing: $0) } ?? "none"
+        let line = "[pwe] attempt \(attempt): engine=\(engine) streaming=\(state.isStreaming) "
+            + "firstFrame=\(state.hasFirstFrame) security=\(state.security) retrying=\(state.retrying), "
+            + "phase=\(phase.logName), menu=\"\(PWEStrings(language: .english).status(phase))\""
+        guard line != lastTransition else { return }
+        lastTransition = line
+        NSLog("%@", line)
     }
 
     private func receivers(_ service: TBDisplaySenderService) -> [PWEReceiver] {
@@ -1009,8 +1077,8 @@ final class PWESenderModel: ObservableObject {
     func forgetThisIMac() {
         guard let session else { return }
         if let id = PWEPairingStore.shared.expectedReceiverID(forHint: session.pweReceiverHint) {
-            PWEPairingStore.shared.forget(receiverID: PWEPairingStore.hex(id))
-            NSLog("[pwe] forgot the paired iMac \(session.pweReceiverHint)")
+            let forgot = PWEPairingStore.shared.forget(receiverID: PWEPairingStore.hex(id))
+            NSLog("[pwe] \(forgot ? "forgot" : "could not forget") the paired iMac \(session.pweReceiverHint)")
         }
         refreshPairedIMacs()
         retrySecurely()
@@ -1035,10 +1103,28 @@ final class PWESenderModel: ObservableObject {
         pairedIMacs = PWEPairingStore.shared.pairedReceivers().sorted { $0.pairedAt > $1.pairedAt }
     }
 
+    /// Settings › Advanced › Forget. Deletes the iMac's key and hints; an
+    /// encrypted session with it ends, so the next connection asks for its code.
+    /// A failure stays on screen (forgetFailure) instead of passing silently (T37).
     func forget(_ receiver: PWEPairedReceiver) {
         guard service != nil else { return }
-        PWEPairingStore.shared.forget(receiverID: receiver.id)
-        NSLog("[pwe] forgot the paired iMac \(receiver.name)")
+        let store = PWEPairingStore.shared
+        // Decided before the hints go: they are how a session names its iMac's key.
+        let endsSession = session.map {
+            PWEPairingRules.sessionUses(receiver, security: $0.pweSecurity,
+                                        expectedID: store.expectedReceiverID(forHint: $0.pweReceiverHint))
+        } ?? false
+        if store.forget(receiverID: receiver.id) {
+            forgetFailure = nil
+            NSLog("[pwe] forgot the paired iMac \(receiver.name) (\(receiver.id))")
+            if endsSession {
+                NSLog("[pwe] ending the encrypted session with the iMac just forgotten")
+                disconnect()
+            }
+        } else {
+            forgetFailure = receiver.name
+            NSLog("[pwe] could not forget the paired iMac \(receiver.name) (\(receiver.id)); it stays paired")
+        }
         refreshPairedIMacs()
     }
 

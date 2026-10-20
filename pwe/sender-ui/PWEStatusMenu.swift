@@ -19,6 +19,8 @@ final class PWEStatusMenu: NSObject {
     private var cancellables = Set<AnyCancellable>()
     private let actions = PWEMenuActionQueue()
     private var sliderTargets: [TBMenuSliderTarget] = []
+    /// The menu's first line, kept current while the menu is open.
+    private weak var statusLine: NSMenuItem?
     /// Snapshots: the words without an engine to ask.
     private let previewLanguage: TBDisplaySenderLanguage?
 
@@ -29,7 +31,11 @@ final class PWEStatusMenu: NSObject {
         installItem()
         model.$phase
             .removeDuplicates()
-            .sink { [weak self] phase in self?.updateButton(phase) }
+            .sink { [weak self] phase in
+                self?.updateButton(phase)
+                // An open menu is not rebuilt: its first line follows here.
+                if let self, let line = self.statusLine { line.title = self.strings.status(phase) }
+            }
             .store(in: &cancellables)
         // A code to type or a question to answer needs the window, even when the
         // person only ever uses the menu bar: bring it up once per question.
@@ -102,7 +108,9 @@ final class PWEStatusMenu: NSObject {
         sliderTargets.removeAll()
         let strings = strings
 
-        menu.addItem(disabled(strings.status(model.phase)))
+        let line = disabled(strings.status(model.phase))
+        statusLine = line
+        menu.addItem(line)
         if model.isUnencrypted {
             let warning = disabled(strings.notEncrypted)
             warning.image = NSImage(systemSymbolName: "lock.open.fill", accessibilityDescription: nil)

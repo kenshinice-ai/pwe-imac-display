@@ -282,6 +282,11 @@ struct PWEStrings {
     func forgetConfirm(_ name: String) -> String {
         t("Forget “\(name)”? You’ll enter its pairing code again next time.", "忘记“\(name)”？下次连接要重新输入配对码。")
     }
+    /// DRAFT (T37): Forget could not delete the keychain item.
+    func forgetFailed(_ name: String) -> String {
+        t("Couldn’t forget “\(name)”. This Mac’s keychain refused; it is still paired.",
+          "没能忘记“\(name)”：本机钥匙串拒绝了删除，它仍是已配对状态。")
+    }
     /// DRAFT (D3)
     var inputNeedsEncryption: String {
         t("Works only on an encrypted connection.", "只在加密连接中可用。")
@@ -298,7 +303,9 @@ struct PWEStrings {
     func renderingName(_ rendering: PWERendering) -> String {
         switch rendering {
         case .openGL: return t("Lowest latency (OpenGL)", "低延迟（OpenGL）")
-        case .metal: return t("Lower power (Metal)", "省电（Metal）")
+        // Measured: 25–40 % less of the iMac's CPU (PWERendering). Power was
+        // never measured, so the name does not promise it (audit P2-02).
+        case .metal: return t("Less CPU (Metal)", "占用更少（Metal）")
         }
     }
     var iMacVolume: String { t("iMac volume", "iMac 音量") }

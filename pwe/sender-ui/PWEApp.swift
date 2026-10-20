@@ -209,12 +209,17 @@ enum PWESnapshot {
                 PWEPairedReceiver(id: "a1", name: "Studio iMac", pairedAt: day),
                 PWEPairedReceiver(id: "b2", name: "Office iMac", pairedAt: day.addingTimeInterval(-86_400 * 3)),
             ])
+            let forgetFailed = PWESenderModel(preview: .connected(imac), paired: [
+                PWEPairedReceiver(id: "a1", name: "Studio iMac", pairedAt: day),
+            ], forgetFailure: "Studio iMac")
             let tabs: [(String, String, AnyView)] = [
                 ("s1-general", strings.general, AnyView(PWEGeneralSettings(model: connected, updates: UpdateCheck(), strings: strings))),
                 ("s2-keyboard-mouse", strings.keyboardMouse, AnyView(PWEInputSettings(model: connected, strings: strings))),
                 ("s2b-keyboard-mouse-on", strings.keyboardMouse, AnyView(PWEInputSettings(model: sharing, strings: strings))),
                 ("s3-advanced", strings.advancedTab, AnyView(PWEAdvancedSettings(model: connected, strings: strings))),
                 ("s3b-advanced-paired", strings.advancedTab, AnyView(PWEAdvancedSettings(model: paired, strings: strings))),
+                ("s3c-advanced-forget-failed", strings.advancedTab,
+                 AnyView(PWEAdvancedSettings(model: forgetFailed, strings: strings))),
             ]
             for (name, title, tab) in tabs {
                 write(settingsFrame(title: title, tab), to: directory.appendingPathComponent("\(stem)-\(name).png"))
