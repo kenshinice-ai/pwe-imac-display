@@ -14,6 +14,7 @@
  */
 
 #include "net.h"
+#include "audio_ring.h"
 #include "decoder.h"
 #include "display.h"
 #include "idle_watchdog.h"
@@ -40,6 +41,10 @@
 
 #ifndef TB_RECEIVER_OFFER_LOGIN_ITEM
 #define TB_RECEIVER_OFFER_LOGIN_ITEM 0
+#endif
+
+#ifndef TB_RECEIVER_DIRECT_LINK_ONLY
+#define TB_RECEIVER_DIRECT_LINK_ONLY 0
 #endif
 
 #include <SDL.h>
@@ -131,9 +136,7 @@ struct app {
     uint64_t audio_retry_after_ms;
 
     uint8_t audio_buf[AUDIO_BUF_CAP];
-    int     audio_buf_head;
-    int     audio_buf_tail;
-    int     audio_buf_size;
+    struct tb_audio_ring audio_ring;
 
     uint64_t input_events_sent;
     uint64_t input_events_received;
@@ -617,6 +620,31 @@ static void tb_pwe_set_pref_bool(CFStringRef app_id, CFStringRef key, int value)
     (void)CFPreferencesAppSynchronize(app_id);
 }
 
+/* Senders off the cable (Wi-Fi, LAN) may connect at all: always in a build
+ * without DIRECT_LINK_ONLY, otherwise only after the user opts in with
+ *   defaults write <receiver bundle id> AllowLocalNetwork -bool true
+ * Read on every accept, so the setting needs no restart. Even then such a
+ * sender must resume an encrypted session of a paired Mac (tb_net_accept_policy). */
+static int tb_pwe_network_allowed(const struct app *a) {
+    return !TB_RECEIVER_DIRECT_LINK_ONLY ||
+           tb_pwe_pref_bool(a->app_id, CFSTR("AllowLocalNetwork"), 0);
+}
+
+/* At most one line every 10 s, so a peer that keeps redialling cannot flood
+ * (and rotate away) the log file. */
+static void tb_pwe_log_refused(const char *ifname) {
+    static uint64_t last_ms;
+    static unsigned long quiet;
+    const uint64_t t = now_ms();
+    if (last_ms && t - last_ms < 10000) { quiet++; return; }
+    fprintf(stderr, "[net] refused a sender on %s: not a direct link "
+            "(AllowLocalNetwork is off)", ifname && *ifname ? ifname : "an unknown interface");
+    if (quiet) fprintf(stderr, "; %lu more since the last report", quiet);
+    fputc('\n', stderr);
+    last_ms = t;
+    quiet = 0;
+}
+
 /* Interface index of the interface that holds this IPv4 address; 0 if none. */
 static unsigned int tb_pwe_ifindex_for_ip(const char *ip) {
     if (!ip || !*ip) return 0;
@@ -1089,27 +1117,10 @@ static void handle_raw_frame(struct app *a, const uint8_t *p, size_t len) {
     a->frames++;
 }
 
-static void ring_read(struct app *a, Uint8 *dst, int len) {
-    int first = AUDIO_BUF_CAP - a->audio_buf_tail;
-    if (first >= len) {
-        memcpy(dst, a->audio_buf + a->audio_buf_tail, len);
-    } else {
-        memcpy(dst, a->audio_buf + a->audio_buf_tail, first);
-        memcpy(dst + first, a->audio_buf, len - first);
-    }
-    a->audio_buf_tail = (a->audio_buf_tail + len) % AUDIO_BUF_CAP;
-    a->audio_buf_size -= len;
-}
-
 static void audio_callback(void *userdata, Uint8 *stream, int len) {
     struct app *a = (struct app *)userdata;
-    if (a->audio_buf_size >= len) {
-        ring_read(a, stream, len);
-    } else {
-        int available = a->audio_buf_size;
-        if (available > 0) ring_read(a, stream, available);
-        memset(stream + available, 0, len - available);
-    }
+    int copied = tb_audio_ring_pop(&a->audio_ring, stream, len);
+    if (copied < len) memset(stream + copied, 0, (size_t)(len - copied));
 }
 
 /* Keep the output device closed while Receiver is waiting for a Sender.  On
@@ -1162,9 +1173,7 @@ static void tb_audio_close_for_idle(struct app *a) {
         fprintf(stderr, "[main] SDL audio device closed for idle Receiver\n");
     }
 
-    a->audio_buf_head = 0;
-    a->audio_buf_tail = 0;
-    a->audio_buf_size = 0;
+    tb_audio_ring_reset(&a->audio_ring);
     a->audio_retry_after_ms = 0;
 }
 
@@ -1375,25 +1384,8 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
 
             // Limit audio backlog to 150ms (150 * 192 = 28800 bytes) to cushion
             // against network / scheduling jitter while still keeping playout tight.
-            const int cap_bytes = 28800;
-            if (a->audio_buf_size + len > cap_bytes) {
-                int excess = (a->audio_buf_size + len) - cap_bytes;
-                a->audio_buf_tail = (a->audio_buf_tail + excess) % AUDIO_BUF_CAP;
-                a->audio_buf_size -= excess;
-            }
-
-            // Write payload to circular buffer
-            if (a->audio_buf_size + (int)len <= AUDIO_BUF_CAP) {
-                int first = AUDIO_BUF_CAP - a->audio_buf_head;
-                if (first >= (int)len) {
-                    memcpy(a->audio_buf + a->audio_buf_head, payload, len);
-                } else {
-                    memcpy(a->audio_buf + a->audio_buf_head, payload, first);
-                    memcpy(a->audio_buf, payload + first, len - first);
-                }
-                a->audio_buf_head = (a->audio_buf_head + (int)len) % AUDIO_BUF_CAP;
-                a->audio_buf_size += (int)len;
-            }
+            // The ring keeps its size within bounds whatever the packet length.
+            tb_audio_ring_push(&a->audio_ring, payload, len, 28800);
 
             SDL_UnlockAudioDevice(a->audio_device);
 
@@ -2300,6 +2292,11 @@ int main(int argc, char **argv) {
     a.server_fd = -1;
     a.client_fd = -1;
     a.app_id = CFSTR("com.targetbridge.receiver");
+    tb_audio_ring_init(&a.audio_ring, a.audio_buf, AUDIO_BUF_CAP);
+    fprintf(stderr, "[net] senders accepted over %s\n",
+            tb_pwe_network_allowed(&a)
+                ? "every interface (off the cable: paired, encrypted sessions only)"
+                : "direct links only (Thunderbolt Bridge, USB, loopback)");
     if (tb_receiver_load_or_create_id(a.receiver_id, sizeof(a.receiver_id), a.app_id) == 0) {
         fprintf(stderr, "[identity] receiver ID ready\n");
     } else {
@@ -2446,6 +2443,23 @@ int main(int argc, char **argv) {
         /* Accept new client */
         if (a.client_fd < 0) {
             int c = tb_net_accept(a.server_fd);
+            /* PWE: decide from the link alone, before any byte reaches the
+             * parser. Pairing only over the cable, and loopback is not the cable. */
+            char ifname[IFNAMSIZ] = "";
+            struct tb_accept_policy policy = { 0, 0, 0 };
+            if (c >= 0) {
+                int direct = tb_net_client_is_direct_link(c, ifname, sizeof(ifname));
+                enum tb_link_kind link = tb_net_link_kind(ifname, direct);
+#if TB_RECEIVER_TEST_HOOKS
+                if (getenv("TB_RECEIVER_TEST_LOOPBACK_IS_CABLE") && link == TB_LINK_LOOPBACK) link = TB_LINK_CABLE;
+#endif
+                policy = tb_net_accept_policy(link, tb_pwe_network_allowed(&a), a.allow_plaintext);
+                if (!policy.accept) {
+                    tb_pwe_log_refused(ifname);
+                    close(c);
+                    c = -1;
+                }
+            }
             if (c >= 0) {
                 a.client_fd = c;
                 a.have_video_frame = 0;
@@ -2454,20 +2468,14 @@ int main(int argc, char **argv) {
                 a.reported_true_tone = -1;
                 a.last_recv_ms = t;
                 SDL_DisableScreenSaver();
-                /* PWE: pairing only over the cable, and loopback is not the cable. */
-                char ifname[IFNAMSIZ] = "";
-                int direct = tb_net_client_is_direct_link(c, ifname, sizeof(ifname)) &&
-                             strncmp(ifname, "lo", 2) != 0;
-#if TB_RECEIVER_TEST_HOOKS
-                if (getenv("TB_RECEIVER_TEST_LOOPBACK_IS_CABLE") && strncmp(ifname, "lo", 2) == 0) direct = 1;
-#endif
                 struct tb_conn_config conn_cfg = {
-                    a.have_keys ? &a.identity : NULL, &a.store, &a.gate, direct, a.allow_plaintext
+                    a.have_keys ? &a.identity : NULL, &a.store, &a.gate, policy.pairing, policy.plaintext
                 };
                 tb_conn_init(&a.conn, c, &conn_cfg, on_packet, tb_pwe_on_conn_event, &a);
                 a.session_plaintext = 0;
                 a.pwe_test_frames_at_connect = a.frames;
-                fprintf(stderr, "[main] client connected (%s%s)\n", ifname[0] ? ifname : "?", direct ? ", cable" : "");
+                fprintf(stderr, "[main] client connected (%s%s)\n", ifname[0] ? ifname : "?",
+                        policy.pairing ? ", cable" : (policy.plaintext ? "" : ", encrypted only"));
                 tb_receiver_refresh_input_capture(&a);
                 /* The display profile goes out once the connection is secure (or
                  * accepted unencrypted): tb_pwe_on_conn_event, TB_CONN_EV_READY. */

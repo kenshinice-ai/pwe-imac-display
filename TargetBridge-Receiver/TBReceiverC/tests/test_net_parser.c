@@ -97,6 +97,41 @@ static void test_direct_link_classifier(void) {
     CHECK(!tb_net_is_direct_link(NULL, "169.254.1.1", 0), "missing interface is not direct");
 }
 
+/* The accept decision (PWE): every link kind x AllowLocalNetwork x
+ * compatibility mode. A refused client must also get no other right. */
+static void test_accept_policy(void) {
+    CHECK(tb_net_link_kind("lo0", 1) == TB_LINK_LOOPBACK, "lo0 is loopback");
+    CHECK(tb_net_link_kind("bridge0", 1) == TB_LINK_CABLE, "bridge0 is the cable");
+    CHECK(tb_net_link_kind("en5", 1) == TB_LINK_CABLE, "USB link-local is the cable");
+    CHECK(tb_net_link_kind("en1", 0) == TB_LINK_NETWORK, "Wi-Fi is the network");
+    CHECK(tb_net_link_kind("lo0", 0) == TB_LINK_NETWORK, "not direct wins over the name");
+    CHECK(tb_net_link_kind("", 1) == TB_LINK_NETWORK, "unknown interface is the network");
+    CHECK(tb_net_link_kind(NULL, 1) == TB_LINK_NETWORK, "missing interface is the network");
+
+    for (int network = 0; network <= 1; network++) {
+        for (int compat = 0; compat <= 1; compat++) {
+            struct tb_accept_policy p;
+
+            p = tb_net_accept_policy(TB_LINK_CABLE, network, compat);
+            CHECK(p.accept && p.pairing, "cable: accepted, may pair");
+            CHECK(p.plaintext == compat, "cable: unencrypted only in compatibility mode");
+
+            p = tb_net_accept_policy(TB_LINK_LOOPBACK, network, compat);
+            CHECK(p.accept && !p.pairing, "loopback: accepted, never pairs");
+            CHECK(p.plaintext == compat, "loopback: unencrypted only in compatibility mode");
+
+            p = tb_net_accept_policy(TB_LINK_NETWORK, network, compat);
+            CHECK(p.accept == network, "network: accepted only with AllowLocalNetwork");
+            CHECK(!p.pairing, "network: never pairs");
+            CHECK(!p.plaintext, "network: never unencrypted, even in compatibility mode");
+        }
+    }
+    CHECK(!tb_net_accept_policy((enum tb_link_kind)99, 0, 1).accept,
+          "unknown link kind is refused like the network");
+    CHECK(!tb_net_accept_policy((enum tb_link_kind)99, 1, 1).plaintext,
+          "unknown link kind is never unencrypted");
+}
+
 static void test_single_packet_whole_feed(void) {
     struct tb_parser p;
     tb_parser_init(&p, capture_cb, NULL);
@@ -239,6 +274,7 @@ static void test_large_payload_roundtrip(void) {
 int main(void) {
     test_link_local_ipv4_classifier();
     test_direct_link_classifier();
+    test_accept_policy();
     test_single_packet_whole_feed();
     test_byte_by_byte_feed();
     test_two_contiguous_packets();

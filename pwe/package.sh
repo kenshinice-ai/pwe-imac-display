@@ -144,7 +144,7 @@ for ARCH in arm64 x86_64; do
     # exported -I/opt/homebrew/include would compile against other headers.
     env -i PATH="$PATH" HOME="$HOME" \
       PKG_CONFIG_LIBDIR="$DEPS/$ARCH/lib/pkgconfig" \
-      make CC="clang -arch $ARCH" PKG="pkg-config --static" COMPACT_IDLE=1 OFFER_LOGIN_ITEM=1 \
+      make CC="clang -arch $ARCH" PKG="pkg-config --static" DIRECT_LINK_ONLY=1 COMPACT_IDLE=1 OFFER_LOGIN_ITEM=1 \
         APP_VERSION="$VERSION" APP_BUILD="$BUILD" >"$WORK/receiver-$ARCH.log" 2>&1 \
       || { tail -30 "$WORK/receiver-$ARCH.log"; exit 1; }
     mv tbreceiver "$WORK/tbreceiver-$ARCH"
