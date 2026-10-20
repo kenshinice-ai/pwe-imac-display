@@ -45,6 +45,8 @@
 | `b4fbc9e` | 发送端 `PWESecureLink.swift`（PWE 新文件，在上游目录里）：「忘记」返回结果、确认钥匙串条目已删、删掉指向它的全部提示 | 真机 T37：设置里的「忘记」没有效果 | upstream PR after disclosure | 本地提交，未推 |
 | `044511b` | 接收端 `display.c`：建窗后关掉文字输入；快捷键按键盘上标的字母认，非拉丁布局按物理键；PWE 构建里 Esc 按两次才退出并提示，出画面时不响应；标题只写 App 名、变了才设。`main.c`：权限一行和配对提示改为从语言文件取、画的时候再取。`Languages/*.json`：新键 `receiver.ui.quit_confirm`、`receiver.permissions.*` | 真机 T36：中文输入法拦住 I 键，Esc 直接退出；T35：标题栏露出主机名和 IP | 关文字输入、Esc 忽略重复和组合键、权限文字进语言文件：待提；其余属于 PWE 构建 | 旗标关闭时：文字输入关、Esc 不响应重复和组合键、标题只在变化时设置 |
 | `3055222` | 删除 `.github/FUNDING.yml` | Lee 2026-10-14 定：本仓库不显示上游的赞助按钮 | 不提交（只属于 PWE） | 保留 |
+| `fcd83b5`、`a8e717a`（`pwe-1.1-t34`） | 接收端 `net.c`/`net.h`：新增只收 IPv6 的监听口 `tb_net_listen6`（IPv4 监听口不变）、`tb_net_get_tb_ip6`（雷雳网桥的 fe80 地址）；`tb_net_client_is_direct_link` 也判 IPv6 连接，规则在新的 `tb_net_is_direct_link_ipv6`：只有两端都是链路本地、且在系统网络设置认得的网桥上（或回环）才算直连，其余网卡走 IPv6 一律不算。`main.c`：两个监听口都接受；网桥一有 IPv6 地址就在网桥上发布 Bonjour，TXT 新键 `tbIP6`，IPv4 到来前不带 `ip`；只有 TXT 变时原地更新、不重新注册。测试：`test_net_parser.c` 加 IPv6 判定（接受与拒绝）和真套接字（`::1`、`fe80::1%lo0`、本机 Wi‑Fi/以太网地址）；`loopback_smoke.sh` 加第 1b 段；`a8e717a`：冒烟测试等接收端端口打开再开始（Rosetta 下首次启动超过 2 秒） | 真机 T34：「使用 DHCP」的雷雳网桥要等 DHCP 放弃才有 169.254 地址，插线后约 19.6 秒；接收端在此之前既不发布也没有可拨的地址。IPv6 链路本地地址一两秒内就有 | 待提，收发两端一起（上游也有同样的 20 秒） | 本地提交，未推；等真机复测 |
+| `4bc5088`（`pwe-1.1-t34`） | 发送端：发现把 `tbIP6` 限定到本机的网桥（Bonjour 解析到它的那个网桥，或本机唯一有链路本地地址的网桥），只有这个地址的接收端也列出；`ip(for: .thunderboltBridge)` 依次取 `tbIP`、旧版链路本地 `ip`、限定后的 IPv6；Network Link 从不拨它；`connect()` 拨 IPv6 时不绑 IPv4 源地址、不要求本机网桥有 IPv4；自动化的本地网卡检查放行这种情况；会话查找和语言推送也认 IPv6 地址。新测试 `pwe/sender-tests/PWEBridgeIPv6Tests.swift` | 同上：插线后约 20 秒才出画面，门槛是 5 秒 | 随上一条一起提 | 本地提交，未推；等真机复测 |
 
 打包时的改名（`pwe/rebrand.py`）不改仓库里的文件，所以不在这张表里。它的锚点由脚本自己检查：上游改了对应的文字，脚本就会停下。
 
