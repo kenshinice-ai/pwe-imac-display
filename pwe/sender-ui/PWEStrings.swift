@@ -274,7 +274,11 @@ struct PWEStrings {
     var pairedIMacs: String { t("Paired iMacs", "已配对的 iMac") }
     var noPairedIMacs: String { t("None yet. An iMac is paired the first time you enter its code.", "还没有。第一次输入 iMac 的配对码时就会配对。") }   // DRAFT
     func pairedOn(_ date: Date) -> String {
-        let formatted = date.formatted(date: .abbreviated, time: .omitted)
+        // In the window's language, with the region's conventions: a Chinese window
+        // on a Mac set to Australia reads 2026年10月19日, not "19 Oct 2026".
+        let region = Locale.current.region?.identifier ?? "CN"
+        let locale = zh ? Locale(identifier: "zh_Hans_\(region)") : Locale.current
+        let formatted = date.formatted(Date.FormatStyle(date: .abbreviated, time: .omitted).locale(locale))
         return t("Paired \(formatted)", "\(formatted) 配对")
     }   // DRAFT
     var forget: String { t("Forget", "忘记") }
