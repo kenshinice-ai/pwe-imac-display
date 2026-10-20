@@ -15,7 +15,8 @@ PWE iMac Display — 读我
 几秒后 iMac 就是新 Mac 的一块屏，在「系统设置 > 显示器」里可以排列位置。
 
 遇到问题：https://github.com/kenshinice-ai/pwe-imac-display/issues
-PWE iMac Display 基于开源项目 TargetBridge，许可信息在 Licenses 文件夹里。
+PWE iMac Display 基于开源项目 TargetBridge（MIT），由 PWE 构建并签名，
+不是 TargetBridge 的官方版本。许可信息在 Licenses 文件夹里。
 
 
 PWE iMac Display — Read Me First
@@ -39,5 +40,8 @@ A few seconds later the iMac is a display for your Mac; arrange it in
 System Settings > Displays.
 
 Problems: https://github.com/kenshinice-ai/pwe-imac-display/issues
-PWE iMac Display is based on the open-source project TargetBridge. Licences are
+PWE iMac Display is based on the open-source project TargetBridge (MIT). PWE
+builds and signs it; it is not an official TargetBridge release. Licences are
 in the Licenses folder.
+
+PWE · 天域出品 · PWE Group Pty Ltd
