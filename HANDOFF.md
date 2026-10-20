@@ -33,6 +33,7 @@
 5. 发 release，上传 `pwe/dist/` 的三个文件；说明只写一般说法，不写复现细节。成功判据：`gh release download` 回来的文件通过 `shasum -c`。
 6. 在 `homebrew-tap` 加新 cask（按上面的决定）。成功判据：`brew fetch --cask` 显示 ✔。
 7. README 第一段改回下载说明。
+7a. 通知工具站会话（「PWE Tools AI 设计」，工作区 `~/Developer/pwestudio-redesign`，分支 `site-redesign`）：`functions/_release.js` 加 `screenencore`（1.1.0，GitHub release 链接），`/screenencore/` 首屏和产品条的「10 月底推出」换成下载按钮（`chrome.py` 的 ACTION）。做法见那边 `site/README.md`「A new product」。成功判据：`curl 'https://pwestudio.site/app/check?product=screenencore&version=1.0.0'` 返回 1.1.0。
 8. 回信告诉 Marco 已发布（10-14 那封的线程）。
 9. 删除本地分支 `security-1.0.1`（已全部并进 1.1）。
 
