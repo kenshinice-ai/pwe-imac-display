@@ -5,11 +5,13 @@ import SwiftUI
 /// PWE's menu bar item: where a person goes day to day once the iMac is set up.
 /// It replaces upstream's status item (sessions, IP addresses, "Show main window")
 /// with what someone using one iMac as a display needs: is it showing, how bright,
-/// which picture, where the sound plays, and a way out.
+/// how loud, which picture, where the sound plays, and a way out. Everyday
+/// controls live here and nowhere else.
 ///
 /// The menu is rebuilt each time it opens (`menuNeedsUpdate`), from the same
-/// model the window reads. The custom rows reuse upstream's slider target and
-/// Control Center–style toggle row.
+/// model the window reads. The slider rows reuse upstream's slider target.
+/// It always shows: the app is menu bar first, and its window is a click on the
+/// Dock icon away, so the menu has no item for it.
 @MainActor
 final class PWEStatusMenu: NSObject {
     private let model: PWESenderModel
@@ -17,15 +19,14 @@ final class PWEStatusMenu: NSObject {
     private var cancellables = Set<AnyCancellable>()
     private var pendingAction: (@MainActor () -> Void)?
     private var sliderTargets: [TBMenuSliderTarget] = []
-    private var toggleRows: [TBMenuToggleRowView] = []
+    /// Snapshots: the words without an engine to ask.
+    private let previewLanguage: TBDisplaySenderLanguage?
 
     init(model: PWESenderModel) {
         self.model = model
+        self.previewLanguage = nil
         super.init()
-        model.$showsMenuBarIcon
-            .removeDuplicates()
-            .sink { [weak self] shows in self?.setVisible(shows) }
-            .store(in: &cancellables)
+        installItem()
         model.$phase
             .removeDuplicates()
             .sink { [weak self] phase in self?.updateButton(phase) }
@@ -46,26 +47,37 @@ final class PWEStatusMenu: NSObject {
             .store(in: &cancellables)
     }
 
-    private var strings: PWEStrings { PWEStrings(language: model.service?.language ?? .english) }
+    /// The menu as it would open, for `--pwe-snapshot`: no status item, nothing on screen.
+    init(preview model: PWESenderModel, language: TBDisplaySenderLanguage) {
+        self.model = model
+        self.previewLanguage = language
+        super.init()
+    }
 
-    private func setVisible(_ visible: Bool) {
-        if visible, statusItem == nil {
-            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-            item.button?.imagePosition = .imageOnly
-            // One menu for the item's lifetime, filled in menuNeedsUpdate: swapping
-            // `item.menu` under an open menu leaves an invisible window that
-            // swallows clicks (upstream's note in its status item controller).
-            let menu = NSMenu()
-            menu.delegate = self
-            // Items say themselves whether they are enabled (the Picture submenu).
-            menu.autoenablesItems = false
-            item.menu = menu
-            statusItem = item
-            updateButton(model.phase)
-        } else if !visible, let item = statusItem {
-            NSStatusBar.system.removeStatusItem(item)
-            statusItem = nil
-        }
+    func previewMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        rebuild(menu)
+        return menu
+    }
+
+    private var strings: PWEStrings {
+        PWEStrings(language: previewLanguage ?? model.service?.language ?? .english)
+    }
+
+    private func installItem() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        item.button?.imagePosition = .imageOnly
+        // One menu for the item's lifetime, filled in menuNeedsUpdate: swapping
+        // `item.menu` under an open menu leaves an invisible window that
+        // swallows clicks (upstream's note in its status item controller).
+        let menu = NSMenu()
+        menu.delegate = self
+        // Items say themselves whether they are enabled (the Picture choices).
+        menu.autoenablesItems = false
+        item.menu = menu
+        statusItem = item
+        updateButton(model.phase)
     }
 
     /// The iMac outline, filled while it is a display.
@@ -86,7 +98,6 @@ final class PWEStatusMenu: NSObject {
     private func rebuild(_ menu: NSMenu) {
         menu.removeAllItems()
         sliderTargets.removeAll()
-        toggleRows.removeAll()
         let strings = strings
 
         menu.addItem(disabled(strings.status(model.phase)))
@@ -99,30 +110,15 @@ final class PWEStatusMenu: NSObject {
 
         if model.isShowing {
             menu.addItem(.separator())
-            menu.addItem(sliderItem(label: strings.brightness, value: model.brightness) { [weak model] value in
+            menu.addItem(sliderItem(label: strings.brightness, value: model.brightness,
+                                    glyphs: ("sun.min.fill", "sun.max.fill")) { [weak model] value in
                 model?.brightness = value
             })
-            var toggles: [TBMenuToggleSpec] = []
-            if model.nightShiftAvailable {
-                toggles.append(TBMenuToggleSpec(
-                    symbol: "sun.lefthalf.filled", title: strings.nightShift,
-                    stateText: model.nightShift ? strings.on : strings.off, isOn: model.nightShift
-                ) { [weak model] on in model?.nightShift = on })
-            }
-            if model.trueToneAvailable {
-                toggles.append(TBMenuToggleSpec(
-                    symbol: "sun.max.fill", title: strings.trueTone,
-                    stateText: model.trueTone ? strings.on : strings.off, isOn: model.trueTone
-                ) { [weak model] on in model?.trueTone = on })
-            }
-            if !toggles.isEmpty {
-                let row = TBMenuToggleRowView(specs: toggles, width: TBMenuMetrics.width, leadingInset: TBMenuMetrics.inset)
-                row.onWord = strings.on
-                row.offWord = strings.off
-                let item = NSMenuItem()
-                item.view = row
-                menu.addItem(item)
-                toggleRows.append(row)
+            if model.sound != .onlyThisMac {
+                menu.addItem(sliderItem(label: strings.iMacVolume, value: model.volume,
+                                        glyphs: ("speaker.fill", "speaker.wave.3.fill")) { [weak model] value in
+                    model?.volume = value
+                })
             }
         }
 
@@ -130,22 +126,26 @@ final class PWEStatusMenu: NSObject {
         menu.addItem(pictureSubmenu())
         menu.addItem(soundSubmenu())
 
-        menu.addItem(.separator())
+        var connection: [NSMenuItem] = []
         if model.canDisconnect {
-            menu.addItem(action(model.isShowing ? strings.disconnect : strings.cancel) { [weak model] in
+            connection.append(action(model.isShowing ? strings.disconnect : strings.cancel) { [weak model] in
                 model?.disconnect()
             })
         } else if let receiver = model.connectableReceiver {
-            menu.addItem(action(strings.menuConnectTo(receiver.name)) { [weak model] in
+            connection.append(action(strings.menuConnectTo(receiver.name)) { [weak model] in
                 model?.connect(to: receiver)
             })
         }
         if model.isShowing {
-            menu.addItem(action(strings.arrange) { [weak model] in model?.openDisplaySettings() })
+            connection.append(action(strings.arrange) { [weak model] in model?.openDisplaySettings() })
+        }
+        // No iMac to connect to: no empty group between two separators.
+        if !connection.isEmpty {
+            menu.addItem(.separator())
+            connection.forEach(menu.addItem)
         }
 
         menu.addItem(.separator())
-        menu.addItem(action(strings.menuOpenWindow) { PWEWindows.shared.showMain() })
         let settings = action(strings.settingsMenu) { PWEWindows.shared.showSettings() }
         settings.keyEquivalent = ","
         menu.addItem(settings)
@@ -155,21 +155,27 @@ final class PWEStatusMenu: NSObject {
         menu.addItem(quit)
     }
 
+    /// The iMac's picture (remembered for each iMac), then how it joins this Mac's
+    /// displays. Changing either reconnects for a moment.
     private func pictureSubmenu() -> NSMenuItem {
         let item = NSMenuItem(title: strings.picture, action: nil, keyEquivalent: "")
         let submenu = NSMenu()
+        submenu.autoenablesItems = false
+        // The picture is remembered per iMac; with none in sight there is nothing to set.
+        let knowsIMac = model.knownReceiverName != nil
         for preset in model.pictureChoices {
             let choice = action(strings.pictureName(preset)) { [weak model] in model?.picture = preset }
-            choice.state = preset == model.picture ? .on : .off
+            choice.state = knowsIMac && preset == model.picture ? .on : .off
+            choice.isEnabled = knowsIMac
             submenu.addItem(choice)
         }
-        if model.isShowing {
-            submenu.addItem(.separator())
-            submenu.addItem(disabled(strings.pictureChangeHint))
+        submenu.addItem(.separator())
+        for mode in PWEDisplayMode.allCases {
+            let choice = action(strings.modeName(mode)) { [weak model] in model?.displayMode = mode }
+            choice.state = mode == model.displayMode ? .on : .off
+            submenu.addItem(choice)
         }
         item.submenu = submenu
-        // The picture is remembered per iMac; with none in sight there is nothing to set.
-        item.isEnabled = model.knownReceiverName != nil
         return item
     }
 
@@ -206,8 +212,10 @@ final class PWEStatusMenu: NSObject {
         pendingAction = action.work
     }
 
-    /// The brightness row: the same layout as upstream's (small sun, slider, big sun).
-    private func sliderItem(label: String, value: Double, onChange: @escaping (Double) -> Void) -> NSMenuItem {
+    /// A slider row: the same layout as upstream's brightness row (small glyph,
+    /// slider, big glyph).
+    private func sliderItem(label: String, value: Double, glyphs: (low: String, high: String),
+                            onChange: @escaping (Double) -> Void) -> NSMenuItem {
         let width = TBMenuMetrics.width
         let inset = TBMenuMetrics.inset
         let height: CGFloat = 28
@@ -221,8 +229,8 @@ final class PWEStatusMenu: NSObject {
             view.imageScaling = .scaleProportionallyUpOrDown
             return view
         }
-        container.addSubview(glyph("sun.min.fill", size: 13, x: inset))
-        container.addSubview(glyph("sun.max.fill", size: 17, x: width - inset - 17))
+        container.addSubview(glyph(glyphs.low, size: 13, x: inset))
+        container.addSubview(glyph(glyphs.high, size: 17, x: width - inset - 17))
 
         let sliderX = inset + 13 + 8
         let slider = NSSlider(frame: NSRect(x: sliderX, y: (height - 19) / 2,
