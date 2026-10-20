@@ -1535,8 +1535,9 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     /// PWE: the current dial is a redial of the last bridge address (TBBridgeRedial).
     /// Until it connects, its failure is expected and leaves the status alone.
     var pweSpeculativeDial = false
-    /// PWE: the running capture includes system audio, so relaying it can start
-    /// inside this session (T14).
+    /// PWE: the running capture includes system audio (relay was on when it
+    /// started). Relay can then be turned off and on again inside this session;
+    /// while it is off, processAudio drops the audio before conversion (T14).
     private(set) var pweCapturingAudio = false
     /// PWE: when the current capture pipeline started, and when the screens last
     /// went to sleep or locked (system uptime). See pweCaptureNeedsWakeRestart.
@@ -3167,7 +3168,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             configuration.showsCursor = !usesCursorOverlay
             configuration.scalesToFit = true
             configuration.captureResolution = preset.captureResolution
-            configuration.capturesAudio = shouldCaptureAudio
+            configuration.capturesAudio = shouldRelayAudio
             configuration.excludesCurrentProcessAudio = true
             configuration.sampleRate = 48000
             configuration.channelCount = 2
@@ -3209,7 +3210,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                 type: .screen,
                 sampleHandlerQueue: pipeline.queue
             )
-            if shouldCaptureAudio {
+            if shouldRelayAudio {
                 try stream.addStreamOutput(
                     delegate,
                     type: .audio,
@@ -3218,7 +3219,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             }
             try await stream.startCapture()
             scStream = stream
-            pweCapturingAudio = shouldCaptureAudio
+            pweCapturingAudio = shouldRelayAudio
             isStreaming = true
             if usesCursorOverlay { startCursorUpdates(displayID: display.displayID) }
             beginCaptureActivity(wakeDisplay: false)
@@ -3307,7 +3308,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     private func startAuxiliaryAudioCapture(preferredDisplayID: CGDirectDisplayID) async {
         guard Self.needsAuxiliaryAudioCapture(
             usingDirectDisplayStream: true,
-            shouldRelayAudio: shouldCaptureAudio
+            shouldRelayAudio: shouldRelayAudio
         ) else { return }
 
         do {
@@ -4318,16 +4319,6 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
 
     private var shouldRelayAudio: Bool {
         audioEnabled && audioAddonAvailable
-    }
-
-    /// PWE: capture system audio whenever the audio add-on is on, and relay it
-    /// only while `audioEnabled` (processAudio checks shouldRelayAudio). Choosing
-    /// the iMac for sound then starts inside the live session; it used to need a
-    /// reconnect and about a second of black (T14, iMac18,3, 2026-10-20). Audio
-    /// that is not relayed is dropped before conversion. The receiver opens its
-    /// audio device on the first audio frame, so it needs nothing new.
-    private var shouldCaptureAudio: Bool {
-        audioAddonAvailable
     }
 
     private func send(_ packet: Data) {
