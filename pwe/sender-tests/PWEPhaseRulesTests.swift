@@ -178,4 +178,43 @@ final class PWEPhaseRulesTests: XCTestCase {
     func testPermissionStillComesFirst() {
         XCTAssertEqual(PWEPhaseRules.phase(state(permission: false, security: .wrongCode), held: nil), .needsPermission)
     }
+
+    // MARK: - The first connection's extra lines (PWEFirstConnectionRules)
+
+    /// Runs phases through the rule the way the model does; setup finishes the
+    /// first time the lines show.
+    private func tips(_ phases: [PWEPhase], setupFinished: Bool = false) -> [Bool] {
+        var shows = false
+        var finished = setupFinished
+        return phases.map { phase in
+            shows = PWEFirstConnectionRules.showsTips(previously: shows, setupFinished: finished, phase: phase)
+            if shows { finished = true }
+            return shows
+        }
+    }
+
+    func testTheFirstConnectionShowsTheLines() {
+        XCTAssertEqual(tips([.ready(imac), .connecting(imac, .reaching), .connected(imac)]), [false, false, true])
+    }
+
+    func testAReconnectToApplyASettingKeepsThem() {
+        XCTAssertEqual(tips([.connected(imac), .connecting(imac, .reaching), .connected(imac)]), [true, true, true])
+    }
+
+    func testTheyNeverComeBackOnceTheConnectionEnds() {
+        let afterDisconnect = tips([.connected(imac), .ready(imac), .connecting(imac, .reaching), .connected(imac)])
+        XCTAssertEqual(afterDisconnect, [true, false, false, false])
+        let afterCable = tips([.connected(imac), .interrupted(imac, .cableOrReceiverGone, retrying: true),
+                               .connected(imac)])
+        XCTAssertEqual(afterCable, [true, false, false])
+    }
+
+    func testSomeoneWhoHasConnectedBeforeNeverSeesThem() {
+        XCTAssertEqual(tips([.connecting(imac, .reaching), .connected(imac)], setupFinished: true), [false, false])
+    }
+
+    func testAPairingQuestionIsNotTheFirstConnection() {
+        XCTAssertEqual(tips([.security(imac, .needsCode(secondsLeft: 60, identityChanged: false)), .connected(imac)]),
+                       [false, true])
+    }
 }
