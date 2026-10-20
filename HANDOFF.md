@@ -1,12 +1,12 @@
 # PWE Screen Encore（原名 PWE iMac Display）— 交接
 
 > 状态（2026-10-20）：1.0.0 已撤下（Lee 2026-10-20 定）：release 改回草稿、Homebrew cask 删除、README 写「1.1 即将推出」。不单独发 1.0.1，它的修复并进 1.1。
-> 1.1 候选版（产品改名 **PWE Screen Encore**，Lee 2026-10-20 定；bundle ID、`pweimacdisplay://`、数据路径不变）在本地分支 `pwe-1.1`（0f82017，未推送），已含 1.0.1 的全部修复。包 `pwe/dist/local/PWE-Screen-Encore-1.1.0.dmg`（构建号 20261020225620）。**计划 2026-10-28（周三）发布**，Marco 2026-10-20 已收到一周通知。
+> 1.1 候选版（产品改名 **PWE Screen Encore**，Lee 2026-10-20 定；bundle ID、`pweimacdisplay://`、数据路径不变）在本地分支 `pwe-1.1`（未推送），已含 1.0.1 的全部修复。**RC2**（2026-10-21，源码 `ab51da5`，构建号 20261021012201，sha256 `260bdc81…`）在 `pwe/dist/local/PWE-Screen-Encore-1.1.0.dmg`，修了 T32、T33、T35、T36、T37 和剪贴板；RC1 移到 `pwe/dist/local/rc1-20261020225620/`。RC2 之后 `pwe-1.1` 只多了 `verify.sh` 的一处判断和一处日期格式（进 RC3）。**计划 2026-10-28（周三）发布**，Marco 2026-10-20 已收到一周通知。
 > 2026-10-20 给 Marco 发了补充报告（回在 10-14 那封的线程里）。他 10-16 把 #212–#216 合进了 `maint-3.6`，3.6.1 候选版是上游 PR #218。
-> 候选版验证（2026-10-20，这台 Mac）：发送端 313 个测试、接收端全部单元测试、Apple 芯片和 Intel 冒烟都通过，DMG 挂载验签通过；**没上真机**，清单 `docs/pwe/TEST-1.1-rc-2026-10-21.md`。
+> RC2 验证（2026-10-21，这台 Mac，`pwe/verify.sh`）：发送端 327 个测试（4 个跳过，0 失败）、接收端全部单元测试、Apple 芯片和 Intel 冒烟各 21 段都通过；DMG 里两个 App 过 check-bundle、Developer ID 签名有效，未公证。**没上真机**。T34（插线后 iMac 约 20 秒才有地址）没修，实验步骤在 `docs/pwe/T34-EXPERIMENT-2026-10-22.md`（不入库）。
 > 方案和决定：`docs/pwe/PLAN-1.1-2026-10-19.md`、`DESIGN-pairing-2026-10-19.md`、`RESEARCH-Metal-2026-10-19.md`（三份都不入库）。
 > 2026-10-20 申请了 OpenAI Codex for Open Source 和 Claude for Open Source（Lee 提交；名字 Li Liu，lee.liu.melbourne@gmail.com）。结果会发邮件，滚动审核。
-> pwestudio.site 产品页 2026-10-21 解冻，随网站改版由工具站会话制作；本仓库只提供事实和素材（`docs/pwe/site-handoff-2026-10-21/`）。
+> pwestudio.site 的 `/screenencore/` 2026-10-21 上线（Lee 同意，工具站会话部署）：状态写「10 月底推出」，没有下载链接；没有提配对或加密。
 > 2026-10-19 在真机 iMac18,3（macOS 13.7.8）上做了基线：画面、真 5K（48 和 60 帧）、拔线和睡眠恢复都能用；声音不工作。
 > 结果和证据在 `docs/pwe/BASELINE-iMac18,3.md`（未入库），本文件「八」节是摘要。
 > 仓库：`kenshinice-ai/pwe-imac-display`，公开，是 `swellweb/targetBridge` 的 fork。`main` 从上游 3.6.0 起。
@@ -16,12 +16,11 @@
 
 ## 等 Lee
 
-- **[动手] 在 iMac 上测候选版** — 按 `docs/pwe/TEST-1.1-rc-2026-10-21.md`（不入库）测 `pwe/dist/local/PWE-Screen-Encore-1.1.0.dmg`；先做 A 节（删掉旧名字的 App 再装）· 不测则 10-28 发不了，P1 要在 10-26 前修完 · 自 2026-10-21
+- **[动手] 在 iMac 上测 RC2** — 按 `docs/pwe/TEST-1.1-rc-2026-10-21.md`（不入库）测 `pwe/dist/local/PWE-Screen-Encore-1.1.0.dmg`（构建号 20261021012201）；先复测 T32、T33、T35–T37，再做 T34 实验和 2 小时 soak · 不测则 10-28 发不了 · 自 2026-10-21
+- **[决定] 「重连每次 ≤ 5 秒」这道门怎么算拔线** — 推荐拆成两条：睡眠醒来和换画面仍要每次 ≤ 5 秒；拔线从 iMac 拿到地址起算 ≤ 5 秒，插线到有地址的约 20 秒（T34，在 iMac 一侧）写进发布说明的已知问题，1.1.1 改走 IPv6 · 不定则拔线这一项按现状过不了，10-28 发不了 · 自 2026-10-21
 - **[决定] iMac 上默认用哪种渲染方式** — 推荐按测试清单第 5 节用同口径计时重测；在那之前默认 OpenGL · 不定则按 OpenGL 发 · 自 2026-10-20
 - **[决定] Homebrew cask 改名** — 推荐新 cask `pwe-screen-encore`，旧的 `pwe-imac-display` 已删，不再恢复 · 不定则 1.1 用旧名字的 cask · 自 2026-10-20
 - **[决定] 推广按 `docs/pwe/LAUNCH-PLAN-2026-10-20.md` 走** — 推荐：1.1 过真机测试、站点解冻后再推广，中文渠道先、英文后 · 不定则不影响发布 · 自 2026-10-20
-- **[动手] 发布当天在工具站 `functions/_release.js` 加 `screenencore`** — Lee 2026-10-21 解冻了产品页，工具站会话（「PWE Tools AI 设计」）正在做本地原型，素材和事实在 `docs/pwe/site-handoff-2026-10-21/`（不入库）；地址 `/screenencore/`，字标 SCREEN ENCORE · 不加则 1.1 的检查更新会一直说「已是最新」 · 自 2026-10-21
-- **[动手] 推送 paradise-production 的品牌标准 08 v2.7** — 本地提交 aaa2ffb（§4.6 登记 Screen Encore 的 iMac 框）；在 paradise-production 运行 `git push origin main` · 不推则另一台 Mac 看不到 · 自 2026-10-20
 - **[决定] 本仓库 Sponsor 按钮** — 组规矩 §0.9 要求放 `custom: [pwestudio.site/support]`，并由 Lee 同意打开 Sponsorships 开关 · 不定则仓库页没有支持入口 · 自 2026-10-15
 
 ## 1.1 发布步骤（2026-10-28，Claude 做，候选版测试的 P1 修完之后）
@@ -33,7 +32,11 @@
 5. 发 release，上传 `pwe/dist/` 的三个文件；说明只写一般说法，不写复现细节。成功判据：`gh release download` 回来的文件通过 `shasum -c`。
 6. 在 `homebrew-tap` 加新 cask（按上面的决定）。成功判据：`brew fetch --cask` 显示 ✔。
 7. README 第一段改回下载说明。
-7a. 通知工具站会话（「PWE Tools AI 设计」，工作区 `~/Developer/pwestudio-redesign`，分支 `site-redesign`）：`functions/_release.js` 加 `screenencore`（1.1.0，GitHub release 链接），`/screenencore/` 首屏和产品条的「10 月底推出」换成下载按钮（`chrome.py` 的 ACTION）。做法见那边 `site/README.md`「A new product」。成功判据：`curl 'https://pwestudio.site/app/check?product=screenencore&version=1.0.0'` 返回 1.1.0。
+7a. 更新工具站（iCloud 里 `PWE Loan Bar` 的 checkout；做法见那边 `site/README.md`「A new product」）。
+    1. 在 `site/functions/_release.js` 加 `screenencore`（version、published、notes_en、notes_cn）。成功判据：产品页「Latest」不再显示 `No release yet.`。
+    2. 在 `site/chrome.py` 把 `ACTION["screenencore"]` 设成下载链接和文字；把 `site/public/screenencore/index.html` 首屏的状态行换成下载按钮。
+    3. 把首页卡片（`site/public/index.html` 的「Coming late October」）和 `/help` 的 Screen Encore 卡片改成已发布。
+    4. 运行 `python3 site/chrome.py`，看 `git status`，再运行 `./site/deploy.sh`。成功判据：它核对每个 sitemap 页面和下载校验值，全部通过；`curl 'https://pwestudio.site/app/check?product=screenencore&version=1.0.0'` 返回 1.1.0。
 8. 回信告诉 Marco 已发布（10-14 那封的线程）。
 9. 删除本地分支 `security-1.0.1`（已全部并进 1.1）。
 
@@ -45,7 +48,6 @@
 
 ## 1.1 发版前（Claude 做，不等 Lee）
 
-- 把 `security-1.0.1` 合进 `pwe-1.1`（2026-10-20 进行中）。成功判据：`git merge-base --is-ancestor security-1.0.1 pwe-1.1` 退出码 0。
 - `package.sh` 的接收端 make 行合并后要同时带 `DIRECT_LINK_ONLY=1 COMPACT_IDLE=1 OFFER_LOGIN_ITEM=1`。
 - cask 的 `zap` 加上 `~/Library/LaunchAgents/com.pwegroup.pweimacdisplay.receiver.plist`。
 - 给上游提 PR：发送端「重新打开」按钮只退出不重开（PWE 已在 `rebrand.py` 里修）。
@@ -53,15 +55,16 @@
 - Lumen Bar 的交接在它自己仓库的分支 `claude/imac-display-handoff-8e14dc`（e27f28a），未合并。和 1.1 一起发。
 - 上游 PR 草稿在 `docs/pwe/notes-2026-10-19/upstream-pr*.md`，都没开。配对相关的要等披露之后。#212–#216 已在 2026-10-16 合进上游 `maint-3.6`，上游合并后从 `pwe/PATCHES.md` 里标「已合并」。
 - 测试机清单里留到下一轮的：T20 Touch Bar 亮度（没有公开事件，只加了「按住 fn」说明）、T23 Metal 计时（先用同口径重测）、T30 接收端两处疑点（要真机）、T26 接收端在 Wi‑Fi 上进解析器（1.0.1 合进来、make 行带 `DIRECT_LINK_ONLY=1` 后复查）。1.0.x 的 T2–T8 不修。
-- `claude/pwe-pairing-1.1-clipboard-check`（e9cae9c，发送端剪贴板跟随输入模式）还没合进 `pwe-1.1`。它原本等给 Marco 的补充报告，报告 2026-10-20 已发；下一轮合并、测试。
+- 给上游提 T33 的修复（`pwe/PATCHES.md` 的 `9d7677d`）：上游有同样的竞争，不涉及配对，可以先提。
 
 ## 仓库规矩
 
 - 远端：`origin` 是 `kenshinice-ai/pwe-imac-display`，`upstream` 是 `swellweb/targetBridge`。
 - 跟进上游：`git fetch upstream`，再把上游的发版提交合并进 `main`。成功判据：`git diff <上游标签> main` 只列出 PWE 加的文件。
 - 给上游的 PR：在单独的 worktree 里从 `upstream/main` 开分支（`git worktree add <临时目录> -b <分支> upstream/main`），推到 `origin`，再向 `swellweb/targetBridge` 开 PR。
-- 看界面不用截屏：运行打包出的 `PWE iMac Display.app/Contents/MacOS/PWE iMac Display --pwe-snapshot <目录>`，每个状态出一张中英文 PNG；接收端设 `TB_RECEIVER_SNAPSHOT=<文件.png>` 运行。
-- 本地打包：运行 `pwe/package.sh`。成功判据：最后打印 `pwe/dist/local/PWE-iMac-Display-<版本>.dmg` 和它的 sha256。正式包只由 `--notarize` 写进 `pwe/dist/`。
+- 看界面不用截屏：运行打包出的 `PWE Screen Encore.app/Contents/MacOS/PWE Screen Encore --pwe-snapshot <目录>`，每个状态出一张中英文 PNG；接收端设 `TB_RECEIVER_SNAPSHOT=<文件.png>` 运行。
+- 自动检查全部跑一遍：运行 `pwe/verify.sh`（`pwe-1.1` 起）；检查打好的包加 `--dmg <映像>`。成功判据：末尾表格没有 FAIL；SKIP 的每一行写着原因。
+- 本地打包：运行 `pwe/package.sh`。成功判据：最后打印 `pwe/dist/local/PWE-Screen-Encore-<版本>.dmg` 和它的 sha256。正式包只由 `--notarize` 写进 `pwe/dist/`。
 - 无签名打包（用户自己换 FFmpeg 重新链接，见 `pwe/NOTICE.txt`）：运行 `pwe/package.sh --unsigned --deps <目录>`。成功判据：同上，App 为 ad hoc 签名。
 - 检查成品：挂载 DMG 后运行 `python3 -I pwe/check-bundle.py <两个 App>`。成功判据：打印 `bundle checks passed`。打包时已自动跑一次。
 - 发版打包：
@@ -69,16 +72,16 @@
   2. 运行 `pwe/package.sh --notarize`。它要求 HEAD 正好是这个标签。成功判据：输出里 DMG 显示 `source=Notarized Developer ID`。
 - 发版：
   1. 只推这一个标签：`git push origin pwe-<版本>`（不用 `v`）。
-  2. release 上传 `pwe/dist/` 里的三个文件：`PWE-iMac-Display-<版本>.dmg`、`ffmpeg-9.0.2.tar.xz`（LGPL 要求在同一处提供源代码）、`SHA256SUMS.txt`。
-  3. 改 `homebrew-tap/Casks/pwe-imac-display.rb` 的 `version` 和 `sha256`。
-  成功判据：`gh release download` 回来的文件通过 `shasum -c`，`brew fetch --cask kenshinice-ai/tap/pwe-imac-display` 显示 ✔。
+  2. release 上传 `pwe/dist/` 里的三个文件：`PWE-Screen-Encore-<版本>.dmg`、`ffmpeg-9.0.2.tar.xz`（LGPL 要求在同一处提供源代码）、`SHA256SUMS.txt`。
+  3. 改 cask 的 `version` 和 `sha256`（1.1 起是新 cask，名字按「等 Lee」的决定，推荐 `pwe-screen-encore`）。
+  成功判据：`gh release download` 回来的文件通过 `shasum -c`，`brew fetch --cask kenshinice-ai/tap/<cask>` 显示 ✔。
 - 如果合并上游后 `pwe/rebrand.py` 报 `upstream text changed`，就按报错改脚本里对应的锚点，不要改上游文件。
 
-> ⚠️ 不要推送本地分支 `security-1.0.1`，等 Lee 批准或到 2026-10-22。否则发布前就公开了它的内容。
-> 原因：按负责任披露的惯例，先给上游维护者一周时间。
+> ⚠️ 不要推送本地分支 `security-1.0.1`。否则发布前就公开了它的内容。
+> 原因：它已并进 `pwe-1.1`，随 1.1 一起公开；发布后删除它（1.1 发布步骤 9）。
 
-> ⚠️ 不要推送 `pwe-1.1`，等 1.0.1 发布、并且 Marco 有时间处理 10-20 的补充报告。否则配对代码会先公开新发现的问题。
-> 原因：负责任披露；2026-10-14 起算的 90 天到 2027-01-12。
+> ⚠️ 不要单独推送 `pwe-1.1`。它只在发布当天合进 `main` 后一起推（1.1 发布步骤 1、4）。否则配对代码在发布前公开。
+> 原因：负责任披露。Marco 2026-10-20 收到一周通知；不发 1.0.1，修复随 1.1 发布。
 
 > ⚠️ 不要执行 `git push --tags`，也不要推送任何 `v*` 标签。否则上游的 `release.yml` 会在本仓库发出 TargetBridge 的版本。
 > 原因：本地有上游全部 `v*` 标签，而 `release.yml` 由 `v*` 标签触发。
@@ -216,16 +219,17 @@ C 函数 `CGVirtualDisplayCreate` 不存在，但用不到它。
 打测试包（这台 Mac）：
 
 1. 运行 `security find-identity -v -p codesigning`。成功判据：列出 `Developer ID Application: Li Liu (2SQV3H5MH9)`。
-2. 用 `git worktree add <临时目录> <分支>` 取出要打的分支，在那里运行 `pwe/package.sh`。1.1 和 1.0.1 用不同的依赖目录（`PWE_DEPS=<目录>`），否则互相冲掉缓存。成功判据：最后打印 `PWE-iMac-Display-<版本>.dmg` 和 sha256，`bundle checks passed`。
-3. 挂载 DMG，运行 `codesign -dvv "<挂载点>/PWE iMac Display.app"`。成功判据：`Authority=Developer ID Application: Li Liu (2SQV3H5MH9)`。
-4. 把 DMG 拷进 `pwe/dist/local/`，重写同目录的 `SHA256SUMS.txt`，再 `git worktree remove` 临时目录。
+2. 用 `git worktree add <临时目录> <分支>` 取出要打的分支，在那里运行 `pwe/verify.sh`，再运行 `pwe/package.sh`。成功判据：`verify.sh` 没有 FAIL；`package.sh` 最后打印 `PWE-Screen-Encore-<版本>.dmg` 和 sha256，`bundle checks passed`。
+3. 挂载 DMG，运行 `codesign -dvv "<挂载点>/PWE Screen Encore.app"`。成功判据：`Authority=Developer ID Application: Li Liu (2SQV3H5MH9)`。
+4. 把 DMG 拷进 `pwe/dist/local/`，重写同目录的 `SHA256SUMS.txt`。成功判据：`shasum -c SHA256SUMS.txt` 全部 OK。
+5. 确认拷好之后，再 `git worktree remove` 临时目录。否则 DMG 跟着临时目录一起删掉（2026-10-21 出过一次）。
 
 ### 升级 iMac 上的接收端
 
 iMac 开了文件共享。访客登录被拒绝（2026-10-19 实测），要用 iMac 的账号登录。
 
 1. 在 MacBook 的 Finder 里，点侧栏「网络」里的 LL-iMac-2017，点「连接身份」，用 iMac 的账号登录（Lee 输密码）。成功判据：`ls /Volumes` 里出现 iMac 的共享。
-2. 把新的「PWE iMac Display Receiver.app」拷到共享里 iMac 用户的「桌面」。
+2. 把新的「PWE Screen Encore Receiver.app」拷到共享里 iMac 用户的「桌面」。
 3. 在 iMac 上退出接收端（`⌘Q`）。
 4. 在 iMac 上把桌面上的 App 拖进「应用程序」，选「替换」。
 5. 在 iMac 上打开接收端。成功判据：发送端几秒内自动连上；「关于」里显示新的构建号。
