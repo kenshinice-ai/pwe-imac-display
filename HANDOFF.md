@@ -54,7 +54,7 @@
 - 基线里发送端的问题已在 `pwe-1.1` 修完（2026-10-19），新 2017 款 iMac 默认 5K 60。等真机复测。
 - Lumen Bar 的交接在它自己仓库的分支 `claude/imac-display-handoff-8e14dc`（e27f28a），未合并。和 1.1 一起发。
 - 上游 PR 草稿在 `docs/pwe/notes-2026-10-19/upstream-pr*.md`，都没开。配对相关的要等披露之后。#212–#216 已在 2026-10-16 合进上游 `maint-3.6`，上游合并后从 `pwe/PATCHES.md` 里标「已合并」。
-- 另一台 MacBook 的 `.claude/worktrees/` 里有两个 iCloud 冲突副本 `tb_trace 2.h`（2026-10-20 发现）。在那台 Mac 上删，不要从这台删。
+- `claude/pwe-pairing-1.1-clipboard-check`（e9cae9c，发送端剪贴板跟随输入模式）还没合进 `pwe-1.1`。它原本等给 Marco 的补充报告，报告 2026-10-20 已发；下一轮合并、测试。
 
 ## 仓库规矩
 
@@ -206,19 +206,20 @@ C 函数 `CGVirtualDisplayCreate` 不存在，但用不到它。
 | 设置界面 | 分在三个窗口、规则矛盾、术语多。审查和建议结构在 `docs/pwe/UX-REVIEW-2026-10-19.md`（未入库） |
 | 未测 | 5K 60 下的 iMac 解码、延迟、两小时办公、1.0.1 过真线、键鼠共享 |
 
-### 在另一台 Mac 上打包
+### 哪台 Mac 做什么（Lee，2026-10-20）
 
-仓库在 iCloud 里，两台 Mac 看到的是同一个 `.git`。
+- 这台 MacBook（用户 `llmacbookpro`，有 Developer ID）：唯一跑 git、打包、发版的 Mac。Claude 的 worktree 只建在这台 Mac 的临时目录里，不建在 iCloud 文件夹里。
+- 另一台 MacBook Pro（用户 `leeliu`）：只装 App、连 iMac、做测试。测试包从 `pwe/dist/local/` 拿。结果写进 `docs/pwe/BASELINE-iMac18,3.md` 或告诉这台 Mac 上的 Claude。
 
-> ⚠️ 不要在两台 Mac 上同时跑 git 或打包。否则 iCloud 会生成「… 2」这样的冲突副本，弄坏 `.git`。
-> 原因：iCloud 同步不懂 git 的锁。
+> ⚠️ 不要在另一台 Mac 上跑 git、打包，或开 Claude 的 worktree。否则 iCloud 会生成「… 2」冲突副本，弄坏 `.git`。
+> 原因：仓库在 iCloud 里，两台 Mac 看到的是同一个 `.git`，iCloud 不懂 git 的锁。2026-10-19 已出现过两个 `tb_trace 2.h`。
 
-1. 等 iCloud 同步完。成功判据：`git log --oneline -1 security-1.0.1` 显示 `d4b4598`，`git log --oneline -1 pwe-1.1` 显示 `8bfcfcf` 或更新。
-2. 运行 `security find-identity -v -p codesigning`。成功判据：列出 `Developer ID Application: Li Liu (2SQV3H5MH9)`。
-3. 打 1.1 的包前，先在那台 Mac 上运行 `pwe/receiver-deps.sh "$TMPDIR/pwe-imacdisplay-deps"`。成功判据：生成 `universal/lib/libsodium.a`（1.1 起要它，没有它 `package.sh` 会停下）。
-4. 切到要打的分支，运行 `pwe/package.sh`。成功判据：最后打印 `pwe/dist/local/PWE-iMac-Display-<版本>.dmg` 和 sha256，`bundle checks passed`。
-5. 挂载 DMG，运行 `codesign -dv "<挂载点>/PWE iMac Display.app"`。成功判据：`Authority=Developer ID Application: Li Liu (2SQV3H5MH9)`。
-6. 正式发 1.0.1 时按「仓库规矩」的发版打包和发版步骤走（`--notarize`，只推一个标签）。
+打测试包（这台 Mac）：
+
+1. 运行 `security find-identity -v -p codesigning`。成功判据：列出 `Developer ID Application: Li Liu (2SQV3H5MH9)`。
+2. 用 `git worktree add <临时目录> <分支>` 取出要打的分支，在那里运行 `pwe/package.sh`。1.1 和 1.0.1 用不同的依赖目录（`PWE_DEPS=<目录>`），否则互相冲掉缓存。成功判据：最后打印 `PWE-iMac-Display-<版本>.dmg` 和 sha256，`bundle checks passed`。
+3. 挂载 DMG，运行 `codesign -dvv "<挂载点>/PWE iMac Display.app"`。成功判据：`Authority=Developer ID Application: Li Liu (2SQV3H5MH9)`。
+4. 把 DMG 拷进 `pwe/dist/local/`，重写同目录的 `SHA256SUMS.txt`，再 `git worktree remove` 临时目录。
 
 ### 升级 iMac 上的接收端
 
