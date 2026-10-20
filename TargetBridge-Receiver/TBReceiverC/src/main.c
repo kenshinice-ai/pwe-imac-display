@@ -164,7 +164,8 @@ struct app {
     int                     session_plaintext;
     int                     pwe_status_overridden;
     enum tb_display_notice  pwe_message_kind;
-    char                    pwe_message[192];
+    char                    pwe_message_key[64];    /* the words are looked up when shown, */
+    char                    pwe_message_name[128];  /* in the language of the moment */
     uint64_t                pwe_message_until_ms;
     DNSServiceRef           bonjour_ref2;     /* second cable interface (USB), if any */
     unsigned long           pwe_test_counts[256];  /* test builds: packets per type this session */
@@ -342,41 +343,13 @@ static void tb_receiver_refresh_permissions_text(struct app *a) {
     const int accessibility = (a->last_accessibility_trusted >= 0)
         ? a->last_accessibility_trusted
         : tb_receiver_accessibility_trusted();
-    const char *lang = tb_i18n_current_language();
-
-    if (lang && strncmp(lang, "it", 2) == 0) {
-        snprintf(
-            a->permissions_text,
-            sizeof(a->permissions_text),
-            "Monitoraggio input: %s   Accessibilità: %s",
-            input_monitoring ? "OK" : "Mancante",
-            accessibility ? "OK" : "Mancante"
-        );
-    } else if (lang && strncmp(lang, "de", 2) == 0) {
-        snprintf(
-            a->permissions_text,
-            sizeof(a->permissions_text),
-            "Input-Monitoring: %s   Bedienungshilfen: %s",
-            input_monitoring ? "OK" : "Fehlt",
-            accessibility ? "OK" : "Fehlt"
-        );
-    } else if (lang && strncmp(lang, "zh", 2) == 0) {
-        snprintf(
-            a->permissions_text,
-            sizeof(a->permissions_text),
-            "输入监控：%s   辅助功能：%s",
-            input_monitoring ? "正常" : "缺失",
-            accessibility ? "正常" : "缺失"
-        );
-    } else {
-        snprintf(
-            a->permissions_text,
-            sizeof(a->permissions_text),
-            "Input Monitoring: %s   Accessibility: %s",
-            input_monitoring ? "OK" : "Missing",
-            accessibility ? "OK" : "Missing"
-        );
-    }
+    /* In the language files, so every language has its words (French was
+     * English here, and the receiver's own screens follow the files). */
+    struct tb_i18n_pair pairs[] = {
+        { "input", tb_i18n_get(input_monitoring ? "receiver.permissions.granted" : "receiver.permissions.missing") },
+        { "accessibility", tb_i18n_get(accessibility ? "receiver.permissions.granted" : "receiver.permissions.missing") },
+    };
+    tb_format_i18n(a->permissions_text, sizeof(a->permissions_text), "receiver.permissions.summary", pairs, 2);
 }
 
 static void tb_receiver_refresh_login_item(struct app *a) {
@@ -2033,9 +2006,14 @@ static void close_client(struct app *a) {
 #define TB_PWE_REFUSED_NOTICE_MS  8000
 #define TB_PWE_FORGOT_NOTICE_MS   4000
 
-static void tb_pwe_message(struct app *a, enum tb_display_notice kind, const char *text, uint64_t for_ms) {
+/* A short message by language key; `name` fills %{name}, or NULL. The words are
+ * looked up each time the notice is drawn: the Mac's language can arrive just
+ * after pairing, and L changes it while a message is up. */
+static void tb_pwe_message(struct app *a, enum tb_display_notice kind, const char *key, const char *name,
+                           uint64_t for_ms) {
     a->pwe_message_kind = kind;
-    snprintf(a->pwe_message, sizeof(a->pwe_message), "%s", text ? text : "");
+    snprintf(a->pwe_message_key, sizeof(a->pwe_message_key), "%s", key);
+    snprintf(a->pwe_message_name, sizeof(a->pwe_message_name), "%s", name ? name : "");
     a->pwe_message_until_ms = now_ms() + for_ms;
 }
 
@@ -2055,8 +2033,9 @@ static void tb_pwe_refresh_notice(struct app *a, uint64_t now) {
         tb_copy_i18n(line2, sizeof(line2), "receiver.pairing.enter_on_mac");
         tb_copy_i18n(line3, sizeof(line3), "receiver.pairing.not_you");
         kind = TB_DISP_NOTICE_PAIRING_CODE;
-    } else if (a->pwe_message[0] && now < a->pwe_message_until_ms) {
-        snprintf(line1, sizeof(line1), "%s", a->pwe_message);
+    } else if (a->pwe_message_key[0] && now < a->pwe_message_until_ms) {
+        struct tb_i18n_pair pairs[] = { { "name", a->pwe_message_name } };
+        tb_format_i18n(line1, sizeof(line1), a->pwe_message_key, pairs, 1);
         kind = a->pwe_message_kind;
     } else if (a->client_fd >= 0 && a->session_plaintext) {
         tb_copy_i18n(line1, sizeof(line1), "receiver.pairing.unencrypted");
@@ -2099,13 +2078,11 @@ static void tb_pwe_on_conn_event(struct tb_conn *c, int ev, void *ud) {
         send_receiver_info(a);
     }
     if (ev & PWE_SEC_EV_PAIRED) {
-        char text[192];
-        struct tb_i18n_pair pairs[] = { { "name", pwe_sec_peer_name(c->sec) } };
-        tb_format_i18n(text, sizeof(text), "receiver.pairing.paired", pairs, 1);
-        tb_pwe_message(a, TB_DISP_NOTICE_INFO, text, TB_PWE_PAIRED_NOTICE_MS);
+        tb_pwe_message(a, TB_DISP_NOTICE_INFO, "receiver.pairing.paired", pwe_sec_peer_name(c->sec),
+                       TB_PWE_PAIRED_NOTICE_MS);
     }
     if (ev & PWE_SEC_EV_LOCKED) {
-        tb_pwe_message(a, TB_DISP_NOTICE_WARNING, tb_i18n_get("receiver.pairing.locked"), PWE_SEC_LOCK_MS);
+        tb_pwe_message(a, TB_DISP_NOTICE_WARNING, "receiver.pairing.locked", NULL, PWE_SEC_LOCK_MS);
     }
     /* PWE: the log says when a code is on screen (never the code itself). */
     if ((ev & PWE_SEC_EV_WRONG_CODE) && !(ev & PWE_SEC_EV_LOCKED)) {
@@ -2119,7 +2096,7 @@ static void tb_pwe_on_conn_event(struct tb_conn *c, int ev, void *ud) {
         fprintf(stderr, "[sec] pairing code hidden\n");
     }
     if (ev & TB_CONN_EV_PLAINTEXT_REFUSED) {
-        tb_pwe_message(a, TB_DISP_NOTICE_ERROR, tb_i18n_get("receiver.pairing.refused_unencrypted"),
+        tb_pwe_message(a, TB_DISP_NOTICE_ERROR, "receiver.pairing.refused_unencrypted", NULL,
                        TB_PWE_REFUSED_NOTICE_MS);
     }
 #if TB_RECEIVER_TEST_HOOKS
@@ -2154,7 +2131,7 @@ static void tb_pwe_forget_all(void *ctx) {
                                  tb_i18n_get("receiver.menu.forget"), tb_i18n_get("receiver.menu.cancel"))) return;
     if (pwe_keystore_forget_all_peers(&a->keystore) == 0) {
         fprintf(stderr, "[sec] forgot all paired Macs\n");
-        tb_pwe_message(a, TB_DISP_NOTICE_INFO, tb_i18n_get("receiver.pairing.forgot_all"), TB_PWE_FORGOT_NOTICE_MS);
+        tb_pwe_message(a, TB_DISP_NOTICE_INFO, "receiver.pairing.forgot_all", NULL, TB_PWE_FORGOT_NOTICE_MS);
         tb_pwe_refresh_notice(a, now_ms());
     }
 }
