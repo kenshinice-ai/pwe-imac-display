@@ -110,6 +110,7 @@ if ! kill -0 "$RECEIVER_PID" 2>/dev/null; then
     print "receiver exited early:"; tail -5 "$LOG"; exit 1
 fi
 pass "receiver running (pid $RECEIVER_PID)"
+expect_log "[net] cable bridges: " "receiver names its cable bridges"
 
 phase "Phase 1: handshake"
 mock --mode handshake --duration 3 || fail "mock handshake exited non-zero"

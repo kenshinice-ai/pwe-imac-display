@@ -209,6 +209,41 @@ static void test_direct_link_ipv6_classifier(void) {
     CHECK(tb_net_link_kind("en0", 0) == TB_LINK_NETWORK, "an IPv6 LAN peer is the network");
 }
 
+static void test_accept_policy_by_family(void) {
+    for (int network = 0; network <= 1; network++) {
+        for (int compat = 0; compat <= 1; compat++) {
+            const enum tb_link_kind links[3] = { TB_LINK_NETWORK, TB_LINK_LOOPBACK, TB_LINK_CABLE };
+            for (int i = 0; i < 3; i++) {
+                struct tb_accept_policy v4 = tb_net_accept_policy_family(links[i], 0, network, compat);
+                struct tb_accept_policy base = tb_net_accept_policy(links[i], network, compat);
+                CHECK(v4.accept == base.accept && v4.pairing == base.pairing && v4.plaintext == base.plaintext,
+                      "IPv4: the policy is unchanged");
+            }
+            struct tb_accept_policy p = tb_net_accept_policy_family(TB_LINK_NETWORK, 1, network, compat);
+            CHECK(!p.accept && !p.pairing && !p.plaintext, "IPv6 off the cable: refused, AllowLocalNetwork or not");
+            p = tb_net_accept_policy_family(TB_LINK_CABLE, 1, network, compat);
+            CHECK(p.accept && p.pairing && p.plaintext == compat, "IPv6 cable: as IPv4 cable");
+            p = tb_net_accept_policy_family(TB_LINK_LOOPBACK, 1, network, compat);
+            CHECK(p.accept && !p.pairing && p.plaintext == compat, "IPv6 loopback: as IPv4 loopback");
+        }
+    }
+    CHECK(!tb_net_accept_policy_family((enum tb_link_kind)99, 1, 1, 1).accept, "IPv6 unknown link refused");
+}
+
+static void test_cable_bridges_cached(void) {
+    char list[128];
+    (void)tb_net_cable_bridges(list, sizeof(list));
+    const unsigned long before = tb_net_cable_bridge_reads();
+    int same = 1;
+    char again[128];
+    for (int i = 0; i < 200; i++) {
+        (void)tb_net_cable_bridges(again, sizeof(again));
+        same &= strcmp(list, again) == 0;
+    }
+    CHECK(same, "the cable bridge list is stable between calls");
+    CHECK(tb_net_cable_bridge_reads() - before <= 1, "200 calls read the system settings at most once");
+}
+
 /* Connect to `host` (an address on this Mac) on `listener`'s port, accept,
  * and classify the accepted socket. Returns -1 when the dial itself failed. */
 static int classify_real_connection(int listener, int family, const char *host, unsigned scope,
@@ -314,6 +349,8 @@ static void test_direct_link_real_sockets(void) {
             char what[160];
             snprintf(what, sizeof(what), "IPv6 client on %s (%s) is refused as not direct", p->ifa_name, host);
             CHECK(v == 0, what);
+            snprintf(what, sizeof(what), "IPv6 client on %s refused even with AllowLocalNetwork", p->ifa_name);
+            CHECK(!tb_net_accept_policy_family(tb_net_link_kind(ifname, v), 1, 1, 1).accept, what);
             if (ll) tried_ll = 1; else tried_other = 1;
         }
         freeifaddrs(ifap);
@@ -469,6 +506,8 @@ int main(void) {
     test_accept_policy();
     test_direct_link_ipv6_classifier();
     test_direct_link_real_sockets();
+    test_accept_policy_by_family();
+    test_cable_bridges_cached();
     test_single_packet_whole_feed();
     test_byte_by_byte_feed();
     test_two_contiguous_packets();

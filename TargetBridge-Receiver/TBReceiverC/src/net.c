@@ -16,6 +16,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 #if defined(__APPLE__)
 #include <netinet6/in6_var.h>   /* SIOCGIFAFLAG_IN6, IN6_IFF_* */
@@ -280,54 +281,136 @@ static void in6_take_embedded_scope(struct in6_addr *addr, uint32_t *scope) {
 /* Bridges the system's network settings know: the Thunderbolt Bridge.
  * SystemConfiguration lists configured bridges only, so a bridge made on the
  * fly for a virtual machine or Internet Sharing (bridge100, ...) is not one.
- * Writes up to `max` names; returns how many there are. */
-static int listed_cable_bridges(char names[][IFNAMSIZ], int max) {
+ *
+ * Asking SystemConfiguration takes milliseconds, and the receiver asks every
+ * second (address check) and on every connection: the answer is cached, and
+ * read again after 15 s or when the set of bridge interfaces changes. Systems
+ * without SystemConfiguration have none: no bridge counts as the cable. */
+#define TB_CABLE_BRIDGES_MAX 8
+#define TB_CABLE_BRIDGES_TTL_MS 15000
+static struct {
+    char          names[TB_CABLE_BRIDGES_MAX][IFNAMSIZ];
+    int           n;
+    int           valid;
+    uint64_t      read_ms;
+    char          present[256];   /* the bridge interfaces when it was read */
+    unsigned long reads;          /* SystemConfiguration reads, for tests */
+} g_cable;
+
+static uint64_t net_mono_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+}
+
+/* The bridge interfaces that exist now, by name: "bridge0;bridge100;". */
+static void present_bridges(char *out, size_t size) {
+    out[0] = '\0';
+    struct ifaddrs *ifap = NULL;
+    if (getifaddrs(&ifap) != 0) return;
+    size_t used = 0;
+    for (struct ifaddrs *p = ifap; p; p = p->ifa_next) {
+#if defined(AF_LINK)
+        if (!p->ifa_addr || p->ifa_addr->sa_family != AF_LINK) continue;
+#endif
+        if (strncmp(p->ifa_name, "bridge", 6) != 0) continue;
+        int w = snprintf(out + used, size - used, "%s;", p->ifa_name);
+        if (w < 0 || (size_t)w >= size - used) break;
+        used += (size_t)w;
+    }
+    freeifaddrs(ifap);
+}
+
+static void cable_bridges_refresh(void) {
+    char present[sizeof(g_cable.present)];
+    present_bridges(present, sizeof(present));
+    const uint64_t now = net_mono_ms();
+    if (g_cable.valid && now - g_cable.read_ms < TB_CABLE_BRIDGES_TTL_MS &&
+        strcmp(present, g_cable.present) == 0) return;
+
     int n = 0;
 #if defined(__APPLE__)
     CFArrayRef interfaces = SCNetworkInterfaceCopyAll();
-    if (!interfaces) return 0;
-    CFIndex count = CFArrayGetCount(interfaces);
-    for (CFIndex index = 0; index < count; index++) {
-        SCNetworkInterfaceRef interface = (SCNetworkInterfaceRef)CFArrayGetValueAtIndex(interfaces, index);
-        CFStringRef bsd_name = SCNetworkInterfaceGetBSDName(interface);
-        char candidate[IFNAMSIZ] = {0};
-        if (!bsd_name || !CFStringGetCString(bsd_name, candidate, sizeof(candidate), kCFStringEncodingUTF8)) continue;
-        if (strncmp(candidate, "bridge", 6) != 0) continue;
-        if (n < max) snprintf(names[n], IFNAMSIZ, "%s", candidate);
-        n++;
+    if (interfaces) {
+        CFIndex count = CFArrayGetCount(interfaces);
+        for (CFIndex index = 0; index < count && n < TB_CABLE_BRIDGES_MAX; index++) {
+            SCNetworkInterfaceRef interface = (SCNetworkInterfaceRef)CFArrayGetValueAtIndex(interfaces, index);
+            CFStringRef bsd_name = SCNetworkInterfaceGetBSDName(interface);
+            char candidate[IFNAMSIZ] = {0};
+            if (!bsd_name || !CFStringGetCString(bsd_name, candidate, sizeof(candidate), kCFStringEncodingUTF8)) continue;
+            if (strncmp(candidate, "bridge", 6) != 0) continue;
+            snprintf(g_cable.names[n++], IFNAMSIZ, "%s", candidate);
+        }
+        CFRelease(interfaces);
     }
-    CFRelease(interfaces);
-#else
-    (void)names; (void)max;
 #endif
-    return n;
+    g_cable.n = n;
+    g_cable.valid = 1;
+    g_cable.read_ms = now;
+    g_cable.reads++;
+    snprintf(g_cable.present, sizeof(g_cable.present), "%s", present);
 }
 
 static int interface_is_cable_bridge(const char *name) {
     if (!name || strncmp(name, "bridge", 6) != 0) return 0;
-#if defined(__APPLE__)
-    char names[8][IFNAMSIZ];
-    const int n = listed_cable_bridges(names, 8);
-    for (int i = 0; i < n && i < 8; i++)
-        if (strcmp(names[i], name) == 0) return 1;
+    cable_bridges_refresh();
+    for (int i = 0; i < g_cable.n; i++)
+        if (strcmp(g_cable.names[i], name) == 0) return 1;
     return 0;
-#else
-    return 1;
-#endif
 }
 
 int tb_net_cable_bridges(char *buf, size_t bufsz) {
     if (!buf || bufsz == 0) return 0;
     buf[0] = '\0';
-    char names[8][IFNAMSIZ];
-    const int n = listed_cable_bridges(names, 8);
+    cable_bridges_refresh();
     size_t used = 0;
-    for (int i = 0; i < n && i < 8 && used < bufsz; i++) {
-        int w = snprintf(buf + used, bufsz - used, "%s%s", i ? ", " : "", names[i]);
-        if (w < 0) break;
+    for (int i = 0; i < g_cable.n; i++) {
+        int w = snprintf(buf + used, bufsz - used, "%s%s", i ? ", " : "", g_cable.names[i]);
+        if (w < 0 || (size_t)w >= bufsz - used) break;
         used += (size_t)w;
     }
-    return n;
+    return g_cable.n;
+}
+
+unsigned long tb_net_cable_bridge_reads(void) { return g_cable.reads; }
+
+int tb_net_describe_cable_bridges(char *buf, size_t bufsz) {
+    if (!buf || bufsz == 0) return 0;
+    buf[0] = '\0';
+    cable_bridges_refresh();
+    size_t used = 0;
+    for (int i = 0; i < g_cable.n; i++) {
+        char members[160] = "";
+#if defined(__APPLE__)
+        /* For the log only: the members as ifconfig lists them. The name is
+         * "bridge" and digits (SystemConfiguration), safe on a command line. */
+        int digits = g_cable.names[i][6] != '\0';
+        for (const char *c = g_cable.names[i] + 6; *c; c++) digits &= (*c >= '0' && *c <= '9');
+        char cmd[64];
+        FILE *f = NULL;
+        if (digits) {
+            snprintf(cmd, sizeof(cmd), "/sbin/ifconfig %s 2>/dev/null", g_cable.names[i]);
+            f = popen(cmd, "r");
+        }
+        if (f) {
+            char line[256];
+            size_t mused = 0;
+            while (fgets(line, sizeof(line), f)) {
+                char member[IFNAMSIZ];
+                if (sscanf(line, " member: %15s", member) != 1) continue;
+                int w = snprintf(members + mused, sizeof(members) - mused, "%s%s", mused ? ", " : "", member);
+                if (w < 0 || (size_t)w >= sizeof(members) - mused) break;
+                mused += (size_t)w;
+            }
+            pclose(f);
+        }
+#endif
+        int w = snprintf(buf + used, bufsz - used, "%s%s (%s)", i ? ", " : "", g_cable.names[i],
+                         members[0] ? members : "no members listed");
+        if (w < 0 || (size_t)w >= bufsz - used) break;
+        used += (size_t)w;
+    }
+    return g_cable.n;
 }
 
 /* Usable for a connection now. Optimistic duplicate address detection (the
@@ -527,6 +610,17 @@ struct tb_accept_policy tb_net_accept_policy(enum tb_link_kind link,
     return p;
 }
 
+struct tb_accept_policy tb_net_accept_policy_family(enum tb_link_kind link, int ipv6,
+                                                    int network_allowed, int compat_mode) {
+    /* Over IPv6 only the cable (and loopback, for tests): no sender dials a
+     * receiver's IPv6 address off the cable, whatever AllowLocalNetwork says. */
+    if (ipv6 && link != TB_LINK_CABLE && link != TB_LINK_LOOPBACK) {
+        struct tb_accept_policy none = { 0, 0, 0 };
+        return none;
+    }
+    return tb_net_accept_policy(link, network_allowed, compat_mode);
+}
+
 int tb_net_get_tb_ip(char *buf, size_t bufsz) {
     struct ifaddrs *ifap = NULL;
     if (getifaddrs(&ifap) != 0) return -1;
@@ -536,6 +630,8 @@ int tb_net_get_tb_ip(char *buf, size_t bufsz) {
         if (!p->ifa_addr) continue;
         if (p->ifa_addr->sa_family != AF_INET) continue;
         if (strncmp(p->ifa_name, "bridge", 6) != 0) continue;
+        /* PWE: the Thunderbolt Bridge only, as for the cable rule. */
+        if (!interface_is_cable_bridge(p->ifa_name)) continue;
 
         char host[NI_MAXHOST];
         if (getnameinfo(p->ifa_addr, sizeof(struct sockaddr_in),

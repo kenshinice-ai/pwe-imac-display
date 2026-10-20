@@ -37,7 +37,8 @@ int  tb_net_listen6  (uint16_t port);
 /* Accept one client. Returns client fd or -1. Sets non-blocking. */
 int  tb_net_accept   (int server_fd);
 
-/* Returns IP address of first bridge* interface (Thunderbolt Bridge) in buf.
+/* Returns the IPv4 link-local address of the Thunderbolt Bridge (a bridge*
+ * the network settings know, as for the cable rule) in buf.
  * buf size must be at least INET_ADDRSTRLEN (16) bytes. Returns 0 on success. */
 int  tb_net_get_tb_ip(char *buf, size_t bufsz);
 
@@ -78,8 +79,13 @@ int  tb_net_is_direct_link(const char *ifname, const char *local_host, int is_wi
                            int is_cable_bridge);
 
 /* PWE: the bridges that count as the cable, as "bridge0" or "bridge0, bridge1"
- * ("" if none). Returns how many. */
+ * ("" if none). Returns how many. Cached (net.c); never on the frame path. */
 int  tb_net_cable_bridges(char *buf, size_t bufsz);
+/* The same with each bridge's member interfaces, for the start-up log:
+ * "bridge0 (en1, en2, en3)". Runs ifconfig: call it once, not in a loop. */
+int  tb_net_describe_cable_bridges(char *buf, size_t bufsz);
+/* How many times the list was read from SystemConfiguration (tests). */
+unsigned long tb_net_cable_bridge_reads(void);
 
 /* PWE: the same question for an IPv6 connection, hardware-free for unit tests.
  * Direct only when both ends are link-local on the Thunderbolt Bridge
@@ -123,6 +129,12 @@ struct tb_accept_policy {
  *               an already paired Mac only (no pairing, never unencrypted) */
 struct tb_accept_policy tb_net_accept_policy(enum tb_link_kind link,
                                              int network_allowed, int compat_mode);
+
+/* PWE: the same for a connection on the IPv4 (ipv6 = 0) or IPv6 listener.
+ * IPv6: the cable and loopback as above; anything else is refused even when
+ * network_allowed (Network Link dials IPv4 addresses only). */
+struct tb_accept_policy tb_net_accept_policy_family(enum tb_link_kind link, int ipv6,
+                                                    int network_allowed, int compat_mode);
 
 /* ---- PWE: secure connection (tb_conn.c) ----------------------------------
  * One client connection: bytes in -> packets -> handshake or decryption ->
