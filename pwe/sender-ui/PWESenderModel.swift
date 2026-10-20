@@ -359,6 +359,8 @@ final class PWESenderModel: ObservableObject {
     private var previewSecurity: PWESecurityState = .none
     /// The iMacs this Mac has paired with (keychain), read when Settings asks.
     @Published private(set) var pairedIMacs: [PWEPairedReceiver] = []
+    /// The name of the iMac the last Forget could not forget; nil after a success.
+    @Published private(set) var forgetFailure: String?
     /// Why the code step asks for a new code (PWEPairingRules).
     @Published private(set) var codeNote: PWECodeNote?
     /// When the iMac's pairing lock ends, while it is locked.
@@ -456,9 +458,10 @@ final class PWESenderModel: ObservableObject {
     /// A fixed phase for snapshots: no engine, nothing changes.
     init(preview phase: PWEPhase, firstConnection: Bool = false, inputRole: PWEInputRole = .off,
          security: PWESecurityState = .none, paired: [PWEPairedReceiver] = [],
-         codeNote: PWECodeNote? = nil, lockEnd: Date? = nil) {
+         codeNote: PWECodeNote? = nil, lockEnd: Date? = nil, forgetFailure: String? = nil) {
         self.previewSecurity = security
         self.pairedIMacs = paired
+        self.forgetFailure = forgetFailure
         self.codeNote = codeNote
         self.lockEnd = lockEnd
         self.service = nil
@@ -1074,8 +1077,8 @@ final class PWESenderModel: ObservableObject {
     func forgetThisIMac() {
         guard let session else { return }
         if let id = PWEPairingStore.shared.expectedReceiverID(forHint: session.pweReceiverHint) {
-            PWEPairingStore.shared.forget(receiverID: PWEPairingStore.hex(id))
-            NSLog("[pwe] forgot the paired iMac \(session.pweReceiverHint)")
+            let forgot = PWEPairingStore.shared.forget(receiverID: PWEPairingStore.hex(id))
+            NSLog("[pwe] \(forgot ? "forgot" : "could not forget") the paired iMac \(session.pweReceiverHint)")
         }
         refreshPairedIMacs()
         retrySecurely()
@@ -1100,10 +1103,28 @@ final class PWESenderModel: ObservableObject {
         pairedIMacs = PWEPairingStore.shared.pairedReceivers().sorted { $0.pairedAt > $1.pairedAt }
     }
 
+    /// Settings › Advanced › Forget. Deletes the iMac's key and hints; an
+    /// encrypted session with it ends, so the next connection asks for its code.
+    /// A failure stays on screen (forgetFailure) instead of passing silently (T37).
     func forget(_ receiver: PWEPairedReceiver) {
         guard service != nil else { return }
-        PWEPairingStore.shared.forget(receiverID: receiver.id)
-        NSLog("[pwe] forgot the paired iMac \(receiver.name)")
+        let store = PWEPairingStore.shared
+        // Decided before the hints go: they are how a session names its iMac's key.
+        let endsSession = session.map {
+            PWEPairingRules.sessionUses(receiver, security: $0.pweSecurity,
+                                        expectedID: store.expectedReceiverID(forHint: $0.pweReceiverHint))
+        } ?? false
+        if store.forget(receiverID: receiver.id) {
+            forgetFailure = nil
+            NSLog("[pwe] forgot the paired iMac \(receiver.name) (\(receiver.id))")
+            if endsSession {
+                NSLog("[pwe] ending the encrypted session with the iMac just forgotten")
+                disconnect()
+            }
+        } else {
+            forgetFailure = receiver.name
+            NSLog("[pwe] could not forget the paired iMac \(receiver.name) (\(receiver.id)); it stays paired")
+        }
         refreshPairedIMacs()
     }
 

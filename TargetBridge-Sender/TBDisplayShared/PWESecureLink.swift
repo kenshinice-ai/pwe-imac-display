@@ -150,13 +150,35 @@ final class PWEPairingStore: @unchecked Sendable {
         }
     }
 
-    /// Forget one iMac: the next connection asks for its code again.
-    func forget(receiverID: String) {
-        guard let id = Self.data(hex: receiverID), id.count == Int(PWE_SEC_ID_BYTES) else { return }
-        _ = id.withUnsafeBytes { pwe_keystore_forget_peer(keystore, $0.bindMemory(to: UInt8.self).baseAddress!) }
-        var hints = receiverHints
-        hints = hints.filter { $0.value != receiverID }
-        defaults.set(hints, forKey: Self.hintsKey)
+    /// Forget one iMac: its keychain item (`peer.<id>`) and every Bonjour hint
+    /// that points to it, so the next connection asks for its code again.
+    /// `receiverID` is the key id in hex (PWEPairedReceiver.id), never a
+    /// Bonjour identity. False, and the hints kept, when the keychain refused
+    /// or the item is still there afterwards; the reason is logged.
+    @discardableResult
+    func forget(receiverID: String) -> Bool {
+        let hex = receiverID.lowercased()
+        guard let id = Self.data(hex: hex), id.count == Int(PWE_SEC_ID_BYTES) else {
+            TBLog.connection.error("pairing: cannot forget \(receiverID, privacy: .public): not a key id")
+            return false
+        }
+        let rc = id.withUnsafeBytes { pwe_keystore_forget_peer(keystore, $0.bindMemory(to: UInt8.self).baseAddress!) }
+        let stillThere = pairedReceivers().contains { $0.id == hex }
+        guard rc == 0, !stillThere else {
+            TBLog.connection.error("pairing: forgetting \(hex, privacy: .public) failed (keychain status \(self.keystore.pointee.last_status, privacy: .public), still listed: \(stillThere, privacy: .public))")
+            return false
+        }
+        let hints = receiverHints
+        let kept = hints.filter { $0.value.lowercased() != hex }
+        defaults.set(kept, forKey: Self.hintsKey)
+        TBLog.connection.info("pairing: forgot \(hex, privacy: .public) and \(hints.count - kept.count, privacy: .public) hint(s)")
+        return true
+    }
+
+    /// The Bonjour identities this Mac connected to the receiver with key id `receiverID` (hex).
+    func hints(forReceiverID receiverID: String) -> [String] {
+        let hex = receiverID.lowercased()
+        return receiverHints.filter { $0.value.lowercased() == hex }.map(\.key).sorted()
     }
 
     func forgetAll() {

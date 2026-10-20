@@ -57,6 +57,15 @@ enum PWEPairingRules {
         max(Int(end.timeIntervalSince(now).rounded(.up)), 0)
     }
 
+    /// Forgetting `receiver` ends the session (T37): it is encrypted, and with
+    /// this iMac's key (`expectedID`: the key the session's Bonjour hint names),
+    /// or, without a hint, with an iMac of this name.
+    static func sessionUses(_ receiver: PWEPairedReceiver, security: PWESecurityState, expectedID: Data?) -> Bool {
+        guard case .encrypted(let name) = security else { return false }
+        if let expectedID { return PWEPairingStore.hex(expectedID) == receiver.id.lowercased() }
+        return name == receiver.name
+    }
+
     /// While the Mac asks for a new code, the window stays on the code step,
     /// unless the attempt failed (then the usual failure shows).
     static func holdsCodeStep(_ note: PWECodeNote?, _ state: PWEEngineState) -> PWESecurityState? {

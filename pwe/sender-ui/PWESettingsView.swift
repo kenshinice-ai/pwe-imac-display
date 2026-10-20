@@ -239,6 +239,10 @@ struct PWEAdvancedSettings: View {
                         }
                     }
                 }
+                if let name = model.forgetFailure {
+                    Label(strings.forgetFailed(name), systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
             }
             Section {
                 Toggle(isOn: $model.allowUnencrypted) {
@@ -313,15 +317,16 @@ struct PWEAdvancedSettings: View {
         .formStyle(.grouped)
         .frame(height: 640)
         .onAppear { model.refreshPairedIMacs() }
+        // The iMac travels with the alert (`presenting:`). Dismissing sets the
+        // binding to false before a button's action runs, and the setter clears
+        // `forgetting`: an action reading `forgetting` saw nil and forgot
+        // nothing (T37, test Mac 2026-10-21).
         .alert(forgetting.map { strings.forgetConfirm($0.name) } ?? "", isPresented: Binding(
             get: { forgetting != nil },
             set: { if !$0 { forgetting = nil } }
-        )) {
-            Button(strings.forget, role: .destructive) {
-                if let forgetting { model.forget(forgetting) }
-                forgetting = nil
-            }
-            Button(strings.cancel, role: .cancel) { forgetting = nil }
+        ), presenting: forgetting) { paired in
+            Button(strings.forget, role: .destructive) { model.forget(paired) }
+            Button(strings.cancel, role: .cancel) {}
         }
     }
 }
