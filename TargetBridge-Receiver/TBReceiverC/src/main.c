@@ -2110,6 +2110,17 @@ static void tb_pwe_on_conn_event(struct tb_conn *c, int ev, void *ud) {
     if (ev & PWE_SEC_EV_LOCKED) {
         tb_pwe_message(a, TB_DISP_NOTICE_WARNING, tb_i18n_get("receiver.pairing.locked"), PWE_SEC_LOCK_MS);
     }
+    /* PWE: the log says when a code is on screen (never the code itself). */
+    if ((ev & PWE_SEC_EV_WRONG_CODE) && !(ev & PWE_SEC_EV_LOCKED)) {
+        fprintf(stderr, "[sec] wrong pairing code (%d in a row)\n", a->gate.failures);
+    }
+    if ((ev & PWE_SEC_EV_SHOW_CODE) && a->gate.code[0]) {
+        uint64_t t = now_ms();
+        int left = a->gate.code_expires_ms > t ? (int)((a->gate.code_expires_ms - t) / 1000) : 0;
+        fprintf(stderr, "[sec] showing a pairing code (%d s left)\n", left);
+    } else if ((ev & PWE_SEC_EV_HIDE_CODE) && !a->gate.code[0]) {
+        fprintf(stderr, "[sec] pairing code hidden\n");
+    }
     if (ev & TB_CONN_EV_PLAINTEXT_REFUSED) {
         tb_pwe_message(a, TB_DISP_NOTICE_WARNING, tb_i18n_get("receiver.pairing.refused_unencrypted"),
                        TB_PWE_REFUSED_NOTICE_MS);
@@ -2490,7 +2501,8 @@ int main(int argc, char **argv) {
             a.last_permissions_poll_ms = t;
             tb_receiver_poll_permissions(&a);
             /* PWE: expire the pairing code; end short messages. */
-            (void)tb_conn_gate_tick(&a.gate, t);
+            if (tb_conn_gate_tick(&a.gate, t) & PWE_SEC_EV_HIDE_CODE)
+                fprintf(stderr, "[sec] pairing code expired\n");
             tb_pwe_refresh_notice(&a, t);
         }
 
