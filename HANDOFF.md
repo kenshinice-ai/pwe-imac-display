@@ -1,9 +1,9 @@
 # PWE Screen Encore（原名 PWE iMac Display）— 交接
 
 > 状态（2026-10-20）：1.0.0 已撤下（Lee 2026-10-20 定）：release 改回草稿、Homebrew cask 删除、README 写「1.1 即将推出」。不单独发 1.0.1，它的修复并进 1.1。
-> 1.1 候选版（产品改名 **PWE Screen Encore**，Lee 2026-10-20 定；bundle ID、`pweimacdisplay://`、数据路径不变）在本地分支 `pwe-1.1`（未推送），已含 1.0.1 的全部修复。**RC2**（2026-10-21，源码 `ab51da5`，构建号 20261021012201，sha256 `260bdc81…`）在 `pwe/dist/local/PWE-Screen-Encore-1.1.0.dmg`，修了 T32、T33、T35、T36、T37 和剪贴板；RC1 移到 `pwe/dist/local/rc1-20261020225620/`。RC2 之后 `pwe-1.1` 只多了 `verify.sh` 的一处判断和一处日期格式（进 RC3）。**计划 2026-10-28（周三）发布**，Marco 2026-10-20 已收到一周通知。
+> 1.1 候选版（产品改名 **PWE Screen Encore**，Lee 2026-10-20 定；bundle ID、`pweimacdisplay://`、数据路径不变）在本地分支 `pwe-1.1`（未推送），已含 1.0.1 的全部修复。**RC3**（2026-10-21，源码 `b770bd7`，构建号 20261021100614，sha256 `23abf70f…`）在 `pwe/dist/local/PWE-Screen-Encore-1.1.0.dmg`：在 RC2 上加了 T33 菜单开着时整体刷新、T38 日志进系统日志、T34 插线后走雷雳网桥的 IPv6 本地地址（IPv4 照旧作后备），并收紧了「哪个网桥算线缆」。RC2 移到 `pwe/dist/local/rc2-20261021012201/`，RC1 在 `rc1-20261020225620/`。**计划 2026-10-28（周三）发布**，Marco 2026-10-20 已收到一周通知。
 > 2026-10-20 给 Marco 发了补充报告（回在 10-14 那封的线程里）。他 10-16 把 #212–#216 合进了 `maint-3.6`，3.6.1 候选版是上游 PR #218。
-> RC2 验证（2026-10-21，这台 Mac，`pwe/verify.sh`）：发送端 327 个测试（4 个跳过，0 失败）、接收端全部单元测试、Apple 芯片和 Intel 冒烟各 21 段都通过；DMG 里两个 App 过 check-bundle、Developer ID 签名有效，未公证。**没上真机**。T34（插线后 iMac 约 20 秒才有地址）没修，实验步骤在 `docs/pwe/T34-EXPERIMENT-2026-10-22.md`（不入库）。
+> RC3 验证（2026-10-21，这台 Mac，`pwe/verify.sh`）：发送端 349 个测试（4 个跳过，0 失败）、接收端全部单元测试、Apple 芯片和 Intel 冒烟各 27 段都通过；DMG 里两个 App 过 check-bundle、Developer ID 签名有效，未公证。T34 的改动另有一个只读子代理审查过，提出的 10 项都已修。**T33、T34 的修复都没上真机**。RC2 真机已过：T32 安装窗口。T34 的原因从 Apple 公开源码 `bootp-494.140.4` 核实：网桥默认用 DHCP，自分配 169.254 要等 16.6–20.6 秒。
 > Lee 2026-10-21 定：重连门槛拆成两条（睡眠和换画面每次 ≤ 5 秒；拔插从 iMac 有地址起 ≤ 5 秒，T34 的约 20 秒写进已知问题，1.1.1 改走 IPv6）；忘记正连着的 iMac 就断开，下次要码；出画面时 Esc 不响应；快捷键按键盘上标的字母认；「忘记」失败的提示定稿。
 > 方案和决定：`docs/pwe/PLAN-1.1-2026-10-19.md`、`DESIGN-pairing-2026-10-19.md`、`RESEARCH-Metal-2026-10-19.md`（三份都不入库）。
 > 2026-10-20 申请了 OpenAI Codex for Open Source 和 Claude for Open Source（Lee 提交；名字 Li Liu，lee.liu.melbourne@gmail.com）。结果会发邮件，滚动审核。
@@ -25,7 +25,7 @@
 
 ## 等 Lee
 
-- **[动手] 在 iMac 上测 RC2** — 按 `docs/pwe/TEST-1.1-rc-2026-10-21.md`（不入库）测 `pwe/dist/local/PWE-Screen-Encore-1.1.0.dmg`（构建号 20261021012201）；先复测 T32、T33、T35–T37，再做 T34 实验和 2 小时 soak · 不测则 10-28 发不了 · 自 2026-10-21
+- **[动手] 在 iMac 上测 RC3** — 按 `docs/pwe/TEST-1.1-rc-2026-10-21.md`（不入库）最前面的「RC3 先做这一节」：Q0–Q3，插线要你在场；再接着 RC2 一节没测完的 R3–R6 · 不测则 10-28 发不了 · 自 2026-10-21
 - **[决定] iMac 上默认用哪种渲染方式** — 推荐按测试清单第 5 节用同口径计时重测；在那之前默认 OpenGL · 不定则按 OpenGL 发 · 自 2026-10-20
 - **[决定] Homebrew cask 改名** — 推荐新 cask `pwe-screen-encore`，旧的 `pwe-imac-display` 已删，不再恢复 · 不定则 1.1 用旧名字的 cask · 自 2026-10-20
 - **[决定] 推广按 `docs/pwe/LAUNCH-PLAN-2026-10-20.md` 走** — 推荐：1.1 过真机测试、站点解冻后再推广，中文渠道先、英文后 · 不定则不影响发布 · 自 2026-10-20
@@ -64,6 +64,7 @@
 - Lumen Bar 的交接在它自己仓库的分支 `claude/imac-display-handoff-8e14dc`（e27f28a），未合并。和 1.1 一起发。
 - 上游 PR 草稿在 `docs/pwe/notes-2026-10-19/upstream-pr*.md`，都没开。配对相关的要等披露之后。#212–#216 已在 2026-10-16 合进上游 `maint-3.6`，上游合并后从 `pwe/PATCHES.md` 里标「已合并」。
 - 测试机清单里留到下一轮的：T20 Touch Bar 亮度（没有公开事件，只加了「按住 fn」说明）、T23 Metal 计时（先用同口径重测）、T30 接收端两处疑点（要真机）、T26 接收端在 Wi‑Fi 上进解析器（1.0.1 合进来、make 行带 `DIRECT_LINK_ONLY=1` 后复查）。1.0.x 的 T2–T8 不修。
+- T34 的 IPv6 快路：真机通过、并过了披露期以后，再考虑提给上游（它改到了接收端的准入规则）。
 - 跟进上游 PR [#222](https://github.com/swellweb/targetBridge/pull/222)（T33 的状态修复，2026-10-21 提，基于 `maint-3.6`）。合并后在 `pwe/PATCHES.md` 标「已合并」。
 
 ## 仓库规矩
