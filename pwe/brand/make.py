@@ -30,7 +30,11 @@ DEFAULT_BRAND = os.path.normpath(os.path.join(HERE, "..", "..", "..", "..", "01 
 PAPER = "#F7F5F2"          # ground
 INK = "#0C0A09"            # label
 LABEL3 = (0x0C, 0x0A, 0x09, 0.36)   # glyph tint, never text
+LABEL2 = (0x0C, 0x0A, 0x09, 0.62)   # secondary text
 LINE = (0x0C, 0x0A, 0x09, 0.10)
+# cairo takes one family and does not fall back per glyph: a family list drew the
+# Chinese as boxes. PingFang SC carries both scripts and its Latin matches SF.
+FONT = "PingFang SC"
 
 
 def rgba(c):
@@ -107,15 +111,19 @@ def receiver(brand_source):
 
 # --------------------------------------------------------------- disk image
 #
-# 640 x 400 pt, paper ground: Finder draws icon labels in its light style on any
+# 640 x 520 pt, paper ground: Finder draws icon labels in its light style on any
 # window with a background picture, so the picture is designed for light.
-# No words: the two apps go to two computers, and the picture says which with
-# two pictograms and the cable between them. Finder's own labels name the files.
+# The two apps go to two computers, and the picture says which with two
+# pictograms and the cable between them. One line of words, under the iMac:
+# testers copied the receiver to the Mac (T32). Finder's own labels name the files.
+# Height: with Finder's toolbar, path bar and status bar on, a 400 pt window kept
+# only ~280 pt for icons and the second row needed scrolling (T32, 2026-10-20).
+# 520 pt keeps every icon and label within the top 400 pt of content even then.
 # Icon centres (keep in step with dmg/settings.py):
 #   sender (150,190) -> Applications (330,190)   receiver (530,190)
 #   read me (150,322)  licences (330,322)
 
-DMG_W, DMG_H = 640, 400
+DMG_W, DMG_H = 640, 520
 ICONS = {"sender": (150, 190), "apps": (330, 190), "receiver": (530, 190), "readme": (150, 322), "licences": (330, 322)}
 
 
@@ -161,6 +169,10 @@ def dmg_background():
     parts.append('<g fill="none" stroke="%s" stroke-width="%.1f" stroke-linecap="round" stroke-linejoin="round">'
                  '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"/><polyline points="%.1f,%.1f %.1f,%.1f %.1f,%.1f"/></g>'
                  % (glyph, s, a0, ay, a1, ay, a1 - 9, ay - 9, a1, ay, a1 - 9, ay + 9))
+    # Where the receiver goes, in both languages, between the iMac and its app.
+    parts.append('<g font-family="%s" font-size="11" fill="%s" text-anchor="middle">'
+                 '<text x="%d" y="126">拷到 iMac 上</text><text x="%d" y="140">Copy to the iMac</text></g>'
+                 % (FONT, rgba(LABEL2), rx, rx))
     # The two computers' halves, and the papers below.
     parts.append('<line x1="440" y1="132" x2="440" y2="266" stroke="%s" stroke-width="1"/>' % rgba(LINE))
     parts.append('<line x1="72" y1="272" x2="568" y2="272" stroke="%s" stroke-width="1"/>' % rgba(LINE))

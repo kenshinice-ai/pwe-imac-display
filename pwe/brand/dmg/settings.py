@@ -3,7 +3,7 @@
 #   dmgbuild -s pwe/brand/dmg/settings.py -D stage=<dir> -D icon=<AppIcon.icns> \
 #            -D background=pwe/brand/dmg/background.png "<volume name>" <out.dmg>
 #
-# <stage> holds the two apps, the read-me and Licenses. The window is 640 x 400 pt
+# <stage> holds the two apps, the read-me and Licenses. The window is 640 x 520 pt
 # with background.png and, next to it, background@2x.png (pwe/brand/make.py draws
 # them; dmgbuild joins the pair into one HiDPI TIFF). The icon centres below must
 # match ICONS in make.py, or the pictures and the icons drift apart. No Finder window is opened: dmgbuild writes .DS_Store directly.
@@ -27,7 +27,7 @@ icon = defines["icon"]   # noqa: F821  the volume's icon on the desktop: the app
 hide_extensions = [README]
 
 background = defines["background"]   # noqa: F821
-window_rect = ((200, 140), (640, 400))
+window_rect = ((200, 120), (640, 520))
 default_view = "icon-view"
 show_status_bar = False
 show_tab_view = False
