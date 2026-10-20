@@ -5,6 +5,11 @@ import SwiftUI
 /// sheet of its dashboard; that dashboard is still reachable as the Full Console
 /// from the Advanced tab.
 ///
+/// Only what is set once and left alone. What changes day to day — brightness,
+/// volume, picture, display mode, sound — is in the menu bar and not repeated
+/// here; engine options with a good default (compression, render matching,
+/// keeping the displays awake) are left to the Full Console.
+///
 /// Every setting can change while the iMac is a display. One the engine reads
 /// only when a connection starts reconnects for a moment, and says so.
 struct PWESettingsView: View {
@@ -19,10 +24,6 @@ struct PWESettingsView: View {
         TabView {
             PWEGeneralSettings(model: model, updates: updates, strings: strings)
                 .tabItem { Label(strings.general, systemImage: "gearshape") }
-            PWEDisplaySettings(model: model, strings: strings)
-                .tabItem { Label(strings.display, systemImage: "display") }
-            PWESoundSettings(model: model, strings: strings)
-                .tabItem { Label(strings.sound, systemImage: "speaker.wave.2") }
             PWEInputSettings(model: model, strings: strings)
                 .tabItem { Label(strings.keyboardMouse, systemImage: "keyboard") }
             PWEAdvancedSettings(model: model, strings: strings, openConsole: {
@@ -97,12 +98,10 @@ struct PWEGeneralSettings: View {
     let strings: PWEStrings
 
     @AppStorage("pwe.updateChecks") private var dailyChecks = false
-    @State private var checking = false
-    @State private var lastResult: String?
 
     var body: some View {
         Form {
-            Section(strings.startup) {
+            Section {
                 Toggle(strings.launchAtLogin, isOn: Binding(
                     get: { model.launchAtLogin },
                     set: { model.setLaunchAtLogin($0) }))
@@ -113,119 +112,20 @@ struct PWEGeneralSettings: View {
                 Toggle(strings.autoConnect, isOn: $model.autoConnect)
             }
             Section {
-                Toggle(strings.showMenuBarIcon, isOn: $model.showsMenuBarIcon)
-            } footer: {
-                if !model.showsMenuBarIcon { footnote(strings.showMenuBarIconHint) }
+                PWEBrightnessKeysSetting(language: strings.language)
             }
-            Section(strings.updates) {
+            Section {
                 Toggle(strings.checkUpdatesDaily, isOn: $dailyChecks)
-                HStack(spacing: 10) {
-                    Button(strings.checkUpdates) { checkNow() }
-                        .disabled(checking)
-                    if checking { ProgressView().controlSize(.small) }
-                    if let lastResult { Text(lastResult).foregroundStyle(.secondary) }
-                    Spacer()
-                    if updates.available != nil {
+                // What the daily check found; checking by hand is in About.
+                if let available = updates.available {
+                    LabeledContent(strings.updateAvailable(available.version)) {
                         Link(strings.download, destination: UpdateCheck.downloadPage)
                     }
                 }
             }
-            Section {
-            } footer: {
-                footnote(strings.languageHint)
-            }
         }
         .formStyle(.grouped)
-        .frame(height: 400)
-    }
-
-    private func checkNow() {
-        checking = true
-        Task {
-            let answered = await updates.check()
-            checking = false
-            if let available = updates.available {
-                lastResult = strings.updateAvailable(available.version)
-            } else {
-                lastResult = answered ? strings.upToDate : strings.couldNotCheck
-            }
-        }
-    }
-}
-
-// MARK: - Display
-
-struct PWEDisplaySettings: View {
-    @ObservedObject var model: PWESenderModel
-    let strings: PWEStrings
-
-    var body: some View {
-        Form {
-            Section {
-                Picker(model.knownReceiverName.map(strings.pictureFor) ?? strings.picture, selection: $model.picture) {
-                    ForEach(model.pictureChoices) { preset in
-                        Text(strings.pictureName(preset)).tag(preset)
-                    }
-                }
-                .disabled(model.knownReceiverName == nil)
-                Picker(strings.modeLabel, selection: $model.displayMode) {
-                    Text(strings.modeExtended).tag(PWEDisplayMode.extended)
-                    Text(strings.modeMirror).tag(PWEDisplayMode.mirror)
-                }
-            } footer: {
-                footnote(model.knownReceiverName == nil ? strings.noIMacYet : strings.pictureHint)
-            }
-            Section {
-                PWEBrightnessKeysSetting(language: strings.language)
-            }
-            Section {
-                Toggle(strings.keepAwake, isOn: $model.keepAwake)
-                Toggle(isOn: $model.largeCursor) {
-                    Text(strings.largeCursor)
-                    Text(strings.changesReconnect)
-                }
-            }
-        }
-        .formStyle(.grouped)
-        .frame(height: 430)
-    }
-}
-
-// MARK: - Sound
-
-struct PWESoundSettings: View {
-    @ObservedObject var model: PWESenderModel
-    let strings: PWEStrings
-
-    var body: some View {
-        Form {
-            Section {
-                Picker(strings.soundTitle, selection: $model.sound) {
-                    ForEach(PWESound.allCases) { sound in
-                        Text(strings.soundName(sound)).tag(sound)
-                    }
-                }
-                .pickerStyle(.radioGroup)
-            } footer: {
-                footnote(strings.soundDetail(model.sound))
-            }
-            Section {
-                LabeledContent(strings.iMacVolume) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "speaker.fill").foregroundStyle(.secondary).accessibilityHidden(true)
-                        Slider(value: $model.volume, in: 0...1)
-                            .accessibilityLabel(strings.iMacVolume)
-                        Image(systemName: "speaker.wave.3.fill").foregroundStyle(.secondary).accessibilityHidden(true)
-                    }
-                    .frame(width: 220)
-                }
-                .disabled(!model.isShowing || model.sound == .onlyThisMac)
-            } footer: {
-                footnote(strings.iMacVolumeHint)
-            }
-        }
-        .formStyle(.grouped)
-        .frame(height: 320)
+        .frame(height: 300)
     }
 }
 
@@ -255,57 +155,62 @@ struct PWEInputSettings: View {
                     footnote(strings.inputNeedsEncryption)
                 }
             }
-            if model.inputRole != .off {
-                Section(strings.permissionsNeeded) {
-                    switch model.inputRole {
-                    case .macControlsIMac:
-                        thisMac(strings.inputMonitoring, allowed: model.thisMacInputMonitoring,
-                                open: model.openInputMonitoringSettings)
-                        iMac(strings.accessibility, allowed: model.iMacAccessibility)
-                    case .iMacControlsMac:
-                        thisMac(strings.accessibility, allowed: model.thisMacAccessibility,
-                                open: model.openAccessibilitySettings)
-                        iMac(strings.inputMonitoring, allowed: model.iMacInputMonitoring)
-                    case .off:
-                        EmptyView()
+            // A permission appears only while it is missing; one the iMac has not
+            // reported yet is not shown as missing.
+            let missing = missingPermissions
+            if !missing.isEmpty {
+                Section {
+                    ForEach(missing) { permission in
+                        LabeledContent {
+                            if let open = permission.open { Button(strings.open, action: open) }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "exclamationmark.circle.fill")
+                                    .foregroundStyle(.orange)
+                                    .accessibilityHidden(true)
+                                Text(strings.permissionMissing(permission.setting))
+                            }
+                            Text(permission.onIMac ? strings.iMacPermissionHint(permission.setting) : strings.onThisMac)
+                        }
                     }
                 }
             }
         }
         .formStyle(.grouped)
-        .frame(height: 400)
+        .frame(height: 360)
     }
 
-    private func thisMac(_ setting: String, allowed: Bool, open: @escaping () -> Void) -> some View {
-        LabeledContent {
-            HStack(spacing: 10) {
-                status(allowed)
-                if !allowed { Button(strings.open, action: open) }
+    private struct Permission: Identifiable {
+        let setting: String
+        let onIMac: Bool
+        /// Opens the right pane of System Settings; nil for the iMac's.
+        let open: (() -> Void)?
+        var id: String { "\(onIMac)-\(setting)" }
+    }
+
+    private var missingPermissions: [Permission] {
+        var missing: [Permission] = []
+        switch model.inputRole {
+        case .off:
+            break
+        case .macControlsIMac:
+            if !model.thisMacInputMonitoring {
+                missing.append(Permission(setting: strings.inputMonitoring, onIMac: false,
+                                          open: model.openInputMonitoringSettings))
             }
-        } label: {
-            Text(setting)
-            Text(strings.onThisMac)
+            if model.iMacAccessibility == false {
+                missing.append(Permission(setting: strings.accessibility, onIMac: true, open: nil))
+            }
+        case .iMacControlsMac:
+            if !model.thisMacAccessibility {
+                missing.append(Permission(setting: strings.accessibility, onIMac: false,
+                                          open: model.openAccessibilitySettings))
+            }
+            if model.iMacInputMonitoring == false {
+                missing.append(Permission(setting: strings.inputMonitoring, onIMac: true, open: nil))
+            }
         }
-    }
-
-    private func iMac(_ setting: String, allowed: Bool?) -> some View {
-        LabeledContent {
-            status(allowed)
-        } label: {
-            Text(setting)
-            Text(strings.iMacPermissionHint(setting))
-        }
-    }
-
-    @ViewBuilder private func status(_ allowed: Bool?) -> some View {
-        switch allowed {
-        case true?:
-            Label(strings.allowed, systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-        case false?:
-            Label(strings.notAllowed, systemImage: "exclamationmark.circle.fill").foregroundStyle(.orange)
-        case nil:
-            Text(strings.unknownUntilConnected).foregroundStyle(.secondary)
-        }
+        return missing
     }
 }
 
@@ -321,14 +226,6 @@ struct PWEAdvancedSettings: View {
 
     var body: some View {
         Form {
-            Section {
-                Toggle(isOn: $model.allowUnencrypted) {
-                    Text(strings.allowUnencrypted)
-                    Text(strings.allowUnencryptedHint)
-                }
-            } header: {
-                Text(strings.securitySection)
-            }
             Section(strings.pairedIMacs) {
                 if model.pairedIMacs.isEmpty {
                     Text(strings.noPairedIMacs).foregroundStyle(.secondary)
@@ -341,6 +238,12 @@ struct PWEAdvancedSettings: View {
                             Text(strings.pairedOn(paired.pairedAt))
                         }
                     }
+                }
+            }
+            Section {
+                Toggle(isOn: $model.allowUnencrypted) {
+                    Text(strings.allowUnencrypted)
+                    Text(strings.allowUnencryptedHint)
                 }
             }
             Section {
@@ -358,24 +261,10 @@ struct PWEAdvancedSettings: View {
                         }
                     }
                 }
-            } header: {
-                Text(strings.connectionSection)
-            }
-            Section {
-                Picker(strings.compression, selection: $model.codec) {
-                    ForEach(TBDisplayCodecPreference.allCases) { codec in
-                        Text(strings.codecName(codec)).tag(codec)
-                    }
+                Toggle(isOn: $model.largeCursor) {
+                    Text(strings.largeCursor)
+                    Text(strings.changesReconnect)
                 }
-                Toggle(isOn: $model.renderMatching) {
-                    Text(strings.renderMatching)
-                    Text(strings.renderMatchingHint)
-                }
-                .disabled(!model.renderMatchingApplies)
-            } header: {
-                Text(strings.videoSection)
-            } footer: {
-                footnote(strings.changesReconnect)
             }
             Section(strings.diagnostics) {
                 LabeledContent {
@@ -388,29 +277,13 @@ struct PWEAdvancedSettings: View {
                         Image(systemName: check.passed == true ? "checkmark.circle.fill"
                               : check.passed == false ? "exclamationmark.circle.fill" : "clock")
                             .foregroundStyle(check.passed == true ? .green : check.passed == false ? .orange : .secondary)
+                            .accessibilityLabel(check.passed == true ? strings.passed
+                                                : check.passed == false ? strings.needsAttention : strings.afterConnecting)
                     } label: {
                         Text(check.title)
                         Text(check.detail)
                     }
                 }
-                LabeledContent {
-                    HStack(spacing: 10) {
-                        if model.isTestingCable { ProgressView().controlSize(.small) }
-                        Text(strings.cableResult(model.cableRate)).foregroundStyle(.secondary)
-                        Button(model.isTestingCable ? strings.cableTesting : strings.cableTest) { model.testCable() }
-                            .disabled(!model.canTestCable)
-                    }
-                } label: {
-                    Text(strings.cableLabel)
-                    Text(strings.cableTestHint)
-                }
-                LabeledContent {
-                    Button(strings.restartPicture) { model.restartPicture() }
-                        .disabled(!model.canRestartPicture)
-                } label: {
-                    Text(strings.restartPictureLabel)
-                }
-                Toggle(strings.detailedLogging, isOn: $model.detailedLogging)
                 LabeledContent {
                     Button(strings.exportReport) {
                         PWELogExport.save(model.diagnosticReport(), suggestedName: "PWE iMac Display report.txt")
@@ -430,7 +303,7 @@ struct PWEAdvancedSettings: View {
             }
         }
         .formStyle(.grouped)
-        .frame(height: 660)
+        .frame(height: 580)
         .onAppear { model.refreshPairedIMacs() }
         .alert(forgetting.map { strings.forgetConfirm($0.name) } ?? "", isPresented: Binding(
             get: { forgetting != nil },

@@ -362,8 +362,8 @@ struct PWEBrightnessStrings {
 
     var toggle: String { t("Brightness keys adjust the iMac", "用亮度键调 iMac") }
     var detail: String {
-        t("When the pointer is on the iMac, F1 and F2 (or the brightness keys) change the iMac's backlight. Hold Shift-Option for finer steps. Anywhere else, the keys work as usual.",
-          "指针在 iMac 上时，F1、F2（或亮度键）调 iMac 的背光，按住 Shift-Option 可以细调。指针在别处时，按键照常。")
+        t("With the pointer on the iMac, F1 and F2 change its brightness.",
+          "指针在 iMac 上时，F1、F2 调 iMac 的亮度。")
     }
     var why: String {
         t("To notice these keys, PWE iMac Display needs Accessibility permission. It looks only at F1, F2 and the brightness keys, and records nothing.",
@@ -397,13 +397,11 @@ struct PWEBrightnessKeysSetting: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            if brightness.keysState != .on {
+            if brightness.keysState == .needsPermission {
                 Text(strings.why)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-            }
-            if brightness.keysState == .needsPermission {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.yellow)
