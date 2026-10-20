@@ -8,8 +8,9 @@ import SwiftUI
 /// how loud, which picture, where the sound plays, and a way out. Everyday
 /// controls live here and nowhere else.
 ///
-/// The menu is rebuilt each time it opens (`menuNeedsUpdate`), from the same
-/// model the window reads. The slider rows reuse upstream's slider target.
+/// The menu is rebuilt each time it opens (`menuNeedsUpdate`), and again while
+/// open when the connection changes which items it needs, from the same model
+/// the window reads. The slider rows reuse upstream's slider target.
 /// It always shows: the app is menu bar first, and its window is a click on the
 /// Dock icon away, so the menu has no item for it.
 @MainActor
@@ -21,6 +22,9 @@ final class PWEStatusMenu: NSObject {
     private var sliderTargets: [TBMenuSliderTarget] = []
     /// The menu's first line, kept current while the menu is open.
     private weak var statusLine: NSMenuItem?
+    /// The top menu while it is open, and which items it was built with.
+    private weak var openMenu: NSMenu?
+    private var builtShape: Shape?
     /// Snapshots: the words without an engine to ask.
     private let previewLanguage: TBDisplaySenderLanguage?
 
@@ -33,8 +37,13 @@ final class PWEStatusMenu: NSObject {
             .removeDuplicates()
             .sink { [weak self] phase in
                 self?.updateButton(phase)
-                // An open menu is not rebuilt: its first line follows here.
-                if let self, let line = self.statusLine { line.title = self.strings.status(phase) }
+                guard let self else { return }
+                if let line = self.statusLine { line.title = self.strings.status(phase) }
+                // `$phase` publishes before the model changes. Look again on the
+                // next turn (the main queue also runs while a menu tracks) and
+                // rebuild an open menu whose items no longer fit: open while it
+                // reconnected, it kept Cancel and lost the sliders (T33, RC2).
+                DispatchQueue.main.async { [weak self] in self?.refreshOpenMenu() }
             }
             .store(in: &cancellables)
         // A code to type or a question to answer needs the window, even when the
@@ -103,7 +112,25 @@ final class PWEStatusMenu: NSObject {
 
     // MARK: - Building the menu
 
+    /// Which items the menu holds: what `rebuild` decides on. The first line's
+    /// words are not part of it; they change in place.
+    private struct Shape: Equatable {
+        var showing, unencrypted, canDisconnect, volume: Bool
+        var connectable: String?
+    }
+
+    private var shape: Shape {
+        Shape(showing: model.isShowing, unencrypted: model.isUnencrypted, canDisconnect: model.canDisconnect,
+              volume: model.sound != .onlyThisMac, connectable: model.connectableReceiver?.id)
+    }
+
+    private func refreshOpenMenu() {
+        guard let menu = openMenu, shape != builtShape else { return }
+        rebuild(menu)
+    }
+
     private func rebuild(_ menu: NSMenu) {
+        builtShape = shape
         menu.removeAllItems()
         sliderTargets.removeAll()
         let strings = strings
@@ -273,11 +300,13 @@ extension PWEStatusMenu: NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         guard menu === statusItem?.menu else { return }
+        openMenu = menu
         actions.menuWillOpen()
     }
 
     func menuDidClose(_ menu: NSMenu) {
         guard menu === statusItem?.menu else { return }
+        openMenu = nil
         actions.menuDidClose()
     }
 }
