@@ -421,6 +421,9 @@ final class PWESenderModel: ObservableObject {
 
     private var session: TBDisplaySenderSession? { service?.sessions.first }
 
+    /// Whether the session dials over Network Link rather than the cable.
+    var connectsOverNetwork: Bool { session?.transportKind == .networkLink }
+
     private func refresh() {
         guard let service else { return }
         let retrying = TBSenderAutomation.isConnectingAutomatically

@@ -252,7 +252,7 @@ struct PWEMainView: View {
                     .accessibilityHidden(true)
                 Text(strings.interruptedTitle(reason)).font(.title3.weight(.semibold))
             }
-            Text(strings.interruptedHint(reason, retrying: retrying))
+            Text(strings.interruptedHint(reason, retrying: retrying, overNetwork: model.connectsOverNetwork))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if retrying {

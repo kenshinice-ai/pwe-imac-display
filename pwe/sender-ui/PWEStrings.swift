@@ -118,7 +118,7 @@ struct PWEStrings {
         case .captureFailed: return t("The picture did not start", "画面没有出来")
         }
     }
-    func interruptedHint(_ reason: PWEReason, retrying: Bool) -> String {
+    func interruptedHint(_ reason: PWEReason, retrying: Bool, overNetwork: Bool = false) -> String {
         switch reason {
         case .cableOrReceiverGone:
             return retrying
@@ -126,6 +126,11 @@ struct PWEStrings {
                 : t("Check the cable. When the iMac is back, choose Try Again.", "检查一下线。iMac 回来后，点「重试」。")
         case .receiverQuit:
             return t("Open PWE iMac Display Receiver on the iMac again.", "在 iMac 上重新打开「PWE iMac Display Receiver」。")
+        case .couldNotConnect where overNetwork:
+            // The cable hint would be wrong here: a network connection also needs the
+            // receiver to allow it (local-network mode, see the install guide).
+            return t("Over a network, the receiver on the iMac must allow network connections first. See the install guide.",
+                     "经网络连接时，要先在 iMac 的接收端打开局域网模式，步骤见安装指南。")
         case .couldNotConnect:
             return t("Check that PWE iMac Display Receiver is open on the iMac and the cable is in.",
                      "确认 iMac 上的「PWE iMac Display Receiver」开着、线插好了。")
