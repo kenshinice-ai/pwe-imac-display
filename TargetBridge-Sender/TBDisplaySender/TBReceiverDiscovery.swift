@@ -6,6 +6,10 @@ struct TBDiscoveredReceiver: Identifiable, Equatable {
     let receiverID: String
     let preferredIP: String
     let thunderboltIP: String
+    /// PWE (T34): the receiver's Thunderbolt Bridge IPv6 link-local address,
+    /// scoped to this Mac's bridge ("fe80::…%bridge0"); "" when not announced
+    /// or when this Mac cannot tell which bridge reaches it.
+    let thunderboltIPv6: String
     let usbIP: String
     let networkIP: String
     let ethernetIP: String
@@ -22,6 +26,7 @@ struct TBDiscoveredReceiver: Identifiable, Equatable {
         receiverID: String = "",
         preferredIP: String,
         thunderboltIP: String,
+        thunderboltIPv6: String = "",
         usbIP: String = "",
         networkIP: String,
         ethernetIP: String = "",
@@ -37,6 +42,7 @@ struct TBDiscoveredReceiver: Identifiable, Equatable {
         self.receiverID = UUID(uuidString: receiverID)?.uuidString ?? ""
         self.preferredIP = preferredIP
         self.thunderboltIP = thunderboltIP
+        self.thunderboltIPv6 = TBConnectionDiagnostics.isScopedBridgeIPv6(thunderboltIPv6) ? thunderboltIPv6 : ""
         self.usbIP = usbIP
         self.networkIP = networkIP
         self.ethernetIP = ethernetIP
@@ -99,7 +105,10 @@ struct TBDiscoveredReceiver: Identifiable, Equatable {
             // and advertise the bridge's link-local address as `ip`: keep that.
             if !thunderboltIP.isEmpty { return thunderboltIP }
             if preferredIP.hasPrefix("169.254."), preferredIP != usbIP { return preferredIP }
-            return ""
+            // PWE (T34): no IPv4 on the receiver's bridge yet (it waits about
+            // 19 s for DHCP to give up); its IPv6 link-local address works now.
+            // IPv4 stays first whenever there is one, as before.
+            return thunderboltIPv6
         case .networkLink:
             if localInterfaceIP.hasPrefix("169.254."), !usbIP.isEmpty {
                 return usbIP
@@ -110,7 +119,7 @@ struct TBDiscoveredReceiver: Identifiable, Equatable {
             // that from Wi-Fi can only time out (iMac18,3, 2026-10-20). With no
             // network address there is no Network Link; return nothing and let
             // the caller say why.
-            let cableAddresses = Set([thunderboltIP, usbIP].filter { !$0.isEmpty })
+            let cableAddresses = Set([thunderboltIP, thunderboltIPv6, usbIP].filter { !$0.isEmpty })
             let candidates = [networkIP, ethernetIP, wifiIP, preferredIP] + resolvedIPv4Addresses
             return candidates.first { !$0.isEmpty && !cableAddresses.contains($0) } ?? ""
         }
@@ -124,6 +133,7 @@ struct TBDiscoveredReceiver: Identifiable, Equatable {
             addresses.append((label, ip))
         }
         appendAddress("TB", thunderboltIP)
+        if thunderboltIP.isEmpty { appendAddress("TB", thunderboltIPv6) }
         appendAddress("USB", usbIP)
         appendAddress("ETH", ethernetIP)
         appendAddress("Wi-Fi", wifiIP)
@@ -211,6 +221,13 @@ final class TBReceiverDiscovery: NSObject, ObservableObject {
         let ethernetIP = stringValue("ethernetIP")
         let wifiIP = stringValue("wifiIP")
         let resolvedIPv4Addresses = resolvedIPv4Addresses(from: service)
+        // PWE (T34): `tbIP6`, scoped to the bridge it is reached on.
+        let advertisedIPv6 = stringValue("tbIP6")
+        let thunderboltIPv6 = advertisedIPv6.isEmpty ? "" : TBConnectionDiagnostics.scopedBridgeIPv6(
+            advertised: advertisedIPv6,
+            resolved: resolvedIPv6Addresses(from: service),
+            localBridgeInterfaces: TBConnectionDiagnostics.currentBridgeIPv6Interfaces()
+        )
         let preferredIP = !receiverIP.isEmpty
             ? receiverIP
             : (!thunderboltIP.isEmpty
@@ -218,7 +235,8 @@ final class TBReceiverDiscovery: NSObject, ObservableObject {
                 : (!usbIP.isEmpty
                     ? usbIP
                     : (!networkIP.isEmpty ? networkIP : (resolvedIPv4Addresses.first ?? ""))))
-        guard !preferredIP.isEmpty else { return }
+        // PWE: a receiver whose bridge has only its IPv6 address yet is listed too.
+        guard !preferredIP.isEmpty || !thunderboltIPv6.isEmpty else { return }
 
         let panelName = stringValue("panel")
         let panelWidth = stringValue("panelWidth")
@@ -243,6 +261,7 @@ final class TBReceiverDiscovery: NSObject, ObservableObject {
             receiverID: receiverID,
             preferredIP: preferredIP,
             thunderboltIP: thunderboltIP,
+            thunderboltIPv6: thunderboltIPv6,
             usbIP: usbIP,
             networkIP: networkIP,
             ethernetIP: ethernetIP,
@@ -273,6 +292,15 @@ final class TBReceiverDiscovery: NSObject, ObservableObject {
     }
 
     private func resolvedIPv4Addresses(from service: NetService) -> [String] {
+        resolvedAddresses(from: service, family: AF_INET)
+    }
+
+    /// PWE: link-local ones come back scoped to the interface they were heard on.
+    private func resolvedIPv6Addresses(from service: NetService) -> [String] {
+        resolvedAddresses(from: service, family: AF_INET6)
+    }
+
+    private func resolvedAddresses(from service: NetService, family: Int32) -> [String] {
         guard let addresses = service.addresses else { return [] }
         var result: [String] = []
         var seen = Set<String>()
@@ -283,7 +311,7 @@ final class TBReceiverDiscovery: NSObject, ObservableObject {
                       rawBuffer.count >= MemoryLayout<sockaddr>.size
                 else { return nil }
                 let socketAddress = baseAddress.assumingMemoryBound(to: sockaddr.self)
-                guard socketAddress.pointee.sa_family == UInt8(AF_INET) else { return nil }
+                guard socketAddress.pointee.sa_family == UInt8(family) else { return nil }
                 var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
                 let length = socklen_t(min(rawBuffer.count, Int(socketAddress.pointee.sa_len)))
                 guard getnameinfo(

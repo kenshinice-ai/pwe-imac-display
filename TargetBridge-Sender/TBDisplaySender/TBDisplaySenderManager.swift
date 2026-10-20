@@ -903,7 +903,7 @@ final class TBDisplaySenderService: ObservableObject {
         let receivers = discoveredReceivers
         let languageCode = language.fileStem
         for receiver in receivers {
-            let candidateIPs = [receiver.preferredIP, receiver.thunderboltIP, receiver.networkIP]
+            let candidateIPs = [receiver.preferredIP, receiver.thunderboltIP, receiver.thunderboltIPv6, receiver.networkIP]
             // PWE: a receiver showing this Mac gets the language inside its session;
             // the others only when paired, over a short encrypted connection, once
             // per language (discovery updates arrive often).

@@ -379,7 +379,10 @@ enum TBSenderAutomation {
             NSLog("[automation] no receiver IP resolved; aborting connect")
             return nil
         }
-        guard !session.localInterfaceIP.isEmpty else {
+        // PWE (T34): a scoped IPv6 link-local dial over the bridge needs no local IPv4 address.
+        let bridgeIPv6 = session.transportKind == .thunderboltBridge
+            && TBConnectionDiagnostics.isScopedBridgeIPv6(session.receiverIP)
+        guard bridgeIPv6 || !session.localInterfaceIP.isEmpty else {
             NSLog("[automation] no local interface for transport \(session.transportKind.rawValue); aborting connect")
             return nil
         }
@@ -387,7 +390,7 @@ enum TBSenderAutomation {
             NSLog("[automation] the system is going to sleep; not connecting")
             return nil
         }
-        NSLog("[automation] connecting to \(session.receiverIP) from \(session.localInterfaceIP) via \(session.transportKind.rawValue) — \(session.captureSource.rawValue)/\(session.capturePreset.rawValue)")
+        NSLog("[automation] connecting to \(session.receiverIP) from \(bridgeIPv6 ? "IPv6 link-local" : session.localInterfaceIP) via \(session.transportKind.rawValue) — \(session.captureSource.rawValue)/\(session.capturePreset.rawValue)")
         session.connect()
         return session
     }

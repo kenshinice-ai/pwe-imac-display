@@ -1429,7 +1429,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         if let receiver = TBDisplaySenderService.shared.discoveredReceivers.first(where: {
             $0.matchesPersistedIdentity(selectedReceiverID) ||
             $0.preferredIP == receiverIP ||
-            $0.thunderboltIP == receiverIP ||
+            $0.thunderboltIP == receiverIP || $0.thunderboltIPv6 == receiverIP ||
             $0.networkIP == receiverIP
         }) {
             return receiver.shortHostName
@@ -1891,7 +1891,13 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     }
 
     func connect() {
-        guard connection == nil, !receiverIP.isEmpty, !localInterfaceIP.isEmpty else { return }
+        // PWE (T34): over the Thunderbolt Bridge, a receiver whose bridge has
+        // only its IPv6 link-local address yet is dialed there, scoped to this
+        // Mac's bridge ("fe80::…%bridge0"). The scope picks the interface, so
+        // this Mac needs no IPv4 address on its bridge either.
+        let bridgeIPv6 = transportKind == .thunderboltBridge
+            && TBConnectionDiagnostics.isScopedBridgeIPv6(receiverIP)
+        guard connection == nil, !receiverIP.isEmpty, bridgeIPv6 || !localInterfaceIP.isEmpty else { return }
         connectTimeoutWorkItem?.cancel()
         connectTimeoutWorkItem = nil
         recvBuffer.removeAll(keepingCapacity: false)
@@ -1915,7 +1921,9 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         let params = NWParameters(tls: nil, tcp: tcpOptions)
         params.allowLocalEndpointReuse = true
         params.serviceClass = .interactiveVideo
-        if let localPort = NWEndpoint.Port(rawValue: 0) {
+        // An IPv4 source address cannot reach an IPv6 peer: leave the source
+        // to the scoped destination.
+        if !bridgeIPv6, let localPort = NWEndpoint.Port(rawValue: 0) {
             params.requiredLocalEndpoint = .hostPort(host: NWEndpoint.Host(localInterfaceIP), port: localPort)
         }
 
@@ -1924,20 +1932,34 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         // interface — the routing table keeps 169.254/16 on the primary
         // interface (usually Wi-Fi), so an unscoped dial to a Thunderbolt
         // Bridge peer leaves via the wrong link and times out.
-        let interfaces = TBConnectionDiagnostics.currentIPv4Interfaces()
-        connectInterfaceName = TBConnectionDiagnostics.interfaceName(forLocalIP: localInterfaceIP, in: interfaces)
-        let scopedHost = TBConnectionDiagnostics.scopedReceiverHost(
-            receiverIP: receiverIP,
-            localIP: localInterfaceIP,
-            interfaces: interfaces
-        )
+        let scopedHost: String
         let dialHost: NWEndpoint.Host
-        if scopedHost != receiverIP, let scopedAddress = IPv4Address(scopedHost) {
-            dialHost = .ipv4(scopedAddress)
+        if bridgeIPv6 {
+            scopedHost = receiverIP
+            connectInterfaceName = TBConnectionDiagnostics.ipv6Scope(of: receiverIP)
+            if let address = IPv6Address(receiverIP), address.interface != nil {
+                dialHost = .ipv6(address)
+            } else {
+                // The bridge went away since discovery: the dial fails and the
+                // caller retries, as for any unreachable address.
+                TBLog.connection.warning("connect: \(self.receiverIP, privacy: .public) names no interface on this Mac")
+                dialHost = NWEndpoint.Host(receiverIP)
+            }
         } else {
-            dialHost = NWEndpoint.Host(receiverIP)
+            let interfaces = TBConnectionDiagnostics.currentIPv4Interfaces()
+            connectInterfaceName = TBConnectionDiagnostics.interfaceName(forLocalIP: localInterfaceIP, in: interfaces)
+            scopedHost = TBConnectionDiagnostics.scopedReceiverHost(
+                receiverIP: receiverIP,
+                localIP: localInterfaceIP,
+                interfaces: interfaces
+            )
+            if scopedHost != receiverIP, let scopedAddress = IPv4Address(scopedHost) {
+                dialHost = .ipv4(scopedAddress)
+            } else {
+                dialHost = NWEndpoint.Host(receiverIP)
+            }
         }
-        TBLog.connection.info("connect: dialing \(scopedHost, privacy: .public):\(TBMonitorProtocol.port) from \(self.localInterfaceIP, privacy: .public) (\(self.connectInterfaceName ?? "unknown interface", privacy: .public)) transport=\(self.transportKind.rawValue, privacy: .public)")
+        TBLog.connection.info("connect: dialing \(scopedHost, privacy: .public):\(TBMonitorProtocol.port) from \(bridgeIPv6 ? "IPv6 link-local" : self.localInterfaceIP, privacy: .public) (\(self.connectInterfaceName ?? "unknown interface", privacy: .public)) transport=\(self.transportKind.rawValue, privacy: .public)")
         let conn = NWConnection(
             host: dialHost,
             port: NWEndpoint.Port(integerLiteral: TBMonitorProtocol.port),
@@ -2307,7 +2329,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         if let receiver = TBDisplaySenderService.shared.discoveredReceivers.first(where: {
             $0.matchesPersistedIdentity(selectedReceiverID) ||
             $0.preferredIP == receiverIP ||
-            $0.thunderboltIP == receiverIP ||
+            $0.thunderboltIP == receiverIP || $0.thunderboltIPv6 == receiverIP ||
             $0.networkIP == receiverIP
         }) {
             return receiver.stableIdentity
@@ -2355,7 +2377,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     private func loadSavedExtendedDisplayArrangement(for profile: TBMonitorDisplayProfile) -> SavedExtendedDisplayArrangement? {
         let receiver = TBDisplaySenderService.shared.discoveredReceivers.first {
             $0.matchesPersistedIdentity(selectedReceiverID) ||
-                $0.preferredIP == receiverIP || $0.thunderboltIP == receiverIP ||
+                $0.preferredIP == receiverIP || $0.thunderboltIP == receiverIP || $0.thunderboltIPv6 == receiverIP ||
                 $0.networkIP == receiverIP
         }
         var aliases: [String] = []
@@ -4603,7 +4625,7 @@ extension TBDisplaySenderSession {
         if let receiver = TBDisplaySenderService.shared.discoveredReceivers.first(where: {
             $0.matchesPersistedIdentity(selectedReceiverID) ||
             $0.preferredIP == receiverIP ||
-            $0.thunderboltIP == receiverIP ||
+            $0.thunderboltIP == receiverIP || $0.thunderboltIPv6 == receiverIP ||
             $0.networkIP == receiverIP
         }) {
             return receiver.stableIdentity
