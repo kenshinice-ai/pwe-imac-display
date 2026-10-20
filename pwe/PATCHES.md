@@ -40,7 +40,7 @@
 | `9dd440f` | 计时加 `handoff` 阶段，两种渲染器同一口径 | 原来 OpenGL 和 Metal 的计时终点不同，对比不公平 | 待提 | — |
 | `43bd8bf` | 转发的指针从真实位置出发；跨过两屏之间的空隙时保留仍在屏上的那一轴 | 真机：iMac 鼠标控制 Mac 时指针找不到、有些地方过不去 | 待提 | 等真机复测 |
 | `a8c14d4` | 接收端 PWE 画面：夜色底、翅膀（从包里的 PDF 画）、各状态共用一个锚点；系统字体和等宽数字；转圈和详情页换色；新提示类型 `TB_DISP_NOTICE_ERROR`；配对码只画数字 | 品牌规范 `docs/pwe/BRAND-iMac-Display-2026-10-20.md` R1–R5（2026-10-20） | 不提交（只属于 PWE 的外观） | 旗标关闭时只多一处：上游的连接卡片也按错误类型着色 |
-| `9d7677d` | 发送端 `TBDisplaySenderService.swift`：`startCapture` 返回后，第一帧已经到了就不再把状态写回「等第一帧」（`pweCaptureDidStart`）；Debug 构建的测试钩子 `pweTestCaptureStart` | 真机 T33：出画面后菜单和主窗口一直停在「连接中 · 等待画面」，4 次换画面里 3 次。第一帧可能在 `startCapture` 等待期间到达，上游这一行会把 `captureActive` 覆盖掉。上游同样有这个问题 | 待提（不涉及配对，可以先提） | 等真机复测 |
+| `9d7677d` | 发送端 `TBDisplaySenderService.swift`：`startCapture` 返回后，第一帧已经到了就不再把状态写回「等第一帧」（`pweCaptureDidStart`）；Debug 构建的测试钩子 `pweTestCaptureStart` | 真机 T33：出画面后菜单和主窗口一直停在「连接中 · 等待画面」，4 次换画面里 3 次。第一帧可能在 `startCapture` 等待期间到达，上游这一行会把 `captureActive` 覆盖掉。上游同样有这个问题 | [#222](https://github.com/swellweb/targetBridge/pull/222)（2026-10-21，基于 `maint-3.6`，只含状态这一行；测试钩子不提） | 等上游审；等真机复测 |
 | `ffb220c`、`3c3424d` | 发送端：接收端发来的剪贴板只在「iMac 控制 Mac」且加密会话时接受（`pweTakesReceiverClipboard`） | 1.1 的输入模式约定 | upstream PR after disclosure | 本地提交，未推 |
 | `b4fbc9e` | 发送端 `PWESecureLink.swift`（PWE 新文件，在上游目录里）：「忘记」返回结果、确认钥匙串条目已删、删掉指向它的全部提示 | 真机 T37：设置里的「忘记」没有效果 | upstream PR after disclosure | 本地提交，未推 |
 | `044511b` | 接收端 `display.c`：建窗后关掉文字输入；快捷键按键盘上标的字母认，非拉丁布局按物理键；PWE 构建里 Esc 按两次才退出并提示，出画面时不响应；标题只写 App 名、变了才设。`main.c`：权限一行和配对提示改为从语言文件取、画的时候再取。`Languages/*.json`：新键 `receiver.ui.quit_confirm`、`receiver.permissions.*` | 真机 T36：中文输入法拦住 I 键，Esc 直接退出；T35：标题栏露出主机名和 IP | 关文字输入、Esc 忽略重复和组合键、权限文字进语言文件：待提；其余属于 PWE 构建 | 旗标关闭时：文字输入关、Esc 不响应重复和组合键、标题只在变化时设置 |
