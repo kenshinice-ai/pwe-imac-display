@@ -156,7 +156,8 @@ mkdir -p "$RECEIVER/Contents/MacOS" "$RECEIVER/Contents/Resources/Languages"
 lipo -create "$WORK/tbreceiver-arm64" "$WORK/tbreceiver-x86_64" \
   -output "$RECEIVER/Contents/MacOS/PWEiMacDisplayReceiver"
 cp "$SRC/TargetBridge-Shared/Languages/"*.json "$RECEIVER/Contents/Resources/Languages/"
-iconutil -c icns "$SRC/pwe/assets/AppIcon.iconset" -o "$RECEIVER/Contents/Resources/AppIcon.icns"
+# The receiver has its own icon: the same iMac, its frame in paper (pwe/icon/main.swift).
+iconutil -c icns "$SRC/pwe/assets/receiver/AppIcon.iconset" -o "$RECEIVER/Contents/Resources/AppIcon.icns"
 # The paper wing on the receiver's screens (display.c, tb_disp_draw_wing).
 cp "$SRC/pwe/brand/receiver/receiver-wing.pdf" "$RECEIVER/Contents/Resources/"
 cat > "$RECEIVER/Contents/Info.plist" <<EOF

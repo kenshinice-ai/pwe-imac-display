@@ -396,7 +396,8 @@ def rebrand_receiver(root: Path) -> None:
     for path in sorted(src.glob("*.c")) + sorted(src.glob("*.m")):
         rename_in_literals(path)
     assets = root / "TargetBridge-Receiver/TargetBridgeAssets/Assets.xcassets/AppIcon.appiconset"
-    shutil.copy(root / "pwe/assets/icon_1024.png", assets / "icon_1024.png")
+    # The receiver's own icon (paper frame), for upstream's receiver build script.
+    shutil.copy(root / "pwe/assets/receiver/icon_1024.png", assets / "icon_1024.png")
 
 
 # Literals that may still say TargetBridge after the rename, and why.

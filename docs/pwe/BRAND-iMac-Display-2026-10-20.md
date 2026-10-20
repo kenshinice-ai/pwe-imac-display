@@ -8,8 +8,8 @@
 
 1. **接收端画面是最显眼的表面，也是最不像 PWE 的表面。** 27 寸屏上铺的是上游的冷灰底、TargetBridge 绿、Helvetica、全大写英文标签；连接中还多一张卡片和一个绿色「接收端」字样。改成夜色底、静止的纸色翅膀、系统字体，绿色全部拿掉（规格 R1–R3）。
 2. **菜单栏图标在两个状态之间换了一个物体**（未连接是 `display` 显示器，连接后是 `desktopcomputer` iMac），而且未连接时和系统「显示器」菜单、PWE Lumen Bar 的字形都撞。已做好一套自己的模板字形：同一台 iMac，连上时屏幕亮起（R4）。
-3. **两个 App 用同一个图标**，DMG 里并排放着，用户要靠名字分辨哪个装在哪台电脑上——这是装错的最大来源。DMG 窗口已经改好（两台电脑的示意 + 一根线）；图标的成对方案等 Lee 定（R6）。
-4. **图标里的屏幕是一块 3:2 的通用显示器，没有 iMac 的下巴**，代码注释写着 "screen, chin and stand"，画出来却没有下巴。而且这个外框是 08 §4.6 名单之外的「第二图形」，没有登记。提案：16:9 屏 + 下巴，并把它登记为第三个有名有姓的例外（R6）。
+3. **两个 App 用同一个图标**，DMG 里并排放着，用户要靠名字分辨哪个装在哪台电脑上——这是装错的最大来源。DMG 窗口已经改好（两台电脑的示意 + 一根线）；图标已改成一对：琥珀框发送端、纸色框接收端（R6，Lee 2026-10-20 同意，已做）。
+4. **图标里的屏幕是一块 3:2 的通用显示器，没有 iMac 的下巴**，代码注释写着 "screen, chin and stand"，画出来却没有下巴。而且这个外框是 08 §4.6 名单之外的「第二图形」，没有登记。已改成 16:9 屏 + 下巴 + 底座（R6，已做）；登记进 08 §4.6 的措辞见 2.4，等 Lee 写进 08。
 5. **产品名里有「iMac」。** Apple 的商标指南明文不许第三方在产品名里使用 iMac（见第六节）。这不是视觉问题，但会决定发布时的一切物料，所以排在等 Lee 的第一条。
 
 ## 一、审计：用户看得见的每一处
@@ -25,8 +25,8 @@
 | 接收端字体 | 英文 Helvetica / Menlo，中文苹方 | 08 §7.2：界面用系统字体；数字等宽 | R3 | 中 |
 | 接收端措辞 | 「正在连接你的 MacBook」「开机自动打开」 | 发送端可能是 Mac mini / Studio；macOS 的词是「登录时打开」，发送端也这么写 | R2 | 中 |
 | 菜单栏图标 | SF Symbols `display` ↔ `desktopcomputer` | 换物体；未连接时和系统「显示器」、Lumen Bar 撞 | R4：`pwe/brand/menubar/` 两个模板字形 | 高：每天都看 |
-| App 图标（发送端） | 夜色底、琥珀翅膀（线稿）、琥珀 3:2 外框 + 颈 | 不像 iMac（没下巴、比例不对）；第二图形未登记 | R6，等 Lee | 中 |
-| App 图标（接收端） | 与发送端同一个 | DMG、iMac 的程序坞里分不出两端 | R6，等 Lee | 中 |
+| App 图标（发送端） | 夜色底、琥珀翅膀（线稿）、琥珀 3:2 外框 + 颈 | 不像 iMac（没下巴、比例不对）；第二图形未登记 | R6，已做 | 中 |
+| App 图标（接收端） | 与发送端同一个 | DMG、iMac 的程序坞里分不出两端 | R6，已做：纸色框 | 中 |
 | 主窗口页头 | 40 pt App 图标 + 名字 + ⓘ | 没问题 | 不改 | — |
 | 主窗口第一次连接的提示 | 「以后在菜单栏的 [desktopcomputer] 里调…」 | 内嵌字形要和菜单栏一致 | R4 一并改 | 低 |
 | 关于 | 图标、版本、致谢、源代码、支持 PWE…、检查更新 | 没有署名行，没有版权行（Lumen Bar 有） | R7 | 低 |
@@ -77,16 +77,21 @@
 - 强调靠字重，不靠全大写和字距（08 §7.2）。英文标签用句首大写。
 - 字号走 08 §7.2 的表，单位是 `display.c` 的 u（= 短边 / 720；2560×1440 的画面 1 u = 2 pt）：名字 28（title1），状态 22（title2），配对码 34（large title），说明 15（subhead），页脚 12（caption）。
 
-### 2.4 图标家族（提案，等 Lee）
+### 2.4 图标家族（Lee 2026-10-20 同意，已做）
 
 - 一对图标，同一副骨架：夜色圆角方块（与已发布的 Loan Bar、Monitor、AI Bar、Lumen Bar 同一块地），线稿翅膀放在一台 2014–2017 款 27 寸 iMac 的正面轮廓里。
   - **发送端**：外框、下巴、底座都是琥珀。琥珀是信号，发送端发出画面。
   - **接收端**：外框换成纸色 `#F7F5F2`，翅膀仍是琥珀。纸色框就是被点亮的那台 iMac。
 - 骨架数值（板宽 P = 画布 × 0.83，与现在相同）：机身宽 0.80 P，机身高 = 宽 × 450/650，描边 0.024 P，圆角 0.045 P；下巴占机身高 19%，画一条与描边同粗的横线；底座梯形上宽 0.12 P、下宽 0.17 P、高 0.07 P；整组垂直居中再上移 0.01 P；翅膀宽 = 机身宽 × 0.66，在下巴以上的屏幕区里居中。
 - 翅膀仍用线稿（与已发布的四个兄弟一致）。v2 的实心档要整组迁移，不由这个产品单独先走。
-- **偏离 08 §4.6「不加第二个图形」**：iMac 外框是这个产品本身，理由和 Receipts 的票面相同。要 Lee 同意后写进 08 §4.6 的例外名单；在那之前，这一条只是提案。
+- 生成：`pwe/icon/main.swift`（`drawAppIcon(in:side:frame:)`），输出 `pwe/assets/`（发送端：`AppIcon.appiconset`、`AppIcon.iconset`、`icon_1024.png`）和 `pwe/assets/receiver/`（接收端：`AppIcon.iconset`、`icon_1024.png`）。磁盘映像的卷图标和 README 仍用发送端那一份。颜色按 sRGB 画，PNG 里的像素就是 token 值（2026-10-20 实测 `#0E1729`、`#F5B335`、`#F7F5F2`；以前用 Generic RGB，夜色画成了 `#101F36`）。
+- 小尺寸：所有边落在整像素上，线至少 1 px（128 px 时描边取整为 3 px）。32 px 屏、下巴、底座都清楚。16 px 时下巴横线和机身底边并成一条 2 px 的实条，读作实心下巴；翅膀只剩一道琥珀斜线（08 §4.6：16 px 只能读整体色）。两端在 16 px 靠框色分得开。
+- **偏离 08 §4.6「不加第二个图形」**：iMac 外框是这个产品本身，理由和 Receipts 的票面相同。Lee 2026-10-20 同意了图标；08 本身还没改，建议 Lee 照下面的措辞写进去：
+  - §4.6 第一段改为：「……**不加文字、不加第二个图形**（有名有姓的例外只有三个：Studio 的星火、Receipts 的票面、iMac Display 的 iMac 框，见下表）。」
+  - 表里加一行：「| PWE iMac Display（发送端 / 接收端） | 夜 | 琥珀线稿翼，是一台 2014–2017 款 27 寸 iMac 正面轮廓里的画面：16:9 屏、下巴、底座。框色分两端：发送端 `--signal-strong`，接收端纸 `#F7F5F2`；翼宽 = 机身宽 × 0.66。数值见 `PWE iMac Display/docs/pwe/BRAND-iMac-Display-2026-10-20.md` 2.4 |」
+  - 修订记录加一行：「2026-10-20 v2.7：**iMac Display 图标加 iMac 框**（Lee 拍板；§4.6）——第三个带第二图形的图标，因为让旧 iMac 当显示器就是这个产品本身。一对图标同一副骨架，只换框色区分发送端和接收端；翼仍是线稿，与已发布的四个夜底兄弟一致。」
 - 不选纸底接收端图标（预览里的「备选」）：它在 iMac 自己的程序坞里是一块亮方块，16 px 时在浅色背景上几乎消失。
-- 预览：`pwe/brand/preview/icon-before-after.png`（256 / 128 / 64 / 32 / 16 px，浅深两种背景，16 px 放大 6 倍）。
+- 预览：提案 `pwe/brand/preview/icon-before-after.png`；落地后的前后对比 `pwe/brand/preview/icon-pair-final.png`（256 / 128 / 64 / 32 / 16 px，浅深两种背景，16 px 放大 6 倍、32 px 放大 3 倍，取自实际输出的 PNG）。
 
 ### 2.5 菜单栏字形（已做）
 
@@ -151,7 +156,7 @@
 
 ## 三、代码改动规格（按用户影响排序）
 
-每条写明文件、现在、改成、为什么。R1–R5、R7–R9 不需要 Lee 拍板；R6、R10 需要。上游文件一律经 `pwe/rebrand.py` 在打包时改，不直接改仓库里的上游文件。
+每条写明文件、现在、改成、为什么。R1–R5、R7–R9 不需要 Lee 拍板；R6、R10 需要（R6 已于 2026-10-20 同意并做完）。上游文件一律经 `pwe/rebrand.py` 在打包时改，不直接改仓库里的上游文件。
 
 | # | 文件 | 现在 | 改成 | 为什么 |
 |---|---|---|---|---|
@@ -164,7 +169,7 @@
 | R4b | `pwe/rebrand.py` `rebrand_sender` 末尾，复制 `AppIcon.appiconset` 那里 | 只复制图标 | 再把 `pwe/brand/menubar/*.imageset` 复制进 `TargetBridgeSupport/Assets.xcassets/` | 资产进包 |
 | R4c | `pwe/sender-ui/PWEMainView.swift:200` | `Image(systemName: "desktopcomputer")` | `Image("PWEMenuBarReady")` | 提示里的字形和菜单栏上的一样 |
 | R5 | `pwe/package.sh` 接收端一段（`iconutil … AppIcon.icns` 之后） | 无 | `cp "$SRC/pwe/brand/receiver/receiver-wing.pdf" "$RECEIVER/Contents/Resources/"`；`display.c` 用 `CFBundleCopyResourceURL(…"receiver-wing", "pdf")` + `CGPDFDocumentCreateWithURL` 画第一页，宽 144 u | R1 要画的翅膀；几何来自 `wing_gen.py`，不在 C 里手写路径 |
-| R6 | `pwe/icon/main.swift`；`pwe/package.sh` 接收端 `iconutil` 一行；`pwe/rebrand.py` `rebrand_receiver` 复制 `icon_1024.png` 一行 | 一个图标两端共用；3:2 外框，无下巴 | **等 Lee。** 同意后：`drawAppIcon(in:side:frame:)` 按 2.4 的数值画，`frame` 为琥珀（发送端）或纸色（接收端）；输出 `pwe/assets/`（发送端）和 `pwe/assets/receiver/`（接收端）；两处打包改读接收端那一份。几何可以对照 `pwe/brand/proposals/icon_proposals.py` 的 `s1`、`rE` | 认出 iMac；分清两端 |
+| R6 | `pwe/icon/main.swift`；`pwe/package.sh` 接收端 `iconutil` 一行；`pwe/rebrand.py` `rebrand_receiver` 复制 `icon_1024.png` 一行 | 一个图标两端共用；3:2 外框，无下巴 | **已做（2026-10-20，Lee 同意）。** `drawAppIcon(in:side:frame:)` 按 2.4 的数值画，`frame` 为琥珀（发送端）或纸色（接收端）；输出 `pwe/assets/`（发送端）和 `pwe/assets/receiver/`（接收端）；`package.sh` 的接收端 `iconutil` 和 `rebrand_receiver` 的 `icon_1024.png` 改读接收端那一份。08 §4.6 的措辞等 Lee 写进 08（见 2.4） | 认出 iMac；分清两端 |
 | R7 | `pwe/sender-ui/PWEMainView.swift` `PWEAboutView`；`pwe/rebrand.py` 的 Info.plist 版权一行；`pwe/package.sh` 接收端 Info.plist 的 `NSHumanReadableCopyright` | 关于里没有署名；版权 `PWE Group. Based on TargetBridge (MIT).` | 关于最下面加一行 `Text("PWE · 天域出品 · © 2026 PWE Group Pty Ltd")`，`.footnote`、`.secondary`；两处版权改 `© 2026 PWE Group Pty Ltd. Based on TargetBridge (MIT).`（`rebrand.py` 的 `ALLOWED` 里已有 "Based on TargetBridge"，检查不受影响） | 与 Lumen Bar 一致（08 §1 署名行） |
 | R8 | `pwe/sender-ui/PWEStrings.swift:328` | 「TargetBridge 自己的控制台，包含引擎的全部设置。」/ "TargetBridge's own console, with every engine setting." | 「TargetBridge 引擎自带的控制台：全部设置都在这里，界面保持上游原样。」/ "TargetBridge's own console: every engine setting, in the upstream interface." 名字「完整控制台」不变（安装指南已用这个名字） | 说清它为什么长得不一样；不暗示它是 PWE 设计的 |
 | R9 | `pwe/sender-ui/PWEMainView.swift:244`、`PWEBrightnessKeys.swift:407` | `.foregroundStyle(.yellow)` | `.orange`，与同一界面里其他警告一致 | 同一种警告一种颜色 |
