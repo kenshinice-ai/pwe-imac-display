@@ -2,6 +2,19 @@ import AppKit
 import OSLog
 import UniformTypeIdentifiers
 
+/// PWE's own log lines (the `[pwe]` lines), in the unified log under this
+/// subsystem. NSLog from the shipped app reached only stderr, never the log:
+/// neither `log stream` nor the diagnostic report saw a single `[pwe]` line on
+/// the test Mac (T38, 2026-10-21). Notice level is kept on disk; the text is
+/// public because it carries no personal data (names of iMacs at most).
+enum PWELog {
+    private static let logger = Logger(subsystem: "com.pwegroup.pweimacdisplay", category: "pwe")
+
+    static func note(_ line: String) {
+        logger.notice("\(line, privacy: .public)")
+    }
+}
+
 /// This app's own log lines, for the diagnostic report in Settings › Advanced.
 /// Reading the current process's entries needs no entitlement.
 enum PWELogExport {
@@ -42,7 +55,7 @@ enum PWELogExport {
             try report.write(to: url, atomically: true, encoding: .utf8)
             NSWorkspace.shared.activateFileViewerSelecting([url])
         } catch {
-            NSLog("[pwe] could not save the report: \(error.localizedDescription)")
+            PWELog.note("[pwe] could not save the report: \(error.localizedDescription)")
         }
     }
 }

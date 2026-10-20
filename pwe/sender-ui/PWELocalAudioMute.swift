@@ -41,7 +41,7 @@ final class PWELocalAudioMute {
         self.held = nil
         if held.didMute, Self.isMuted(held.device) == true {
             Self.setMuted(held.device, false)
-            NSLog("[pwe] the Mac's speakers are back on")
+            PWELog.note("[pwe] the Mac's speakers are back on")
         }
         defaults.removeObject(forKey: Self.markerKey)
     }
@@ -59,7 +59,7 @@ final class PWELocalAudioMute {
         if let uid = Self.uid(of: device) { defaults.set(uid, forKey: Self.markerKey) }
         Self.setMuted(device, true)
         held = (device, true)
-        NSLog("[pwe] muted the Mac's speakers while sound plays on the iMac")
+        PWELog.note("[pwe] muted the Mac's speakers while sound plays on the iMac")
     }
 
     private func restoreAfterCrash() {
@@ -67,7 +67,7 @@ final class PWELocalAudioMute {
         defaults.removeObject(forKey: Self.markerKey)
         guard let device = Self.device(uid: uid), Self.isMuted(device) == true else { return }
         Self.setMuted(device, false)
-        NSLog("[pwe] unmuted the Mac's speakers left muted by an earlier run")
+        PWELog.note("[pwe] unmuted the Mac's speakers left muted by an earlier run")
     }
 
     // MARK: - Default output changes
@@ -136,7 +136,7 @@ final class PWELocalAudioMute {
         var address = muteAddress()
         var value = UInt32(muted ? 1 : 0)
         let status = AudioObjectSetPropertyData(device, &address, 0, nil, UInt32(MemoryLayout<UInt32>.size), &value)
-        if status != noErr { NSLog("[pwe] could not \(muted ? "mute" : "unmute") output device \(device): \(status)") }
+        if status != noErr { PWELog.note("[pwe] could not \(muted ? "mute" : "unmute") output device \(device): \(status)") }
     }
 
     private static func uid(of device: AudioObjectID) -> String? {

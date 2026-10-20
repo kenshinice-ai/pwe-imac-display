@@ -208,7 +208,7 @@ final class PWEBrightness: NSObject, ObservableObject {
             },
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
-            NSLog("[pwe] brightness keys: no key watch (Accessibility permission missing?)")
+            PWELog.note("[pwe] brightness keys: no key watch (Accessibility permission missing?)")
             return
         }
         guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
@@ -220,7 +220,7 @@ final class PWEBrightness: NSObject, ObservableObject {
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
         watchingKeys = true
-        NSLog("[pwe] brightness keys: watching F1/F2 and the brightness keys")
+        PWELog.note("[pwe] brightness keys: watching F1/F2 and the brightness keys")
     }
 
     private func removeTap() {
@@ -232,7 +232,7 @@ final class PWEBrightness: NSObject, ObservableObject {
         tapSource = nil
         takenKeyCodes.removeAll()
         watchingKeys = false
-        NSLog("[pwe] brightness keys: stopped watching")
+        PWELog.note("[pwe] brightness keys: stopped watching")
     }
 
     /// Decides, while macOS waits, whether a key is the iMac's. Returns true to
@@ -292,7 +292,7 @@ final class PWEBrightness: NSObject, ObservableObject {
     /// The keys' HUD, which a URL step shows too, so both look the same.
     private func showHUD(_ level: Double, on display: CGDirectDisplayID) {
         if !hud.show(level: level, on: display, label: PWEBrightnessStrings(language: service.language).hudLabel) {
-            NSLog("[pwe] brightness HUD: display \(display) is not among this Mac's screens")
+            PWELog.note("[pwe] brightness HUD: display \(display) is not among this Mac's screens")
         }
     }
 
@@ -303,13 +303,13 @@ final class PWEBrightness: NSObject, ObservableObject {
     /// adds the `brightness` action there).
     func handleURL(_ params: [String: String]) {
         guard let request = PWEBrightnessRules.request(params) else {
-            NSLog("[pwe] brightness URL: expected level=0…100 or step=+1/-1")
+            PWELog.note("[pwe] brightness URL: expected level=0…100 or step=+1/-1")
             return
         }
         let targets: [TBDisplaySenderSession]
         if let raw = params["display"] {
             guard let id = CGDirectDisplayID(raw), let session = session(for: id) else {
-                NSLog("[pwe] brightness URL: no iMac on display \(raw)")
+                PWELog.note("[pwe] brightness URL: no iMac on display \(raw)")
                 return
             }
             targets = [session]
@@ -317,7 +317,7 @@ final class PWEBrightness: NSObject, ObservableObject {
             targets = service.sessions.filter { $0.isConnected || $0.isStreaming }
         }
         guard !targets.isEmpty else {
-            NSLog("[pwe] brightness URL: no iMac connected")
+            PWELog.note("[pwe] brightness URL: no iMac connected")
             return
         }
         for session in targets {
@@ -328,7 +328,7 @@ final class PWEBrightness: NSObject, ObservableObject {
             guard case .step = request else { continue }
             let display = session.virtualDisplayID
             guard display != kCGNullDirectDisplay else {
-                NSLog("[pwe] brightness URL: the iMac has no display yet; no HUD")
+                PWELog.note("[pwe] brightness URL: the iMac has no display yet; no HUD")
                 continue
             }
             // After the Apple event has been answered, as a key's HUD shows after

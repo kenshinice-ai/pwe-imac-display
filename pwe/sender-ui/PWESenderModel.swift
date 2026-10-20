@@ -489,7 +489,7 @@ final class PWESenderModel: ObservableObject {
         syncRendering()
         let retrying = TBSenderAutomation.isConnectingAutomatically
         if wasRetrying, !retrying, !pausedUntilReplug {
-            NSLog("[pwe] the engine stopped retrying; waiting for a replug")
+            PWELog.note("[pwe] the engine stopped retrying; waiting for a replug")
             pausedUntilReplug = true
         }
         wasRetrying = retrying
@@ -572,7 +572,7 @@ final class PWESenderModel: ObservableObject {
             + "phase=\(phase.logName), menu=\"\(PWEStrings(language: .english).status(phase))\""
         guard line != lastTransition else { return }
         lastTransition = line
-        NSLog("%@", line)
+        PWELog.note(line)
     }
 
     private func receivers(_ service: TBDisplaySenderService) -> [PWEReceiver] {
@@ -666,7 +666,7 @@ final class PWESenderModel: ObservableObject {
               CGPreflightScreenCaptureAccess(),
               let session, !session.isConnected, !session.isStreaming,
               !session.selectedReceiverID.isEmpty else { return }
-        NSLog("[pwe] resuming automatic connection after \(reason)")
+        PWELog.note("[pwe] resuming automatic connection after \(reason)")
         startConnecting()
     }
 
@@ -754,7 +754,7 @@ final class PWESenderModel: ObservableObject {
         guard pictures[key] != preset.rawValue else { return }
         pictures[key] = preset.rawValue
         defaults.set(pictures, forKey: Keys.pictures)
-        NSLog("[pwe] remembered picture \(preset.rawValue) for \(key)")
+        PWELog.note("[pwe] remembered picture \(preset.rawValue) for \(key)")
         forgetUpstreamDisplayProfile(for: key)
     }
 
@@ -765,7 +765,7 @@ final class PWESenderModel: ObservableObject {
         guard var profiles = defaults.dictionary(forKey: Keys.upstreamDisplayProfiles) as? [String: String],
               profiles.removeValue(forKey: "id:\(key)") != nil else { return }
         defaults.set(profiles, forKey: Keys.upstreamDisplayProfiles)
-        NSLog("[pwe] dropped the console's display profile for \(key)")
+        PWELog.note("[pwe] dropped the console's display profile for \(key)")
     }
 
     /// The picture for an iMac with nothing remembered yet (PWEPictureRules).
@@ -804,7 +804,7 @@ final class PWESenderModel: ObservableObject {
     private func reconnectIfShowing(because reason: String, change: () -> Void = {}) {
         guard let session else { change(); return }
         if session.isConnected || session.isStreaming {
-            NSLog("[pwe] \(reason); reconnecting")
+            PWELog.note("[pwe] \(reason); reconnecting")
             session.stopForAutomaticReconnect()
             change()
             showReconnectNotice()
@@ -967,7 +967,7 @@ final class PWESenderModel: ObservableObject {
         do {
             if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
         } catch {
-            NSLog("[pwe] launch at login: \(error.localizedDescription)")
+            PWELog.note("[pwe] launch at login: \(error.localizedDescription)")
         }
         refreshLaunchAtLogin()
     }
@@ -1008,7 +1008,7 @@ final class PWESenderModel: ObservableObject {
             let deadline = PWEPairingRules.codeDeadline(secondsLeft: secondsLeft, shownAt: Date())
             codeTimer = at(deadline) { model in
                 guard let session = model.session, case .needsCode = session.pweSecurity else { return }
-                NSLog("[pwe] the pairing code ran out; asking the iMac for a new one")
+                PWELog.note("[pwe] the pairing code ran out; asking the iMac for a new one")
                 session.pweCodeExpired()
             }
         case .wrongCode:
@@ -1019,17 +1019,17 @@ final class PWESenderModel: ObservableObject {
             if PWEPairingRules.renewsExpiredCode(expiredInARow: expiredInARow) {
                 askForNewCode(because: "the code expired")
             } else {
-                NSLog("[pwe] \(expiredInARow) pairing codes ran out unanswered; stopped asking")
+                PWELog.note("[pwe] \(expiredInARow) pairing codes ran out unanswered; stopped asking")
                 expiredInARow = 0
                 DispatchQueue.main.async { [weak self] in self?.disconnect() }
             }
         case .locked(let seconds):
             let end = PWEPairingRules.lockEnd(seconds: seconds, lockedAt: Date())
             lockEnd = end
-            NSLog("[pwe] pairing locked on the iMac for \(seconds) s")
+            PWELog.note("[pwe] pairing locked on the iMac for \(seconds) s")
             lockTimer = at(end.addingTimeInterval(PWEPairingRules.lockGrace)) { model in
                 guard case .locked = model.session?.pweSecurity else { return }
-                NSLog("[pwe] the pairing lock is over; asking the iMac for a code")
+                PWELog.note("[pwe] the pairing lock is over; asking the iMac for a code")
                 model.retrySecurely()
             }
         case .negotiating:
@@ -1044,7 +1044,7 @@ final class PWESenderModel: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self, let session = self.session,
                   PWEPairingRules.asksForNewCode(session.pweSecurity) else { return }
-            NSLog("[pwe] \(reason); asking the iMac for a new code")
+            PWELog.note("[pwe] \(reason); asking the iMac for a new code")
             self.retrySecurely()
         }
     }
@@ -1078,7 +1078,7 @@ final class PWESenderModel: ObservableObject {
         guard let session else { return }
         if let id = PWEPairingStore.shared.expectedReceiverID(forHint: session.pweReceiverHint) {
             let forgot = PWEPairingStore.shared.forget(receiverID: PWEPairingStore.hex(id))
-            NSLog("[pwe] \(forgot ? "forgot" : "could not forget") the paired iMac \(session.pweReceiverHint)")
+            PWELog.note("[pwe] \(forgot ? "forgot" : "could not forget") the paired iMac \(session.pweReceiverHint)")
         }
         refreshPairedIMacs()
         retrySecurely()
@@ -1091,7 +1091,7 @@ final class PWESenderModel: ObservableObject {
             guard service != nil, newValue != allowUnencrypted else { return }
             PWEPairingStore.allowUnencrypted = newValue
             objectWillChange.send()
-            NSLog("[pwe] unencrypted connections \(newValue ? "allowed" : "turned off")")
+            PWELog.note("[pwe] unencrypted connections \(newValue ? "allowed" : "turned off")")
             if !newValue, session?.pweSecurity == .unencrypted { disconnect() }
         }
     }
@@ -1116,14 +1116,14 @@ final class PWESenderModel: ObservableObject {
         } ?? false
         if store.forget(receiverID: receiver.id) {
             forgetFailure = nil
-            NSLog("[pwe] forgot the paired iMac \(receiver.name) (\(receiver.id))")
+            PWELog.note("[pwe] forgot the paired iMac \(receiver.name) (\(receiver.id))")
             if endsSession {
-                NSLog("[pwe] ending the encrypted session with the iMac just forgotten")
+                PWELog.note("[pwe] ending the encrypted session with the iMac just forgotten")
                 disconnect()
             }
         } else {
             forgetFailure = receiver.name
-            NSLog("[pwe] could not forget the paired iMac \(receiver.name) (\(receiver.id)); it stays paired")
+            PWELog.note("[pwe] could not forget the paired iMac \(receiver.name) (\(receiver.id)); it stays paired")
         }
         refreshPairedIMacs()
     }
@@ -1152,7 +1152,7 @@ final class PWESenderModel: ObservableObject {
         defaults.set(true, forKey: Keys.networkLinkReset)
         let overNetwork = service.sessions.filter { $0.transportKind == .networkLink }
         guard networkLinkEnabled || !overNetwork.isEmpty else { return }
-        NSLog("[pwe] Network Link from an earlier version turned off; connecting over Thunderbolt")
+        PWELog.note("[pwe] Network Link from an earlier version turned off; connecting over Thunderbolt")
         // The engine moves its sessions back to Thunderbolt when the add-on goes off.
         setAddon(.networkLink, enabled: false)
         for session in overNetwork {
@@ -1211,7 +1211,7 @@ final class PWESenderModel: ObservableObject {
         inputRoleApplied = true
         let wanted = service.inputDockstationAvailable ? inputRole.engineRole : .off
         if session.inputControlRole != wanted {
-            NSLog("[pwe] keyboard and mouse: \(inputRole.rawValue)")
+            PWELog.note("[pwe] keyboard and mouse: \(inputRole.rawValue)")
             service.setInputControlRole(wanted, for: session)
         }
     }
