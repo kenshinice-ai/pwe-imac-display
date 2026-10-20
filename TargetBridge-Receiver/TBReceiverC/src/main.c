@@ -84,6 +84,7 @@ struct app {
     struct tb_decoder *dec;
 
     int      server_fd;
+    int      server6_fd;   /* PWE: IPv6 listener (T34); -1 without IPv6 */
     int      client_fd;
 
     uint64_t frames;
@@ -111,6 +112,8 @@ struct app {
     char     net_ip_text[64];
     char     ethernet_ip_text[64];
     char     wifi_ip_text[64];
+    char     tb_ip6_text[64];   /* PWE: Thunderbolt Bridge IPv6 link-local, unscoped */
+    unsigned int tb_ip6_if;     /* its interface index */
     char     receiver_id[64];
     char     display_host[128]; /* short hostname (or hostname+IP), cached at startup */
     char     status_text[128];
@@ -168,6 +171,11 @@ struct app {
     char                    pwe_message_name[128];  /* in the language of the moment */
     uint64_t                pwe_message_until_ms;
     DNSServiceRef           bonjour_ref2;     /* second cable interface (USB), if any */
+    unsigned int            bonjour_if1, bonjour_if2;  /* where the two are registered */
+    uint16_t                bonjour_port;
+    char                    bonjour_addrs[384];  /* the address keys registered */
+    int                     bonjour_pending;     /* addresses updated in place mid-session */
+    int                     accept_turn;         /* which listener goes first this pass */
     unsigned long           pwe_test_counts[256];  /* test builds: packets per type this session */
     uint64_t                pwe_test_frames_at_connect;
 };
@@ -576,6 +584,8 @@ static void bonjour_deinit(struct app *a) {
         DNSServiceRefDeallocate(a->bonjour_ref2);
         a->bonjour_ref2 = NULL;
     }
+    a->bonjour_addrs[0] = '\0';   /* PWE: nothing registered, nothing pending */
+    a->bonjour_pending = 0;
 }
 
 /* ---- PWE: preferences and the cable interfaces ------------------------- */
@@ -605,13 +615,14 @@ static int tb_pwe_network_allowed(const struct app *a) {
 
 /* At most one line every 10 s, so a peer that keeps redialling cannot flood
  * (and rotate away) the log file. */
-static void tb_pwe_log_refused(const char *ifname) {
+static void tb_pwe_log_refused(const char *ifname, int ipv6) {
     static uint64_t last_ms;
     static unsigned long quiet;
     const uint64_t t = now_ms();
     if (last_ms && t - last_ms < 10000) { quiet++; return; }
-    fprintf(stderr, "[net] refused a sender on %s: not a direct link "
-            "(AllowLocalNetwork is off)", ifname && *ifname ? ifname : "an unknown interface");
+    fprintf(stderr, "[net] refused a sender on %s: not a direct link (%s)",
+            ifname && *ifname ? ifname : "an unknown interface",
+            ipv6 ? "IPv6 is for the cable only" : "AllowLocalNetwork is off");
     if (quiet) fprintf(stderr, "; %lu more since the last report", quiet);
     fputc('\n', stderr);
     last_ms = t;
@@ -690,21 +701,28 @@ static void on_bonjour_register(DNSServiceRef sdRef,
 }
 
 static void bonjour_update(struct app *a, uint16_t port) {
-    bonjour_deinit(a);
     /* Tests on a Mac whose own sender is running (loopback_smoke.sh): stay
      * out of discovery; TB_RECEIVER_TEST_PORT also moves the listener. */
-    if (getenv("TB_RECEIVER_NO_BONJOUR")) return;
+    if (getenv("TB_RECEIVER_NO_BONJOUR")) { bonjour_deinit(a); return; }
 
-    if (a->ip_text[0] == '\0' || strcmp(a->ip_text, tb_i18n_get("receiver.network.not_detected")) == 0) return;
+    const int have_ipv4 = a->ip_text[0] != '\0' &&
+        strcmp(a->ip_text, tb_i18n_get("receiver.network.not_detected")) != 0;
+    /* PWE (T34): the bridge's IPv6 address, only while the IPv6 listener is up. */
+    const char *tb_ip6 = a->server6_fd >= 0 ? a->tb_ip6_text : "";
+    const unsigned int tb_ip6_if = a->server6_fd >= 0 ? a->tb_ip6_if : 0;
+    /* The bridge's IPv6 address alone is enough to be found. */
+    if (!have_ipv4 && tb_ip6[0] == '\0') { bonjour_deinit(a); return; }
 
     /* PWE: announce this receiver on the cable only (Thunderbolt Bridge, USB),
      * with only the cable addresses, unless the network is allowed
      * (preference AllowLocalNetwork). */
     const int network = tb_pwe_pref_bool(a->app_id, CFSTR("AllowLocalNetwork"), 0);
-    const unsigned int tb_if = network ? 0 : tb_pwe_ifindex_for_ip(a->tb_ip_text);
+    unsigned int tb_if = network ? 0 : tb_pwe_ifindex_for_ip(a->tb_ip_text);
+    if (!network && !tb_if) tb_if = tb_ip6_if;
     const unsigned int usb_if = network ? 0 : tb_pwe_ifindex_for_ip(a->usb_ip_text);
-    const char *announced_ip = network ? a->ip_text : (a->tb_ip_text[0] ? a->tb_ip_text : a->usb_ip_text);
-    if (!network && !tb_if && !usb_if) return;
+    const char *announced_ip = network ? (have_ipv4 ? a->ip_text : "")
+                                       : (a->tb_ip_text[0] ? a->tb_ip_text : a->usb_ip_text);
+    if (!network && !tb_if && !usb_if) { bonjour_deinit(a); return; }
 
     TXTRecordRef txt;
     TXTRecordCreate(&txt, 0, NULL);
@@ -712,9 +730,16 @@ static void bonjour_update(struct app *a, uint16_t port) {
     if (a->receiver_id[0] != '\0') {
         TXTRecordSetValue(&txt, "receiverID", (uint8_t)strlen(a->receiver_id), a->receiver_id);
     }
-    TXTRecordSetValue(&txt, "ip", (uint8_t)strlen(announced_ip), announced_ip);
+    /* No `ip` while only IPv6 is up: a sender that knows no `tbIP6` keeps
+     * waiting for an IPv4 address, as before. */
+    if (announced_ip[0] != '\0') {
+        TXTRecordSetValue(&txt, "ip", (uint8_t)strlen(announced_ip), announced_ip);
+    }
     if (a->tb_ip_text[0] != '\0') {
         TXTRecordSetValue(&txt, "tbIP", (uint8_t)strlen(a->tb_ip_text), a->tb_ip_text);
+    }
+    if (tb_ip6[0] != '\0') {
+        TXTRecordSetValue(&txt, "tbIP6", (uint8_t)strlen(tb_ip6), tb_ip6);
     }
     if (a->usb_ip_text[0] != '\0') {
         TXTRecordSetValue(&txt, "usbIP", (uint8_t)strlen(a->usb_ip_text), a->usb_ip_text);
@@ -744,10 +769,56 @@ static void bonjour_update(struct app *a, uint16_t port) {
         TXTRecordSetValue(&txt, "panelHeight", (uint8_t)strlen(panel_h), panel_h);
     }
 
+    const unsigned int if1 = network ? 0 : (tb_if ? tb_if : usb_if);
+    const unsigned int if2 = (tb_if && usb_if) ? usb_if : 0;
+
+    /* PWE: the addresses this record announces. A change re-registers, as
+     * upstream always did: senders that do not follow TXT updates see the
+     * receiver leave and come back with its new addresses. During a session
+     * (the bridge's IPv4 address arriving mid-session, T34) the record is
+     * updated in place instead, so the sender does not see its receiver
+     * vanish, and re-registered once the session ends (bonjour_pending). */
+    char addrs[sizeof(a->bonjour_addrs)];
+    snprintf(addrs, sizeof(addrs), "ip=%s tbIP=%s tbIP6=%s usbIP=%s netIP=%s ethernetIP=%s wifiIP=%s",
+             announced_ip, a->tb_ip_text, tb_ip6, a->usb_ip_text,
+             network ? a->net_ip_text : "", network ? a->ethernet_ip_text : "",
+             network ? a->wifi_ip_text : "");
+    const int same_addrs = strcmp(addrs, a->bonjour_addrs) == 0;
+    if (a->bonjour_ref && a->bonjour_if1 == if1 && a->bonjour_if2 == if2 &&
+        a->bonjour_port == port && (!if2 || a->bonjour_ref2) &&
+        (same_addrs || a->client_fd >= 0)) {
+        DNSServiceErrorType uerr = DNSServiceUpdateRecord(a->bonjour_ref, NULL, 0,
+                                                          TXTRecordGetLength(&txt), TXTRecordGetBytesPtr(&txt), 0);
+        if (uerr == kDNSServiceErr_NoError && a->bonjour_ref2) {
+            uerr = DNSServiceUpdateRecord(a->bonjour_ref2, NULL, 0,
+                                          TXTRecordGetLength(&txt), TXTRecordGetBytesPtr(&txt), 0);
+        }
+        if (uerr == kDNSServiceErr_NoError) {
+            TXTRecordDeallocate(&txt);
+            if (!same_addrs) {
+                a->bonjour_pending = 1;
+                fprintf(stderr, "[bonjour] TXT updated in place during the session: %s\n", addrs);
+            }
+            return;
+        }
+        fprintf(stderr, "[bonjour] TXT update failed (%d); registering again\n", (int)uerr);
+    }
+    bonjour_deinit(a);
+    a->bonjour_if1 = if1;
+    a->bonjour_if2 = if2;
+    a->bonjour_port = port;
+    a->bonjour_pending = 0;
+    snprintf(a->bonjour_addrs, sizeof(a->bonjour_addrs), "%s", addrs);
+    {
+        char ifn[IFNAMSIZ] = "";
+        if (if1) if_indextoname(if1, ifn);
+        fprintf(stderr, "[bonjour] registering on %s: %s\n", if1 ? (ifn[0] ? ifn : "?") : "every interface", addrs);
+    }
+
     DNSServiceErrorType err = DNSServiceRegister(
         &a->bonjour_ref,
         0,
-        network ? 0 : (tb_if ? tb_if : usb_if),
+        if1,
         a->bonjour_name,
         "_targetbridge._tcp",
         "local.",
@@ -758,7 +829,7 @@ static void bonjour_update(struct app *a, uint16_t port) {
         on_bonjour_register,
         a
     );
-    if (err == kDNSServiceErr_NoError && tb_if && usb_if) {
+    if (err == kDNSServiceErr_NoError && if2) {
         /* Both cables: announce on the USB link too. */
         err = DNSServiceRegister(&a->bonjour_ref2, 0, usb_if, a->bonjour_name, "_targetbridge._tcp",
                                  "local.", NULL, htons(port), TXTRecordGetLength(&txt),
@@ -2246,6 +2317,11 @@ int main(int argc, char **argv) {
     } else {
         printf("TBReceiver: warning, no bridge IP detected (169.254.x.x)\n");
     }
+    char tb_ip6[64] = {0};
+    unsigned int tb_ip6_if = 0;
+    if (tb_net_get_tb_ip6(tb_ip6, sizeof(tb_ip6), &tb_ip6_if) == 0) {
+        printf("TBReceiver: Thunderbolt Bridge IPv6 = %s\n", tb_ip6);
+    }
     if (tb_net_get_link_local_ip(usb_ip, sizeof(usb_ip)) == 0) {
         printf("TBReceiver: Direct USB-NCM IP = %s\n", usb_ip);
     } else {
@@ -2267,6 +2343,7 @@ int main(int argc, char **argv) {
     struct app a;
     memset(&a, 0, sizeof(a));
     a.server_fd = -1;
+    a.server6_fd = -1;
     a.client_fd = -1;
     a.app_id = CFSTR("com.targetbridge.receiver");
     tb_audio_ring_init(&a.audio_ring, a.audio_buf, AUDIO_BUF_CAP);
@@ -2274,6 +2351,13 @@ int main(int argc, char **argv) {
             tb_pwe_network_allowed(&a)
                 ? "every interface (off the cable: paired, encrypted sessions only)"
                 : "direct links only (Thunderbolt Bridge, USB, loopback)");
+    {
+        /* PWE: what counts as the Thunderbolt Bridge on this Mac (net.c). */
+        char bridges_described[256];
+        fprintf(stderr, "[net] cable bridges: %s\n",
+                tb_net_describe_cable_bridges(bridges_described, sizeof(bridges_described)) ? bridges_described
+                    : "none (no bridge in the network settings)");
+    }
     if (tb_receiver_load_or_create_id(a.receiver_id, sizeof(a.receiver_id), a.app_id) == 0) {
         fprintf(stderr, "[identity] receiver ID ready\n");
     } else {
@@ -2291,6 +2375,8 @@ int main(int argc, char **argv) {
     snprintf(a.net_ip_text, sizeof(a.net_ip_text), "%s", net_ip);
     snprintf(a.ethernet_ip_text, sizeof(a.ethernet_ip_text), "%s", ethernet_ip);
     snprintf(a.wifi_ip_text, sizeof(a.wifi_ip_text), "%s", wifi_ip);
+    snprintf(a.tb_ip6_text, sizeof(a.tb_ip6_text), "%s", tb_ip6);
+    a.tb_ip6_if = tb_ip6_if;
     snprintf(a.ip_text, sizeof(a.ip_text), "%s",
              tb_ip[0] ? tb_ip
                       : (usb_ip[0] ? usb_ip
@@ -2331,8 +2417,6 @@ int main(int argc, char **argv) {
     } else {
         tb_copy_i18n(a.panel_text, sizeof(a.panel_text), "receiver.panel.default");
     }
-    bonjour_update(&a, TB_PORT);
-
     a.dec = tb_dec_create(on_frame, &a);
     if (!a.dec) { fprintf(stderr, "tb_dec_create failed\n"); tb_disp_destroy(a.disp); return 1; }
 
@@ -2346,6 +2430,12 @@ int main(int argc, char **argv) {
     }
     a.server_fd = tb_net_listen(listen_port);
     if (a.server_fd < 0) { fprintf(stderr, "tb_net_listen failed\n"); return 1; }
+    /* PWE (T34): IPv6 too, for the Thunderbolt Bridge's link-local address. */
+    a.server6_fd = tb_net_listen6(listen_port);
+    fprintf(stderr, "[net] listening on port %u over IPv4%s\n", (unsigned)listen_port,
+            a.server6_fd >= 0 ? " and IPv6" : " only (no IPv6 listener)");
+    /* Announce only once both listeners are up (PWE). */
+    bonjour_update(&a, TB_PORT);
 
     a.last_fps_tick_ms = now_ms();
     a.last_ip_check_ms = 0;
@@ -2372,7 +2462,10 @@ int main(int argc, char **argv) {
             char refreshed_net_ip[64] = {0};
             char refreshed_ethernet_ip[64] = {0};
             char refreshed_wifi_ip[64] = {0};
+            char refreshed_tb_ip6[64] = {0};
+            unsigned int refreshed_tb_ip6_if = 0;
             a.last_ip_check_ms = t;
+            (void)tb_net_get_tb_ip6(refreshed_tb_ip6, sizeof(refreshed_tb_ip6), &refreshed_tb_ip6_if);
             (void)tb_net_get_tb_ip(refreshed_tb_ip, sizeof(refreshed_tb_ip));
             (void)tb_net_get_link_local_ip(refreshed_usb_ip, sizeof(refreshed_usb_ip));
             (void)tb_net_get_lan_ip(refreshed_net_ip, sizeof(refreshed_net_ip));
@@ -2390,12 +2483,21 @@ int main(int argc, char **argv) {
                 strcmp(a.net_ip_text, refreshed_net_ip) != 0 ||
                 strcmp(a.ethernet_ip_text, refreshed_ethernet_ip) != 0 ||
                 strcmp(a.wifi_ip_text, refreshed_wifi_ip) != 0 ||
+                strcmp(a.tb_ip6_text, refreshed_tb_ip6) != 0 || a.tb_ip6_if != refreshed_tb_ip6_if ||
                 strcmp(a.ip_text, preferred_ip) != 0) {
                 snprintf(a.tb_ip_text, sizeof(a.tb_ip_text), "%s", refreshed_tb_ip);
                 snprintf(a.usb_ip_text, sizeof(a.usb_ip_text), "%s", refreshed_usb_ip);
                 snprintf(a.net_ip_text, sizeof(a.net_ip_text), "%s", refreshed_net_ip);
                 snprintf(a.ethernet_ip_text, sizeof(a.ethernet_ip_text), "%s", refreshed_ethernet_ip);
                 snprintf(a.wifi_ip_text, sizeof(a.wifi_ip_text), "%s", refreshed_wifi_ip);
+                if (strcmp(a.tb_ip6_text, refreshed_tb_ip6) != 0) {
+                    if (refreshed_tb_ip6[0] != '\0')
+                        fprintf(stderr, "[main] Thunderbolt Bridge IPv6 = %s\n", refreshed_tb_ip6);
+                    else
+                        fprintf(stderr, "[main] Thunderbolt Bridge IPv6 gone\n");
+                }
+                snprintf(a.tb_ip6_text, sizeof(a.tb_ip6_text), "%s", refreshed_tb_ip6);
+                a.tb_ip6_if = refreshed_tb_ip6_if;
                 snprintf(a.ip_text, sizeof(a.ip_text), "%s", preferred_ip);
                 build_display_host(a.display_host, sizeof(a.display_host), preferred_ip, have_refreshed_ip);
                 if (refreshed_tb_ip[0] != '\0') {
@@ -2414,48 +2516,62 @@ int main(int argc, char **argv) {
                     fprintf(stderr, "[main] Wi-Fi IP = %s\n", refreshed_wifi_ip);
                 }
                 bonjour_update(&a, TB_PORT);
+            } else if (a.bonjour_pending && a.client_fd < 0) {
+                /* The session that held back a re-registration has ended. */
+                bonjour_update(&a, TB_PORT);
             }
         }
 
         /* Accept new client */
         if (a.client_fd < 0) {
-            int c = tb_net_accept(a.server_fd);
-            /* PWE: decide from the link alone, before any byte reaches the
-             * parser. Pairing only over the cable, and loopback is not the cable. */
-            char ifname[IFNAMSIZ] = "";
-            struct tb_accept_policy policy = { 0, 0, 0 };
-            if (c >= 0) {
-                int direct = tb_net_client_is_direct_link(c, ifname, sizeof(ifname));
-                enum tb_link_kind link = tb_net_link_kind(ifname, direct);
+            /* PWE: both listeners on every pass, starting with a different one
+             * each time, so connections refused on one cannot hold up the other. */
+            const int listeners[2] = { a.server_fd, a.server6_fd };
+            a.accept_turn ^= 1;
+            for (int k = 0; k < 2 && a.client_fd < 0; k++) {
+                const int which = (a.accept_turn + k) & 1;
+                if (listeners[which] < 0) continue;
+                const int c_is_ipv6 = which == 1;
+                int c = tb_net_accept(listeners[which]);
+                /* PWE: decide from the link alone, before any byte reaches the
+                 * parser. Pairing only over the cable, and loopback is not the cable. */
+                char ifname[IFNAMSIZ] = "";
+                struct tb_accept_policy policy = { 0, 0, 0 };
+                if (c >= 0) {
+                    int direct = tb_net_client_is_direct_link(c, ifname, sizeof(ifname));
+                    enum tb_link_kind link = tb_net_link_kind(ifname, direct);
 #if TB_RECEIVER_TEST_HOOKS
-                if (getenv("TB_RECEIVER_TEST_LOOPBACK_IS_CABLE") && link == TB_LINK_LOOPBACK) link = TB_LINK_CABLE;
+                    if (getenv("TB_RECEIVER_TEST_LOOPBACK_IS_CABLE") && link == TB_LINK_LOOPBACK) link = TB_LINK_CABLE;
 #endif
-                policy = tb_net_accept_policy(link, tb_pwe_network_allowed(&a), a.allow_plaintext);
-                if (!policy.accept) {
-                    tb_pwe_log_refused(ifname);
-                    close(c);
-                    c = -1;
+                    policy = tb_net_accept_policy_family(link, c_is_ipv6,
+                                                         tb_pwe_network_allowed(&a), a.allow_plaintext);
+                    if (!policy.accept) {
+                        tb_pwe_log_refused(ifname, c_is_ipv6);
+                        close(c);
+                        c = -1;
+                    }
                 }
-            }
-            if (c >= 0) {
-                a.client_fd = c;
-                a.have_video_frame = 0;
-                a.session_active = 0;
-                a.reported_night_shift = -1;   /* force one report per session */
-                a.reported_true_tone = -1;
-                a.last_recv_ms = t;
-                SDL_DisableScreenSaver();
-                struct tb_conn_config conn_cfg = {
-                    a.have_keys ? &a.identity : NULL, &a.store, &a.gate, policy.pairing, policy.plaintext
-                };
-                tb_conn_init(&a.conn, c, &conn_cfg, on_packet, tb_pwe_on_conn_event, &a);
-                a.session_plaintext = 0;
-                a.pwe_test_frames_at_connect = a.frames;
-                fprintf(stderr, "[main] client connected (%s%s)\n", ifname[0] ? ifname : "?",
-                        policy.pairing ? ", cable" : (policy.plaintext ? "" : ", encrypted only"));
-                tb_receiver_refresh_input_capture(&a);
-                /* The display profile goes out once the connection is secure (or
-                 * accepted unencrypted): tb_pwe_on_conn_event, TB_CONN_EV_READY. */
+                if (c >= 0) {
+                    a.client_fd = c;
+                    a.have_video_frame = 0;
+                    a.session_active = 0;
+                    a.reported_night_shift = -1;   /* force one report per session */
+                    a.reported_true_tone = -1;
+                    a.last_recv_ms = t;
+                    SDL_DisableScreenSaver();
+                    struct tb_conn_config conn_cfg = {
+                        a.have_keys ? &a.identity : NULL, &a.store, &a.gate, policy.pairing, policy.plaintext
+                    };
+                    tb_conn_init(&a.conn, c, &conn_cfg, on_packet, tb_pwe_on_conn_event, &a);
+                    a.session_plaintext = 0;
+                    a.pwe_test_frames_at_connect = a.frames;
+                    fprintf(stderr, "[main] client connected (%s%s%s)\n", ifname[0] ? ifname : "?",
+                            c_is_ipv6 ? ", IPv6" : "",
+                            policy.pairing ? ", cable" : (policy.plaintext ? "" : ", encrypted only"));
+                    tb_receiver_refresh_input_capture(&a);
+                    /* The display profile goes out once the connection is secure (or
+                     * accepted unencrypted): tb_pwe_on_conn_event, TB_CONN_EV_READY. */
+                }
             }
         } else {
             tb_conn_tick(&a.conn);   /* PWE: an older sender that waits for the profile */
@@ -2623,6 +2739,7 @@ int main(int argc, char **argv) {
 #endif
     tb_receiver_stop_input_tap(&a);
     if (a.server_fd >= 0) close(a.server_fd);
+    if (a.server6_fd >= 0) close(a.server6_fd);
     bonjour_deinit(&a);
     tb_dec_destroy(a.dec);
     tb_audio_close_for_idle(&a);

@@ -27,12 +27,28 @@ int  tb_parser_feed  (struct tb_parser *p, const uint8_t *data, size_t n);
 /* Server: returns listening fd (>=0) or -1 on failure. Non-blocking. */
 int  tb_net_listen   (uint16_t port);
 
+/* PWE: the same server on IPv6 (IPV6_V6ONLY, so the IPv4 socket above keeps
+ * every IPv4 client). A Thunderbolt Bridge has an IPv6 link-local address
+ * within a second of the cable going in; its IPv4 link-local address waits
+ * for DHCP to give up, about 19 s on a "Using DHCP" bridge (T34). Returns -1
+ * when the system has no IPv6; the receiver then runs on IPv4 alone. */
+int  tb_net_listen6  (uint16_t port);
+
 /* Accept one client. Returns client fd or -1. Sets non-blocking. */
 int  tb_net_accept   (int server_fd);
 
-/* Returns IP address of first bridge* interface (Thunderbolt Bridge) in buf.
+/* Returns the IPv4 link-local address of the Thunderbolt Bridge (a bridge*
+ * the network settings know, as for the cable rule) in buf.
  * buf size must be at least INET_ADDRSTRLEN (16) bytes. Returns 0 on success. */
 int  tb_net_get_tb_ip(char *buf, size_t bufsz);
+
+/* PWE: the Thunderbolt Bridge's IPv6 link-local address, without a scope
+ * ("fe80::…"), and the bridge's interface index. Only a bridge the system's
+ * network settings know (the Thunderbolt Bridge; a VM's or Internet Sharing's
+ * bridge is not one), up and running, with a usable address: one still in
+ * optimistic duplicate address detection counts, a duplicate does not.
+ * buf: at least INET6_ADDRSTRLEN (46) bytes. Returns 0 on success. */
+int  tb_net_get_tb_ip6(char *buf, size_t bufsz, unsigned int *ifindex);
 
 /* Returns IP address of the first non-Thunderbolt enX/ethX interface using
  * IPv4 link-local addressing (169.254/16). macOS exposes direct USB-NCM
@@ -54,14 +70,36 @@ int  tb_net_is_link_local_ipv4(const char *host);
 
 /* Whether a connection that arrived on interface `ifname` at local address
  * `local_host` came over a direct cable rather than a shared network:
- * loopback, Thunderbolt Bridge (bridge*), or a link-local address on a wired
- * enX/ethX interface (direct USB networking). Wi-Fi never counts. Exposed for
- * hardware-free unit tests. */
-int  tb_net_is_direct_link(const char *ifname, const char *local_host, int is_wifi);
+ * loopback, the Thunderbolt Bridge, or a link-local address on a wired
+ * enX/ethX interface (direct USB networking). Wi-Fi never counts.
+ * PWE: a bridge* counts only with `is_cable_bridge`, a bridge the system's
+ * network settings know (tb_net_cable_bridges). Exposed for hardware-free
+ * unit tests. */
+int  tb_net_is_direct_link(const char *ifname, const char *local_host, int is_wifi,
+                           int is_cable_bridge);
 
-/* Classify an accepted client socket by the local interface it arrived on.
- * Returns 1 for a direct link, 0 otherwise. Writes the interface name to
- * `ifname` when known. */
+/* PWE: the bridges that count as the cable, as "bridge0" or "bridge0, bridge1"
+ * ("" if none). Returns how many. Cached (net.c); never on the frame path. */
+int  tb_net_cable_bridges(char *buf, size_t bufsz);
+/* The same with each bridge's member interfaces, for the start-up log:
+ * "bridge0 (en1, en2, en3)". Runs ifconfig: call it once, not in a loop. */
+int  tb_net_describe_cable_bridges(char *buf, size_t bufsz);
+/* How many times the list was read from SystemConfiguration (tests). */
+unsigned long tb_net_cable_bridge_reads(void);
+
+/* PWE: the same question for an IPv6 connection, hardware-free for unit tests.
+ * Direct only when both ends are link-local on the Thunderbolt Bridge
+ * (`is_cable_bridge`: a bridge* interface the system's network settings know),
+ * or both are loopback / link-local on lo*. Every other interface is not
+ * direct over IPv6, wired ones included: each of them has a link-local
+ * address, so it says nothing about a cable. IPv4-mapped addresses never are. */
+struct in6_addr;
+int  tb_net_is_direct_link_ipv6(const char *ifname, const struct in6_addr *local,
+                                const struct in6_addr *peer, int is_cable_bridge);
+
+/* Classify an accepted client socket (IPv4 or IPv6) by the local interface it
+ * arrived on. Returns 1 for a direct link, 0 otherwise. Writes the interface
+ * name to `ifname` when known. */
 int  tb_net_client_is_direct_link(int fd, char *ifname, size_t ifname_size);
 
 /* ---- PWE: accept policy ----------------------------------------------------
@@ -91,6 +129,12 @@ struct tb_accept_policy {
  *               an already paired Mac only (no pairing, never unencrypted) */
 struct tb_accept_policy tb_net_accept_policy(enum tb_link_kind link,
                                              int network_allowed, int compat_mode);
+
+/* PWE: the same for a connection on the IPv4 (ipv6 = 0) or IPv6 listener.
+ * IPv6: the cable and loopback as above; anything else is refused even when
+ * network_allowed (Network Link dials IPv4 addresses only). */
+struct tb_accept_policy tb_net_accept_policy_family(enum tb_link_kind link, int ipv6,
+                                                    int network_allowed, int compat_mode);
 
 /* ---- PWE: secure connection (tb_conn.c) ----------------------------------
  * One client connection: bytes in -> packets -> handshake or decryption ->

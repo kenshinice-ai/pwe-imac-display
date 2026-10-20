@@ -254,7 +254,8 @@ private struct TBDisplaySenderSessionCard: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(!session.isConnected && (trimmedReceiverIP.isEmpty || session.localInterfaceIP.isEmpty))
+                // PWE: the same condition as connect() (a bridge IPv6 dial needs no local IPv4).
+                .disabled(!session.isConnected && !session.pweHasDialAddresses)
 
                 Button {
                     showingSessionSettings = true

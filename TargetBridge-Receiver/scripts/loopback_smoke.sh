@@ -5,6 +5,8 @@
 # Builds the receiver, runs it windowed, then drives it over 127.0.0.1 with
 # tests/mock_sender.py through four phases:
 #   1. handshake     -> receiver logs the sender hello
+#   1b. IPv6         -> the same over ::1 and fe80::1%lo0 (PWE, T34: the
+#                       Thunderbolt Bridge's link-local IPv6 path)
 #   2. badlen        -> parser rejects a corrupt length and disconnects
 #   3. hang          -> idle watchdog reaps a silent sender (~10s)
 #   4. stream        -> real H.264 decode (skipped without ffmpeg CLI or
@@ -44,6 +46,16 @@ phase() { print -P "%B== $1 ==%b"; }
 pass()  { print -P "%F{green}PASS%f  $1"; }
 fail()  { print -P "%F{red}FAIL%f  $1"; FAILURES=$((FAILURES + 1)); }
 
+expect_count() {   # <needle> <count> <what>: at least <count> lines
+    local needle="$1" want="$2" what="$3" tries=0
+    while (( tries < 20 )); do
+        if (( $(grep -cF "$needle" "$LOG") >= want )); then pass "$what"; return 0; fi
+        sleep 0.5; tries=$((tries + 1))
+    done
+    fail "$what (wanted $want log lines: $needle)"
+    return 1
+}
+
 expect_log() {
     local needle="$1" what="$2" tries=0
     while (( tries < 20 )); do
@@ -51,6 +63,18 @@ expect_log() {
         sleep 0.5; tries=$((tries + 1))
     done
     fail "$what (missing log line: $needle)"
+    return 1
+}
+
+# Until the receiver logs that its port is open (up to 15 s): a freshly built
+# x86_64 binary's first launch under Rosetta can take longer than 2 s.
+wait_listening() {
+    local tries=0
+    while (( tries < 30 )); do
+        grep -qF "[net] listening on port" "$LOG" && return 0
+        kill -0 "$RECEIVER_PID" 2>/dev/null || return 1
+        sleep 0.5; tries=$((tries + 1))
+    done
     return 1
 }
 
@@ -81,16 +105,28 @@ TB_LANG=en TB_RECEIVER_NO_BONJOUR=1 TB_RECEIVER_TEST_PORT=$PORT \
     TB_RECEIVER_TEST_KEYCHAIN_SERVICE="$SMOKE_KEYCHAIN" TB_RECEIVER_TEST_CLEAN_ON_EXIT=1 \
     "$SRC/tbreceiver" --windowed 2>"$LOG" &
 RECEIVER_PID=$!
-sleep 2
+wait_listening
 if ! kill -0 "$RECEIVER_PID" 2>/dev/null; then
     print "receiver exited early:"; tail -5 "$LOG"; exit 1
 fi
 pass "receiver running (pid $RECEIVER_PID)"
+expect_log "[net] cable bridges: " "receiver names its cable bridges"
 
 phase "Phase 1: handshake"
 mock --mode handshake --duration 3 || fail "mock handshake exited non-zero"
 expect_log "[main] hello from sender" "receiver saw HELLO"
 expect_log "[main] teardown requested by sender" "receiver honored TEARDOWN"
+sleep 1
+
+phase "Phase 1b: IPv6 (::1 and fe80::1%%lo0)"
+expect_log "over IPv4 and IPv6" "receiver listens on IPv6 too"
+mock --host ::1 --mode handshake --duration 2 || fail "mock handshake over ::1 exited non-zero"
+expect_count "client connected (lo0, IPv6" 1 "receiver took the ::1 client as loopback"
+expect_count "[main] hello from sender" 2 "receiver saw HELLO over ::1"
+sleep 1
+mock --host "fe80::1%lo0" --mode handshake --duration 2 || fail "mock handshake over fe80::1%%lo0 exited non-zero"
+expect_count "client connected (lo0, IPv6" 2 "receiver took the fe80::1%%lo0 client as loopback"
+expect_count "[main] hello from sender" 3 "receiver saw HELLO over fe80::1%%lo0"
 sleep 1
 
 phase "Phase 2: corrupt length"
@@ -122,7 +158,7 @@ relaunch() {
         TB_RECEIVER_TEST_KEYCHAIN_SERVICE="$SMOKE_KEYCHAIN" TB_RECEIVER_TEST_CLEAN_ON_EXIT=1 \
         "$@" "$SRC/tbreceiver" --windowed 2>"$LOG" &
     RECEIVER_PID=$!
-    sleep 2
+    wait_listening
 }
 
 if (( ! NO_STREAM )) && command -v ffmpeg >/dev/null; then
