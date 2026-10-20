@@ -311,6 +311,8 @@ struct PWEAboutView: View {
 
     @State private var checking = false
     @State private var lastResult: String?
+    /// The site answered without naming a release, so the page is the honest next step.
+    @State private var offerPage = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -337,19 +339,23 @@ struct PWEAboutView: View {
                 Button(strings.checkUpdates) {
                     checking = true
                     Task {
-                        let answered = await updates.check()
+                        // Asked for, so it reports the newest version whatever was dismissed,
+                        // and claims "latest" only when the site named a release.
+                        let outcome = await updates.check(manual: true)
                         checking = false
-                        if let available = updates.available {
-                            lastResult = strings.updateAvailable(available.version)
-                        } else {
-                            lastResult = answered ? strings.upToDate : strings.couldNotCheck
+                        switch outcome {
+                        case .newer(let release): lastResult = strings.updateAvailable(release.version)
+                        case .current: lastResult = strings.upToDate
+                        case .unknown: lastResult = strings.latestUnknown
+                        case .unreachable: lastResult = strings.couldNotCheck
                         }
+                        offerPage = outcome == .unknown
                     }
                 }
                 .disabled(checking)
                 if checking { ProgressView().controlSize(.small) }
                 if let lastResult { Text(lastResult).font(.callout).foregroundStyle(.secondary) }
-                if updates.available != nil {
+                if updates.available != nil || offerPage {
                     Link(strings.download, destination: UpdateCheck.downloadPage)
                 }
             }

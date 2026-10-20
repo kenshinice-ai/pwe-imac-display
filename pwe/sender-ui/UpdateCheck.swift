@@ -50,8 +50,23 @@ final class UpdateCheck: ObservableObject {
         }
     }
 
-    /// Set only when the server names a version newer than this build and the reader has not
-    /// already dismissed that particular version.
+    /// What one check found. "Answered" is not "up to date": the site answers a product it has
+    /// not been told about with the caller's own version and nothing else (`site/functions/app/
+    /// check.js`), and reading that echo as "you are current" claims a certainty nobody has.
+    enum Outcome: Equatable {
+        /// No answer: offline, a proxy, a timeout, something that was not a release.
+        case unreachable
+        /// An answer with no release information in it — the echo described above.
+        case unknown
+        /// This build is the newest the site knows of.
+        case current
+        /// A newer version exists, whether or not its reminder was dismissed.
+        case newer(Release)
+    }
+
+    /// The reminder: a newer version the reader has not dismissed — or, after a check they asked
+    /// for, a newer version at all. Dismissing quiets the reminder; it never changes what the
+    /// newest version is.
     @Published private(set) var available: Release?
 
     /// Where someone goes to get it. A page rather than the file itself: the page states the
@@ -103,14 +118,13 @@ final class UpdateCheck: ObservableObject {
         await check(version: version)
     }
 
-    /// The check itself, with no "is it due" gate — what the Settings button calls, because
-    /// someone who presses a button meaning "check now" means now.
+    /// The check itself, with no "is it due" gate: someone who asks to check now means now.
     ///
-    /// Returns whether the site answered at all, so a caller can tell "you are up to date" from
-    /// "could not reach it". This app ignores it today; the signature matches its siblings so
-    /// that the three copies differ only where they have to.
+    /// `manual` is a check the reader asked for. It shows a newer version even if they once said
+    /// "Later" to it — they asked what the newest version is, and the answer does not depend on
+    /// what they dismissed. The daily check is a reminder, and a reminder respects "Later".
     @discardableResult
-    func check(version: String = UpdateCheck.currentVersion) async -> Bool {
+    func check(version: String = UpdateCheck.currentVersion, manual: Bool = false) async -> Outcome {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -119,19 +133,20 @@ final class UpdateCheck: ObservableObject {
 
         guard let (data, response) = try? await fetch(request),
               (response as? HTTPURLResponse)?.statusCode == 200,
-              let release = try? JSONDecoder().decode(Release.self, from: data) else { return false }
+              let release = try? JSONDecoder().decode(Release.self, from: data) else { return .unreachable }
 
         // Only a round trip that answered counts as "checked today". A failure should be retried
         // on the next launch rather than parked for twenty-four hours.
         defaults.set(now(), forKey: lastCheckKey)
 
-        guard Self.isNewer(release.version, than: version),
-              defaults.string(forKey: dismissedKey) != release.version else {
+        guard Self.isNewer(release.version, than: version) else {
             available = nil
-            return true
+            // Every release the site announces carries a date and a download; the echo for an
+            // unknown product carries neither.
+            return release.published == nil && release.download == nil ? .unknown : .current
         }
-        available = release
-        return true
+        available = manual || defaults.string(forKey: dismissedKey) != release.version ? release : nil
+        return .newer(release)
     }
 
     /// Everything that leaves the machine, in one place so that reading this function is the

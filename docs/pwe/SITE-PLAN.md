@@ -9,7 +9,7 @@
 
 - 新增 `/screenencore/` 一页，首页加一张卡片，`deploy.sh` 加一段从 GitHub release 拉取并校验的代码。
   做法照 PWE AI Bar：公开仓库，安装包从 release 取，核对 `SHA256SUMS.txt` 和 staple。
-- 1.1 起 App 内有更新检查（`pwe/sender-ui/UpdateCheck.swift`），向 `https://pwestudio.site/app/check` 报的产品键是 `screenencore`。`functions/_release.js` 要加 `screenencore` 一条，`told_matches` 照其他产品加；没加之前，检查得不到答复，App 静默不提示。
+- 1.1 起 App 内有更新检查（`pwe/sender-ui/UpdateCheck.swift`），向 `https://pwestudio.site/app/check` 报的产品键是 `screenencore`。`functions/_release.js` 要加 `screenencore` 一条，`told_matches` 照其他产品加；没加之前，站点只回显 App 自己的版本号：每天的检查不提示；关于窗口里的「检查更新」显示「无法确认最新版本」和下载链接（2026-10-21 起，分支 `fix/update-check-manual-and-unknown`）。
 - 页面上的每个数字都会进 PWE Assist 的知识库（`knowledge.py` 只放行页面上出现过的数字），所以只写核实过的数字。
 
 ## 改动清单（网站仓库）
