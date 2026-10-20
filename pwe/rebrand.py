@@ -213,7 +213,7 @@ def rebrand_sender(root: Path, version: str, build: str) -> None:
     plist = support / "Info.plist"
     edit(plist, "<string>TargetBridge</string>", f"<string>{NAME}</string>")
     edit(plist, "<string>TargetBridge - Free &amp; Open Source</string>",
-         "<string>PWE Group. Based on TargetBridge (MIT).</string>")
+         "<string>© 2026 PWE Group Pty Ltd. Based on TargetBridge (MIT).</string>")
     edit(plist, "<string>com.targetbridge.sender</string>", f"<string>{SENDER_ID}</string>")
     edit(plist, "<string>targetbridge</string>", f"<string>{SCHEME}</string>")
     text = plist.read_text(encoding="utf-8")
@@ -385,6 +385,9 @@ def rebrand_sender(root: Path, version: str, build: str) -> None:
     icon = support / "Assets.xcassets/AppIcon.appiconset"
     shutil.rmtree(icon)
     shutil.copytree(root / "pwe/assets/AppIcon.appiconset", icon)
+    # The menu bar glyphs: one iMac, ready and showing (PWEStatusMenu, PWEMainView).
+    for imageset in sorted((root / "pwe/brand/menubar").glob("*.imageset")):
+        shutil.copytree(imageset, support / "Assets.xcassets" / imageset.name)
 
 
 def rebrand_receiver(root: Path) -> None:

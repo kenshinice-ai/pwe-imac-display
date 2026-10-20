@@ -80,13 +80,15 @@ final class PWEStatusMenu: NSObject {
         updateButton(model.phase)
     }
 
-    /// The iMac outline, filled while it is a display.
+    /// One iMac in two states: its outline, and its screen lit while it is a
+    /// display. PWE's own template glyphs (pwe/brand/menubar), so the item never
+    /// changes object or looks like the system's Displays menu.
     private func updateButton(_ phase: PWEPhase) {
         guard let button = statusItem?.button else { return }
         let showing: Bool
         if case .connected = phase { showing = true } else { showing = false }
-        let image = NSImage(systemSymbolName: showing ? "desktopcomputer" : "display",
-                            accessibilityDescription: strings.appName)
+        let image = NSImage(named: showing ? "PWEMenuBarShowing" : "PWEMenuBarReady")
+        image?.accessibilityDescription = strings.appName
         image?.isTemplate = true
         button.image = image
         button.appearsDisabled = !showing

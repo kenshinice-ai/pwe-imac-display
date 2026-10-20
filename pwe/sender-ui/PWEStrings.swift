@@ -349,7 +349,8 @@ struct PWEStrings {
           "一个文本文件，含版本、设置和本 App 最近 30 分钟的日志，用于求助。")
     }
     var openConsoleHint: String {
-        t("TargetBridge's own console, with every engine setting.", "TargetBridge 自己的控制台，包含引擎的全部设置。")
+        t("TargetBridge's own console: every engine setting, in the upstream interface.",
+          "TargetBridge 引擎自带的控制台：全部设置都在这里，界面保持上游原样。")
     }
 
     // About

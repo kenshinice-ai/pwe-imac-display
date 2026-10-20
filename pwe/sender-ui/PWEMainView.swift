@@ -204,7 +204,8 @@ struct PWEMainView: View {
         VStack(alignment: .leading, spacing: 10) {
             Divider()
             let tip = strings.menuBarTip
-            Text("\(tip.before)\(Image(systemName: "desktopcomputer"))\(tip.after)")
+            // The glyph the menu bar shows (PWEStatusMenu.updateButton).
+            Text("\(tip.before)\(Image("PWEMenuBarReady"))\(tip.after)")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityLabel(strings.menuBarTipSpoken)
@@ -248,7 +249,7 @@ struct PWEMainView: View {
             HStack(spacing: 10) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.title2)
-                    .foregroundStyle(.yellow)
+                    .foregroundStyle(.orange)
                     .accessibilityHidden(true)
                 Text(strings.interruptedTitle(reason)).font(.title3.weight(.semibold))
             }
@@ -352,6 +353,10 @@ struct PWEAboutView: View {
                     Link(strings.download, destination: UpdateCheck.downloadPage)
                 }
             }
+            // The PWE signature line, as in PWE Lumen Bar; the same in both languages.
+            Text(verbatim: "PWE · 天域出品 · © 2026 PWE Group Pty Ltd")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
             if let dismiss {
                 HStack {
                     Spacer()

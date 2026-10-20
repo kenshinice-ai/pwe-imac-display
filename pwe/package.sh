@@ -176,7 +176,7 @@ cat > "$RECEIVER/Contents/Info.plist" <<EOF
     <key>CFBundleVersion</key><string>$BUILD</string>
     <key>LSMinimumSystemVersion</key><string>11.0</string>
     <key>NSHighResolutionCapable</key><true/>
-    <key>NSHumanReadableCopyright</key><string>PWE Group. Based on TargetBridge (MIT).</string>
+    <key>NSHumanReadableCopyright</key><string>© 2026 PWE Group Pty Ltd. Based on TargetBridge (MIT).</string>
     <key>NSLocalNetworkUsageDescription</key><string>$RECEIVER_NAME receives the picture from your Mac over Thunderbolt Bridge.</string>
     <key>NSBonjourServices</key><array><string>_targetbridge._tcp</string></array>
 </dict>

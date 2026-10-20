@@ -416,7 +416,7 @@ struct PWEBrightnessKeysSetting: View {
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.yellow)
+                        .foregroundStyle(.orange)
                         .accessibilityHidden(true)
                     Text(strings.needsPermission)
                         .font(.caption)
