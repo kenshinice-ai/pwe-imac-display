@@ -6,6 +6,7 @@
  *
  *   [trace] in=60 shown=60 replaced=0 repeat=0 late=0 | ms p50/p95 decode 4.1/6.0
  *           upload 2.3/3.1 submit 0.2/0.4 display 9.8/16.1 total 17.0/24.3 gap 16.6/18.2
+ *           handoff 6.6/9.5
  *
  * Stages (each the time from the previous mark):
  *   decode   packet complete  -> decoded frame handed to the display
@@ -16,6 +17,11 @@
  *                                Metal: the drawable's presentedTime)
  *   total    packet complete  -> presented
  *   gap      time between two complete frame packets
+ *   handoff  packet complete  -> submitted: the one end-to-end figure that means
+ *            the same on both renderers. "display" and "total" do not: on GL
+ *            they stop when SDL_RenderPresent returns, before the window
+ *            server composites the frame; on Metal they run to the screen.
+ *            Compare OpenGL and Metal on handoff, not on total.
  * Counters: in = frame packets, shown = frames presented, replaced = decoded
  * frames overwritten before they were shown, repeat = refreshes while streaming
  * that had no new frame, late = frames shown more than two refreshes after they
