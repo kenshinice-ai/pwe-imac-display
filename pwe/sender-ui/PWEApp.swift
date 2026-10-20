@@ -40,6 +40,9 @@ struct PWEApp: App {
         // stale one showed a Chinese window on an English Mac (UX review 2026-10-19).
         let language = PWEStrings.systemLanguage()
         if shared.language != language { shared.language = language }
+        // Keeping the displays awake while showing has no switch in PWE's UI, so
+        // every launch starts from its default (on), whatever was stored before.
+        if !shared.preventDisplaySleep { shared.preventDisplaySleep = true }
         let model = PWESenderModel(service: shared)
         _service = StateObject(wrappedValue: shared)
         _model = StateObject(wrappedValue: model)
