@@ -61,9 +61,13 @@ struct PWEStrings {
     // Choose / ready
     var chooseTitle: String { t("Choose your iMac", "选择你的 iMac") }
     var useAsDisplay: String { t("Use as Display", "用作显示器") }
-    var modeLabel: String { t("Show", "显示方式") }
-    var modeExtended: String { t("Separate display", "独立的一块屏") }
-    var modeMirror: String { t("Same as this Mac", "和这台 Mac 一样") }
+    /// macOS's own words for the two ways a display joins (Extend / Mirror).
+    func modeName(_ mode: PWEDisplayMode) -> String {
+        switch mode {
+        case .extended: return t("Extend Display", "扩展显示")
+        case .mirror: return t("Mirror Display", "镜像显示")
+        }
+    }
     var picture: String { t("Picture", "画面") }
     func pictureName(_ preset: TBDisplayCapturePreset) -> String {
         switch preset {
@@ -72,11 +76,6 @@ struct PWEStrings {
         case .native5k60Experimental: return t("5K · 60 Hz", "5K · 60 Hz")
         default: return "\(preset.title) · \(preset.description)"
         }
-    }
-    var pictureChangeHint: String { t("Changing it reconnects for a moment.", "更改后会重新连接一下。") }
-    var pictureHint: String {
-        t("Remembered for each iMac. 5K · 60 Hz is the smoothest; choose Standard if the picture stutters.",
-          "每台 iMac 各记各的。5K · 60 Hz 最流畅；画面卡顿时选「标准」。")
     }
 
     // Connecting
@@ -138,14 +137,15 @@ struct PWEStrings {
     var stopRetrying: String { t("Stop", "停止") }
     var tryAgain: String { t("Try Again", "重试") }
 
-    // Last setup screen
-    var setupTitle: String { t("Two more things", "还有两件事") }
-    var setupBody: String {
-        t("You can change these later in Settings.", "以后可以在「设置」里更改。")
+    // First connection: the one line that says where the everyday controls are.
+    /// The words either side of the menu bar icon, drawn inline.
+    var menuBarTip: (before: String, after: String) {
+        zh ? ("以后在菜单栏的 ", " 里调亮度、画面和声音。")
+           : ("From now on, brightness, picture and sound are under ", " in the menu bar.")
     }
-    var setupDone: String { t("Done", "完成") }
-    var menuBarHint: String {
-        t("Brightness, picture and sound are in the menu bar.", "亮度、画面和声音都在菜单栏里。")
+    var menuBarTipSpoken: String {
+        t("From now on, brightness, picture and sound are under the PWE iMac Display icon in the menu bar.",
+          "以后在菜单栏的 PWE iMac Display 图标里调亮度、画面和声音。")
     }
 
     // Preferences
@@ -154,15 +154,9 @@ struct PWEStrings {
     var launchAtLoginApproval: String { t("Allow in Login Items…", "在「登录项」里允许…") }
 
     // Menu bar
-    var menuOpenWindow: String { t("Open PWE iMac Display", "打开 PWE iMac Display") }
-    var menuConnect: String { t("Use as Display", "用作显示器") }
     func menuConnectTo(_ name: String) -> String { t("Use \(name) as Display", "把 \(name) 用作显示器") }
     var settingsMenu: String { t("Settings…", "设置…") }
     var quit: String { t("Quit PWE iMac Display", "退出 PWE iMac Display") }
-    var nightShift: String { t("Night Shift", "夜览") }
-    var trueTone: String { t("True Tone", "原彩显示") }
-    var on: String { t("On", "开") }
-    var off: String { t("Off", "关") }
     func status(_ phase: PWEPhase) -> String {
         switch phase {
         case .needsPermission: return t("Needs Screen Recording permission", "需要录屏权限")
@@ -254,8 +248,7 @@ struct PWEStrings {
     var notEncrypted: String { t("Not encrypted", "未加密") }   // DRAFT (menu status)
     var waitingForCode: String { t("Waiting for the pairing code", "等待输入配对码") }   // DRAFT (menu status)
     var needsAnswer: String { t("Waiting for your answer in the window", "请在窗口里回答") }   // DRAFT (menu status)
-    // Settings › Advanced › Security
-    var securitySection: String { t("Pairing and Encryption", "配对与加密") }   // DRAFT
+    // Settings › Advanced
     var allowUnencrypted: String { t("Allow unencrypted connections", "允许不加密的连接") }   // DRAFT
     var allowUnencryptedHint: String {
         t("For iMacs that run the original TargetBridge or PWE iMac Display 1.0: picture and sound only, always with a warning.",
@@ -278,65 +271,35 @@ struct PWEStrings {
     }
 
     // Settings
-    var settingsTitle: String { t("Settings", "设置") }
     var general: String { t("General", "通用") }
-    var display: String { t("Display", "显示") }
     var keyboardMouse: String { t("Keyboard & Mouse", "键盘与鼠标") }
     var advancedTab: String { t("Advanced", "高级") }
     var reconnectNotice: String { t("Reconnecting to apply the change…", "正在重新连接以应用更改…") }
-    var showMenuBarIcon: String { t("Show in menu bar", "在菜单栏中显示") }
-    var showMenuBarIconHint: String {
-        t("When it is hidden, open PWE iMac Display again to see this window.",
-          "隐藏后，再次打开 PWE iMac Display 即可看到窗口。")
-    }
-    var languageHint: String {
-        t("PWE iMac Display uses the language set for it in System Settings › General › Language & Region.",
-          "PWE iMac Display 的语言跟随「系统设置 › 通用 › 语言与地区」。")
-    }
-    var updates: String { t("Updates", "更新") }
-    var startup: String { t("Startup", "启动") }
-    var noIMacYet: String { t("Connect an iMac once to choose its picture.", "先连接一次 iMac，再选择它的画面。") }
-    func pictureFor(_ name: String) -> String { t("Picture on \(name)", "\(name) 的画面") }
-    var keepAwake: String { t("Keep the displays awake while showing", "显示时不让屏幕休眠") }
     var largeCursor: String { t("Larger pointer on the iMac", "iMac 上使用大指针") }
     var changesReconnect: String { t("Changes reconnect for a moment.", "更改后会重新连接一下。") }
-    var soundTitle: String { t("Play this Mac's sound", "这台 Mac 的声音") }
-    func soundDetail(_ sound: PWESound) -> String {
-        switch sound {
-        case .onlyIMac: return t("This Mac's speakers stay quiet while the iMac plays.", "iMac 播放时，这台 Mac 的扬声器静音。")
-        case .both: return t("Both play; the iMac is a moment behind.", "两边同时播放，iMac 会稍慢一点。")
-        case .onlyThisMac: return t("The iMac stays silent.", "iMac 不出声。")
-        }
-    }
     var iMacVolume: String { t("iMac volume", "iMac 音量") }
-    var iMacVolumeHint: String { t("Works while the iMac is a display.", "iMac 用作显示器时可调。") }
     var experimental: String { t("Experimental", "实验性") }
     var inputTitle: String { t("Share keyboard and mouse", "共享键盘和鼠标") }
     func inputRoleName(_ role: PWEInputRole) -> String {
         switch role {
-        case .off: return t("Off", "关闭")
-        case .macControlsIMac: return t("This Mac's keyboard and mouse control the iMac", "用这台 Mac 的键盘鼠标控制 iMac")
-        case .iMacControlsMac: return t("The iMac's keyboard and mouse control this Mac", "用 iMac 的键盘鼠标控制这台 Mac")
+        case .off: return t("Off", "关")
+        case .macControlsIMac: return t("Control the iMac from this Mac", "用这台 Mac 控制 iMac")
+        case .iMacControlsMac: return t("Control this Mac from the iMac", "用 iMac 控制这台 Mac")
         }
     }
     var inputHint: String {
         t("Applies while the iMac is a display. Press Control-Option-Command-K to stop controlling at once.",
           "iMac 用作显示器时生效。按 Control-Option-Command-K 可立即停止控制。")
     }
-    var permissionsNeeded: String { t("Permissions", "所需权限") }
+    func permissionMissing(_ setting: String) -> String { t("\(setting) is not allowed", "未允许「\(setting)」") }
     var onThisMac: String { t("On this Mac", "在这台 Mac 上") }
-    var onTheIMac: String { t("On the iMac", "在 iMac 上") }
     var inputMonitoring: String { t("Input Monitoring", "输入监控") }
     var accessibility: String { t("Accessibility", "辅助功能") }
-    var allowed: String { t("Allowed", "已允许") }
-    var notAllowed: String { t("Not allowed", "未允许") }
-    var unknownUntilConnected: String { t("Known after connecting", "连接后才知道") }
     var open: String { t("Open…", "打开…") }
     func iMacPermissionHint(_ setting: String) -> String {
         t("On the iMac: System Settings › Privacy & Security › \(setting) › PWE iMac Display Receiver.",
           "在 iMac 上：系统设置 › 隐私与安全性 › \(setting) › PWE iMac Display Receiver。")
     }
-    var connectionSection: String { t("Connection", "连接") }
     var networkLink: String { t("Also allow a network cable or Wi‑Fi", "也允许用网线或 Wi‑Fi 连接") }
     var networkLinkHint: String {
         t("Thunderbolt is fastest. Over a network the picture can lag or drop.",
@@ -349,35 +312,13 @@ struct PWEStrings {
         case .network: return t("Network", "网络")
         }
     }
-    var videoSection: String { t("Video", "视频") }
-    var compression: String { t("Compression", "压缩方式") }
-    func codecName(_ codec: TBDisplayCodecPreference) -> String {
-        switch codec {
-        case .automatic: return t("Automatic", "自动")
-        case .hevc: return "HEVC"
-        case .h264: return "H.264"
-        }
-    }
-    var renderMatching: String { t("Render the desktop at the picture's size", "按画面尺寸渲染桌面") }
-    var renderMatchingHint: String {
-        t("Sharper text at Standard; 5K pictures always render at full size.",
-          "「标准」画面下文字更清晰；5K 画面始终按原尺寸渲染。")
-    }
     var diagnostics: String { t("Diagnostics", "诊断") }
     var checkSetup: String { t("Check Setup", "检查配置") }
     var checkSetupLabel: String { t("This Mac, the link and permissions", "这台 Mac、连接和权限") }
-    var cableLabel: String { t("Cable speed", "线缆速度") }
-    var restartPictureLabel: String { t("If the picture freezes", "画面卡住时") }
     var reportLabel: String { t("Report for support", "求助报告") }
-    var cableTest: String { t("Test Cable", "测试线缆") }
-    var cableTesting: String { t("Testing…", "正在测试…") }
-    func cableResult(_ rate: Double?) -> String {
-        guard let rate else { return t("Not tested yet", "还没测过") }
-        return String(format: "%.2f Gbit/s", rate)
-    }
-    var cableTestHint: String { t("Works while the iMac is not showing a picture.", "在 iMac 没有显示画面时才能测试。") }
-    var restartPicture: String { t("Restart Picture", "重启画面") }
-    var detailedLogging: String { t("Detailed logging", "详细日志") }
+    var passed: String { t("Passed", "通过") }
+    var needsAttention: String { t("Needs attention", "需要处理") }
+    var afterConnecting: String { t("Checked after connecting", "连接后检查") }
     var exportReport: String { t("Save Report…", "保存报告…") }
     var exportReportHint: String {
         t("A text file with versions, settings and the last 30 minutes of this app's log, for support.",

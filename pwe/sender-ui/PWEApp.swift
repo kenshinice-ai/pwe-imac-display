@@ -129,10 +129,11 @@ private struct PWEWindowContent: View {
     }
 }
 
-/// `--pwe-snapshot <dir>`: renders every phase of the window, the Settings tabs
-/// and About, in English and in Chinese, to PNG files. It draws the app's own
-/// views off screen, so checking the layout needs no screen recording and
-/// touches no real connection. (The menu bar menu is AppKit and is not drawn.)
+/// `--pwe-snapshot <dir>`: renders every phase of the window, the Settings tabs,
+/// About and the menu bar menu, in English and in Chinese, to PNG files. It draws
+/// the app's own views off screen, so checking the layout needs no screen
+/// recording and touches no real connection. The menu is the real NSMenu that
+/// PWEStatusMenu builds, laid out as rows (AppKit draws menus only on screen).
 enum PWESnapshot {
     @MainActor
     static func render(to directory: URL) {
@@ -157,23 +158,32 @@ enum PWESnapshot {
             ("p12-imac-keychain", .security(imac, .refused(.receiverKeychain)), .none),
             ("p13-connected-unencrypted", .connected(upstream), .unencrypted),
         ]
+        // (name, phase, the first connection's extra lines)
         let phases: [(String, PWEPhase, Bool)] = [
-            ("1-permission", .needsPermission, true),
-            ("2-searching", .searching, true),
-            ("3-choose", .choose([imac, other]), true),
-            ("4-ready", .ready(imac), true),
-            ("5-connecting", .connecting(imac, .preparing), true),
-            ("6a-first-connection-setup", .connected(imac), false),
-            ("6b-connected", .connected(imac), true),
-            ("7-interrupted-retrying", .interrupted(imac, .cableOrReceiverGone, retrying: true), true),
-            ("8-interrupted", .interrupted(imac, .captureFailed, retrying: false), true),
-            ("8b-interrupted-cable", .interrupted(imac, .cableOrReceiverGone, retrying: false), true),
+            ("1-permission", .needsPermission, false),
+            ("2-searching", .searching, false),
+            ("3-choose", .choose([imac, other]), false),
+            ("4-ready", .ready(imac), false),
+            ("5-connecting", .connecting(imac, .preparing), false),
+            ("6a-first-connection", .connected(imac), true),
+            ("6b-connected", .connected(imac), false),
+            ("7-interrupted-retrying", .interrupted(imac, .cableOrReceiverGone, retrying: true), false),
+            ("8-interrupted", .interrupted(imac, .captureFailed, retrying: false), false),
+            ("8b-interrupted-cable", .interrupted(imac, .cableOrReceiverGone, retrying: false), false),
+        ]
+        // The menu bar menu: (name, model, submenus drawn beside it)
+        let menus: [(String, PWESenderModel, Bool)] = [
+            ("m1-menu-connected", PWESenderModel(preview: .connected(imac)), true),
+            ("m2-menu-connected-unencrypted", PWESenderModel(preview: .connected(upstream), security: .unencrypted), false),
+            ("m3-menu-ready", PWESenderModel(preview: .ready(imac)), false),
+            ("m4-menu-searching", PWESenderModel(preview: .searching), true),
         ]
         for language in [TBDisplaySenderLanguage.english, .chinese] {
             let strings = PWEStrings(language: language)
             let stem = language.fileStem
-            for (name, phase, setupFinished) in phases {
-                let view = PWEMainView(model: PWESenderModel(preview: phase, setupFinished: setupFinished), strings: strings)
+            for (name, phase, firstConnection) in phases {
+                let view = PWEMainView(model: PWESenderModel(preview: phase, firstConnection: firstConnection),
+                                       strings: strings)
                 write(view, to: directory.appendingPathComponent("\(stem)-\(name).png"))
             }
             write(PWEAboutView(updates: UpdateCheck(), strings: strings),
@@ -192,15 +202,20 @@ enum PWESnapshot {
             ])
             let tabs: [(String, String, AnyView)] = [
                 ("s1-general", strings.general, AnyView(PWEGeneralSettings(model: connected, updates: UpdateCheck(), strings: strings))),
-                ("s2-display", strings.display, AnyView(PWEDisplaySettings(model: connected, strings: strings))),
-                ("s3-sound", strings.sound, AnyView(PWESoundSettings(model: connected, strings: strings))),
-                ("s4-keyboard-mouse", strings.keyboardMouse, AnyView(PWEInputSettings(model: connected, strings: strings))),
-                ("s4b-keyboard-mouse-on", strings.keyboardMouse, AnyView(PWEInputSettings(model: sharing, strings: strings))),
-                ("s5-advanced", strings.advancedTab, AnyView(PWEAdvancedSettings(model: connected, strings: strings))),
-                ("s5b-advanced-paired", strings.advancedTab, AnyView(PWEAdvancedSettings(model: paired, strings: strings))),
+                ("s2-keyboard-mouse", strings.keyboardMouse, AnyView(PWEInputSettings(model: connected, strings: strings))),
+                ("s2b-keyboard-mouse-on", strings.keyboardMouse, AnyView(PWEInputSettings(model: sharing, strings: strings))),
+                ("s3-advanced", strings.advancedTab, AnyView(PWEAdvancedSettings(model: connected, strings: strings))),
+                ("s3b-advanced-paired", strings.advancedTab, AnyView(PWEAdvancedSettings(model: paired, strings: strings))),
             ]
             for (name, title, tab) in tabs {
                 write(settingsFrame(title: title, tab), to: directory.appendingPathComponent("\(stem)-\(name).png"))
+            }
+
+            for (name, model, withSubmenus) in menus {
+                let menu = PWEStatusMenu(preview: model, language: language).previewMenu()
+                var columns = [menu]
+                if withSubmenus { columns += menu.items.compactMap(\.submenu) }
+                write(menuSheet(columns), to: directory.appendingPathComponent("\(stem)-\(name).png"))
             }
         }
     }
@@ -225,11 +240,115 @@ enum PWESnapshot {
     private static func write<V: View>(_ view: V, to url: URL) {
         let host = NSHostingView(rootView: view.fixedSize())
         host.frame = NSRect(origin: .zero, size: host.fittingSize)
-        let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
-        window.contentView = host
-        host.layoutSubtreeIfNeeded()
-        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
-        host.cacheDisplay(in: host.bounds, to: rep)
+        write(host, to: url)
+    }
+
+    @MainActor
+    private static func write(_ view: NSView, to url: URL) {
+        let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = view
+        view.layoutSubtreeIfNeeded()
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        view.cacheDisplay(in: view.bounds, to: rep)
         try? rep.representation(using: .png, properties: [:])?.write(to: url)
+    }
+
+    // MARK: - The menu as rows
+
+    /// Menus side by side, top-aligned: the menu, then any submenus.
+    @MainActor
+    private static func menuSheet(_ menus: [NSMenu]) -> NSView {
+        let margin: CGFloat = 16, gap: CGFloat = 12
+        let panels = menus.map(menuPanel)
+        let height = (panels.map(\.frame.height).max() ?? 0) + margin * 2
+        let width = panels.reduce(margin * 2 - gap) { $0 + $1.frame.width + gap }
+        let sheet = FlippedView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        sheet.fill = .underPageBackgroundColor
+        var x = margin
+        for panel in panels {
+            panel.setFrameOrigin(NSPoint(x: x, y: margin))
+            sheet.addSubview(panel)
+            x += panel.frame.width + gap
+        }
+        return sheet
+    }
+
+    /// One menu: its text rows drawn the way AppKit lays them out (tick column,
+    /// title, shortcut or submenu arrow), its custom rows as the views they are.
+    @MainActor
+    private static func menuPanel(_ menu: NSMenu) -> NSView {
+        let width = TBMenuMetrics.width + 10, rowHeight: CGFloat = 22, pad: CGFloat = 5
+        let font = NSFont.menuFont(ofSize: 0)
+        let panel = FlippedView(frame: .zero)
+        // Sized only at the end: rows must not move with it.
+        panel.autoresizesSubviews = false
+        panel.fill = .windowBackgroundColor
+        panel.cornerRadius = 8
+
+        func label(_ text: String, color: NSColor, x: CGFloat, y: CGFloat, alignRight: Bool = false) {
+            let field = NSTextField(labelWithString: text)
+            field.font = font
+            field.textColor = color
+            field.sizeToFit()
+            let origin = alignRight ? x - field.frame.width : x
+            field.setFrameOrigin(NSPoint(x: origin, y: y + (rowHeight - field.frame.height) / 2))
+            panel.addSubview(field)
+        }
+
+        var y = pad
+        for item in menu.items {
+            if item.isSeparatorItem {
+                let line = NSBox(frame: NSRect(x: 10, y: y + 5, width: width - 20, height: 1))
+                line.boxType = .separator
+                panel.addSubview(line)
+                y += 11
+            } else if let view = item.view {
+                // A menu item's view keeps its origin at zero: place a holder instead.
+                let holder = FlippedView(frame: NSRect(x: 5, y: y, width: view.frame.width, height: view.frame.height))
+                holder.addSubview(view)
+                panel.addSubview(holder)
+                y += view.frame.height
+            } else {
+                let color: NSColor = item.isEnabled ? .labelColor : .disabledControlTextColor
+                if item.state == .on { label("✓", color: color, x: 10, y: y) }
+                var titleX: CGFloat = 24
+                if let image = item.image {
+                    let icon = NSImageView(frame: NSRect(x: titleX, y: y + 4, width: 14, height: 14))
+                    icon.image = image
+                    icon.contentTintColor = color
+                    panel.addSubview(icon)
+                    titleX += 20
+                }
+                label(item.title, color: color, x: titleX, y: y)
+                if item.submenu != nil {
+                    label("›", color: color, x: width - 12, y: y, alignRight: true)
+                } else if !item.keyEquivalent.isEmpty {
+                    label("⌘" + item.keyEquivalent.uppercased(), color: .secondaryLabelColor, x: width - 12, y: y,
+                          alignRight: true)
+                }
+                y += rowHeight
+            }
+        }
+        panel.frame = NSRect(x: 0, y: 0, width: width, height: y + pad)
+        return panel
+    }
+
+    /// Top-down layout, drawn without layers: `cacheDisplay` misplaced the
+    /// menu's own row views inside a layer-backed parent.
+    private final class FlippedView: NSView {
+        var fill: NSColor?
+        var cornerRadius: CGFloat = 0
+        override var isFlipped: Bool { true }
+        override func draw(_ dirtyRect: NSRect) {
+            guard let fill else { return }
+            let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
+                                     xRadius: cornerRadius, yRadius: cornerRadius)
+            fill.setFill()
+            shape.fill()
+            if cornerRadius > 0 {
+                NSColor.separatorColor.setStroke()
+                shape.stroke()
+            }
+        }
     }
 }
