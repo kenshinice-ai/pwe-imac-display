@@ -515,9 +515,11 @@ final class TBDisplaySenderService: ObservableObject {
             ?? .automatic
     }
 
-    func refreshLocalInterfaces() {
+    /// PWE: `restartDiscovery: false` keeps Bonjour's current list. A restart
+    /// empties it, so a receiver already listed must be found and resolved again.
+    func refreshLocalInterfaces(restartDiscovery: Bool = true) {
         localInterfaces = detectLocalInterfaces()
-        receiverDiscovery.refresh()
+        if restartDiscovery { receiverDiscovery.refresh() }
         normalizeSessionInterfaces()
         objectWillChange.send()
     }

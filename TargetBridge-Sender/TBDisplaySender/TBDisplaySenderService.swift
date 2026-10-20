@@ -1532,6 +1532,9 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     private var pweAllowUnencrypted = false
     private var pweIdentityChanged = false
     private var pweHelloTimeout: DispatchWorkItem?
+    /// PWE: the current dial is a redial of the last bridge address (TBBridgeRedial).
+    /// Until it connects, its failure is expected and leaves the status alone.
+    var pweSpeculativeDial = false
     #if DEBUG
     /// Tests only: stream this many generated frames through the real encoder
     /// and the encrypted send path instead of capturing the screen (needs no
@@ -1886,6 +1889,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                 case .ready:
                     self.connectTimeoutWorkItem?.cancel()
                     self.connectTimeoutWorkItem = nil
+                    self.pweSpeculativeDial = false
                     self.isConnected = true
                     TBLog.connection.info("connect: ready — \(self.receiverIP, privacy: .public) via \(self.connectInterfaceName ?? "?", privacy: .public)")
                     self.setStatus(.waitingDisplayProfile)
@@ -1900,6 +1904,11 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                     self.lastConnectionStateDetail = "waiting(\(error.localizedDescription))"
                     TBLog.connection.warning("connect: waiting — \(error.localizedDescription, privacy: .public)")
                 case .failed(let error):
+                    if self.pweSpeculativeDial, !self.isConnected {
+                        TBLog.connection.info("connect: redial failed — \(error.localizedDescription, privacy: .public)")
+                        self.pweAbandonSpeculativeDial()
+                        return
+                    }
                     self.lastConnectionStateDetail = "failed(\(error.localizedDescription))"
                     let detail = TBConnectionDiagnostics.failureDetail(
                         receiverHost: self.receiverIP,
@@ -1956,6 +1965,24 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         }
         routeLossWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: workItem)
+    }
+
+    /// PWE: end a redial of the last bridge address (TBBridgeRedial) that has
+    /// not connected. Cancel the dial at once rather than through stop(): a
+    /// teardown queued on a dial that connects a moment later would hold the
+    /// receiver's only connection while the next redial arrives. The status
+    /// stays as it was; the retry loop decides what comes next.
+    func pweAbandonSpeculativeDial() {
+        guard pweSpeculativeDial else { return }
+        pweSpeculativeDial = false
+        guard !isConnected, let conn = connection else { return }
+        connectTimeoutWorkItem?.cancel()
+        connectTimeoutWorkItem = nil
+        conn.stateUpdateHandler = nil
+        conn.viabilityUpdateHandler = nil
+        conn.cancel()
+        connection = nil
+        pweLink = nil
     }
 
     /// PWE: the receiver is listed but has no address this transport can dial
@@ -2122,6 +2149,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     ) {
         let connectionToClose = connection
         let linkToClose = pweLink
+        pweSpeculativeDial = false
         pweHelloTimeout?.cancel()
         pweHelloTimeout = nil
         if !pweSecurity.waitsForUser, pweSecurity != .checkingCode { pweSecurity = .none }
@@ -4502,6 +4530,9 @@ extension TBDisplaySenderSession {
     func pweSessionReady() {
         pweHelloTimeout?.cancel()
         pweHelloTimeout = nil
+        if transportKind == .thunderboltBridge {
+            TBBridgeRedial.remember(receiverIP, for: selectedReceiverID)
+        }
         startHeartbeat()
         sendHello()
         sendInputControlModeUpdate()
