@@ -2613,9 +2613,9 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                     applyReportedDisplayTweaks(tweaks)
                 }
             case .clipboard:
-                // The receiver's clipboard is taken only while the receiver
+                // PWE: the receiver's clipboard is taken only while the receiver
                 // controls input, and only in an encrypted session.
-                guard inputControlRole == .receiverMaster, pweLink?.mode == .secure else { break }
+                guard Self.pweTakesReceiverClipboard(role: inputControlRole, linkMode: pweLink?.mode) else { break }
                 if let clipboard = TBMonitorProtocol.decodeJSON(TBMonitorClipboard.self, from: payload) {
                     let pasteboard = NSPasteboard.general
                     pasteboard.clearContents()
@@ -4633,6 +4633,14 @@ extension TBDisplaySenderSession {
         pweHelloTimeout = timeout
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.pweHelloTimeoutSeconds, execute: timeout)
         pweHandle(step, on: link)
+    }
+
+    /// Whether a clipboard sent by the receiver may replace this Mac's (P1-02):
+    /// only while the iMac controls input ("iMac controls Mac"), and only in an
+    /// encrypted session. Keyboard and mouse off, the Mac in control, an
+    /// unencrypted or unfinished session: dropped (PWEClipboardGateTests).
+    nonisolated static func pweTakesReceiverClipboard(role: TBInputControlRole, linkMode: PWESecureLink.Mode?) -> Bool {
+        role == .receiverMaster && linkMode == .secure
     }
 
     /// The handshake is done (or the user chose unencrypted): start the session.
