@@ -75,30 +75,67 @@ final class PWEBridgeIPv6Tests: XCTestCase {
         let scoped = TBConnectionDiagnostics.scopedBridgeIPv6(
             advertised: receiverV6,
             resolved: ["fe80::99%en0", "fe80:0:0:0:1c2:3ff:fe04:506%bridge0"],
-            localBridgeInterfaces: ["bridge0", "bridge100"])
+            cableBridges: ["bridge0"])
         XCTAssertEqual(scoped, scopedV6)
     }
 
-    func testAResolvedAddressOnAnotherInterfaceDoesNotCount() {
-        // The same address heard on Wi-Fi is not the cable; one local bridge decides.
-        let scoped = TBConnectionDiagnostics.scopedBridgeIPv6(
-            advertised: receiverV6, resolved: ["\(receiverV6)%en0"], localBridgeInterfaces: ["bridge0"])
-        XCTAssertEqual(scoped, scopedV6)
+    func testResolvedOnAnotherInterfaceIsNotTheCable() {
+        // Heard on Wi-Fi only: not the cable, even with one cable bridge here.
         XCTAssertEqual(TBConnectionDiagnostics.scopedBridgeIPv6(
-            advertised: receiverV6, resolved: ["\(receiverV6)%en0"], localBridgeInterfaces: []), "")
+            advertised: receiverV6, resolved: ["\(receiverV6)%en0"], cableBridges: ["bridge0"]), "")
+        // Heard on a bridge the settings do not list (a VM's, Internet Sharing's).
+        XCTAssertEqual(TBConnectionDiagnostics.scopedBridgeIPv6(
+            advertised: receiverV6, resolved: ["\(receiverV6)%bridge100"], cableBridges: ["bridge0"]), "")
     }
 
-    func testSeveralBridgesAndNoResolvedAddressGiveNothing() {
+    func testNotResolvedYetUsesTheOnlyCableBridge() {
         XCTAssertEqual(TBConnectionDiagnostics.scopedBridgeIPv6(
-            advertised: receiverV6, resolved: [], localBridgeInterfaces: ["bridge0", "bridge100"]), "")
+            advertised: receiverV6, resolved: ["10.0.0.183", "fe80::99%en0"], cableBridges: ["bridge0"]), scopedV6)
+        XCTAssertEqual(TBConnectionDiagnostics.scopedBridgeIPv6(
+            advertised: receiverV6, resolved: [], cableBridges: []), "", "no cable bridge here")
+    }
+
+    func testSeveralCableBridgesAndNoResolvedAddressGiveNothing() {
+        XCTAssertEqual(TBConnectionDiagnostics.scopedBridgeIPv6(
+            advertised: receiverV6, resolved: [], cableBridges: ["bridge0", "bridge1"]), "")
     }
 
     func testOnlyALinkLocalUnscopedAdvertisementIsScoped() {
         for advertised in ["2001:db8::5", "fd03::5", "169.254.6.224", "\(receiverV6)%bridge0", "", "not-an-address"] {
             XCTAssertEqual(TBConnectionDiagnostics.scopedBridgeIPv6(
-                advertised: advertised, resolved: ["\(receiverV6)%bridge0"], localBridgeInterfaces: ["bridge0"]),
+                advertised: advertised, resolved: ["\(receiverV6)%bridge0"], cableBridges: ["bridge0"]),
                 "", advertised)
         }
+    }
+
+    func testCableBridgesAreSettingsListedOnly() {
+        let listed = TBConnectionDiagnostics.settingsListedBridges()
+        XCTAssertTrue(listed.allSatisfy { $0.hasPrefix("bridge") })
+        XCTAssertTrue(Set(TBConnectionDiagnostics.currentCableBridgeIPv6Interfaces()).isSubset(of: listed))
+    }
+
+    // MARK: - The Connect button and connect() agree
+
+    @MainActor
+    func testABridgeIPv6DialNeedsNoLocalIPv4Address() {
+        let session = TBDisplaySenderSession(language: .english, largeCursor: false, preventDisplaySleep: false,
+                                             autoRestartOnWake: false, audioEnabled: false)
+        let saved = session.receiverIP
+        defer { session.receiverIP = saved }
+        session.transportKind = .thunderboltBridge
+        session.localInterfaceIP = ""
+        session.receiverIP = scopedV6
+        XCTAssertTrue(session.pweDialsBridgeIPv6)
+        XCTAssertTrue(session.pweHasDialAddresses)
+        session.receiverIP = "169.254.6.224"
+        XCTAssertFalse(session.pweHasDialAddresses, "IPv4 still needs a local address")
+        session.localInterfaceIP = "169.254.171.182"
+        XCTAssertTrue(session.pweHasDialAddresses)
+        session.transportKind = .networkLink
+        session.localInterfaceIP = ""
+        session.receiverIP = scopedV6
+        XCTAssertFalse(session.pweDialsBridgeIPv6, "Network Link never dials the bridge IPv6 address")
+        XCTAssertFalse(session.pweHasDialAddresses)
     }
 
     func testScopedBridgeIPv6Recognition() {

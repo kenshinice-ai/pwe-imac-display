@@ -201,6 +201,14 @@ enum PWEReplugRules {
     /// A bridge address gone for less than this is a Bonjour update, not a cable.
     static let minimumLoss: TimeInterval = 2
 
+    /// The receiver's bridge address that marks a plug: its IPv6 link-local
+    /// address when it announces one (T34), else its IPv4 one. The IPv6 address
+    /// comes first after a plug and stays; the IPv4 address follows some 19 s
+    /// later and is not a second plug.
+    static func bridgeAddress(thunderboltIP: String, thunderboltIPv6: String) -> String {
+        thunderboltIPv6.isEmpty ? thunderboltIP : thunderboltIPv6
+    }
+
     static func bridgeChange(from old: String, to new: String, lostAt: Date?, now: Date) -> BridgeChange {
         if old == new { return .none }
         if new.isEmpty { return .lost }
@@ -689,7 +697,9 @@ final class PWESenderModel: ObservableObject {
         guard let id = session?.selectedReceiverID, !id.isEmpty else { return }
         let receiver = service.discoveredReceivers.first { $0.matchesPersistedIdentity(id) }
         let present = receiver != nil
-        let bridgeIP = receiver?.thunderboltIP ?? ""
+        let bridgeIP = receiver.map {
+            PWEReplugRules.bridgeAddress(thunderboltIP: $0.thunderboltIP, thunderboltIPv6: $0.thunderboltIPv6)
+        } ?? ""
         let bridge = PWEReplugRules.bridgeChange(from: preferredBridgeIP, to: bridgeIP, lostAt: bridgeLostAt, now: Date())
         defer {
             preferredWasPresent = present

@@ -1890,14 +1890,24 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         return details
     }
 
+    /// PWE (T34): over the Thunderbolt Bridge, a receiver whose bridge has
+    /// only its IPv6 link-local address yet is dialed there, scoped to this
+    /// Mac's bridge ("fe80::…%bridge0"). The scope picks the interface, so
+    /// this Mac needs no IPv4 address on its bridge either.
+    var pweDialsBridgeIPv6: Bool {
+        transportKind == .thunderboltBridge && TBConnectionDiagnostics.isScopedBridgeIPv6(receiverIP)
+    }
+
+    /// What connect() needs before it dials: a receiver address, and a local
+    /// address unless the dial is a scoped bridge IPv6 one.
+    var pweHasDialAddresses: Bool {
+        !receiverIP.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (pweDialsBridgeIPv6 || !localInterfaceIP.isEmpty)
+    }
+
     func connect() {
-        // PWE (T34): over the Thunderbolt Bridge, a receiver whose bridge has
-        // only its IPv6 link-local address yet is dialed there, scoped to this
-        // Mac's bridge ("fe80::…%bridge0"). The scope picks the interface, so
-        // this Mac needs no IPv4 address on its bridge either.
-        let bridgeIPv6 = transportKind == .thunderboltBridge
-            && TBConnectionDiagnostics.isScopedBridgeIPv6(receiverIP)
-        guard connection == nil, !receiverIP.isEmpty, bridgeIPv6 || !localInterfaceIP.isEmpty else { return }
+        let bridgeIPv6 = pweDialsBridgeIPv6
+        guard connection == nil, !receiverIP.isEmpty, pweHasDialAddresses else { return }
         connectTimeoutWorkItem?.cancel()
         connectTimeoutWorkItem = nil
         recvBuffer.removeAll(keepingCapacity: false)

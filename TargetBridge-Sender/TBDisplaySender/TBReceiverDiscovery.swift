@@ -196,6 +196,7 @@ final class TBReceiverDiscovery: NSObject, ObservableObject {
     private func stop() {
         browser.stop()
         services.values.forEach { service in
+            service.stopMonitoring()
             service.stop()
             service.delegate = nil
         }
@@ -203,8 +204,10 @@ final class TBReceiverDiscovery: NSObject, ObservableObject {
         receivers = []
     }
 
-    private func upsertReceiver(from service: NetService) {
-        guard let txtData = service.txtRecordData() else { return }
+    /// `txtData`: a TXT update the monitor just delivered (PWE), else the
+    /// service's current record.
+    private func upsertReceiver(from service: NetService, txtData updated: Data? = nil) {
+        guard let txtData = updated ?? service.txtRecordData() else { return }
         let txt = NetService.dictionary(fromTXTRecord: txtData)
 
         func stringValue(_ key: String) -> String {
@@ -226,7 +229,7 @@ final class TBReceiverDiscovery: NSObject, ObservableObject {
         let thunderboltIPv6 = advertisedIPv6.isEmpty ? "" : TBConnectionDiagnostics.scopedBridgeIPv6(
             advertised: advertisedIPv6,
             resolved: resolvedIPv6Addresses(from: service),
-            localBridgeInterfaces: TBConnectionDiagnostics.currentBridgeIPv6Interfaces()
+            cableBridges: TBConnectionDiagnostics.currentCableBridgeIPv6Interfaces()
         )
         let preferredIP = !receiverIP.isEmpty
             ? receiverIP
@@ -334,6 +337,8 @@ final class TBReceiverDiscovery: NSObject, ObservableObject {
     }
 
     private func removeService(_ service: NetService) {
+        services[service.name]?.stopMonitoring()
+        service.stopMonitoring()
         services.removeValue(forKey: service.name)
         receivers.removeAll { $0.serviceName == service.name }
     }
@@ -371,12 +376,17 @@ extension TBReceiverDiscovery: NetServiceDelegate {
     func netServiceDidResolveAddress(_ sender: NetService) {
         runOnMain { [weak self] in
             self?.upsertReceiver(from: sender)
+            // PWE: follow TXT updates after the resolve ends (5 s). A receiver
+            // first found with only its bridge's IPv6 address adds its IPv4
+            // addresses some 19 s later (T34); without this the sender never
+            // learns them. Repeated calls are harmless.
+            sender.startMonitoring()
         }
     }
 
     func netService(_ sender: NetService, didUpdateTXTRecord data: Data) {
         runOnMain { [weak self] in
-            self?.upsertReceiver(from: sender)
+            self?.upsertReceiver(from: sender, txtData: data)
         }
     }
 

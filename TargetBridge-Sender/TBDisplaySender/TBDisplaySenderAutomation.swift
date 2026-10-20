@@ -380,9 +380,8 @@ enum TBSenderAutomation {
             return nil
         }
         // PWE (T34): a scoped IPv6 link-local dial over the bridge needs no local IPv4 address.
-        let bridgeIPv6 = session.transportKind == .thunderboltBridge
-            && TBConnectionDiagnostics.isScopedBridgeIPv6(session.receiverIP)
-        guard bridgeIPv6 || !session.localInterfaceIP.isEmpty else {
+        let bridgeIPv6 = session.pweDialsBridgeIPv6
+        guard session.pweHasDialAddresses else {
             NSLog("[automation] no local interface for transport \(session.transportKind.rawValue); aborting connect")
             return nil
         }
