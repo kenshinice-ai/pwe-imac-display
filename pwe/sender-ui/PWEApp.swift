@@ -141,9 +141,10 @@ enum PWESnapshot {
     @MainActor
     static func render(to directory: URL) {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let imac = PWEReceiver(id: "preview", name: "LL-iMac-2017", detail: "5120 × 2880",
+        // Neutral names: these pictures also go on the product page.
+        let imac = PWEReceiver(id: "preview", name: "Studio iMac", detail: "5120 × 2880",
                                supportsHEVC: true, panelWidth: 5120)
-        let other = PWEReceiver(id: "preview-2", name: "Studio iMac", detail: "5120 × 2880")
+        let other = PWEReceiver(id: "preview-2", name: "Office iMac", detail: "5120 × 2880")
         let upstream = PWEReceiver(id: "preview-3", name: "Den", detail: "5120 × 2880", runsPWE: false)
         // Pairing and encryption: (name, phase, the session's security state).
         let pairing: [(String, PWEPhase, PWESecurityState)] = [
@@ -205,8 +206,8 @@ enum PWESnapshot {
             let sharing = PWESenderModel(preview: .connected(imac), inputRole: .macControlsIMac)
             let day = Date(timeIntervalSince1970: 1_792_368_000)   // 2026-10-19
             let paired = PWESenderModel(preview: .connected(imac), paired: [
-                PWEPairedReceiver(id: "a1", name: "LL-iMac-2017", pairedAt: day),
-                PWEPairedReceiver(id: "b2", name: "Studio iMac", pairedAt: day.addingTimeInterval(-86_400 * 3)),
+                PWEPairedReceiver(id: "a1", name: "Studio iMac", pairedAt: day),
+                PWEPairedReceiver(id: "b2", name: "Office iMac", pairedAt: day.addingTimeInterval(-86_400 * 3)),
             ])
             let tabs: [(String, String, AnyView)] = [
                 ("s1-general", strings.general, AnyView(PWEGeneralSettings(model: connected, updates: UpdateCheck(), strings: strings))),
@@ -244,9 +245,22 @@ enum PWESnapshot {
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
+    /// PWE_SNAPSHOT_APPEARANCE=light or dark draws in that appearance whatever the
+    /// Mac uses; unset follows the Mac. Pictures for the product page need one fixed.
+    private static var appearance: NSAppearance? {
+        switch ProcessInfo.processInfo.environment["PWE_SNAPSHOT_APPEARANCE"] {
+        case "light": return NSAppearance(named: .aqua)
+        case "dark": return NSAppearance(named: .darkAqua)
+        default: return nil
+        }
+    }
+
     @MainActor
     private static func write<V: View>(_ view: V, to url: URL) {
-        let host = NSHostingView(rootView: view.fixedSize())
+        // Opaque, like the window it stands for: transparent PNGs lose their text
+        // on a background of the other appearance.
+        let host = NSHostingView(rootView: view.fixedSize().background(Color(nsColor: .windowBackgroundColor)))
+        host.appearance = appearance
         host.frame = NSRect(origin: .zero, size: host.fittingSize)
         write(host, to: url)
     }
@@ -254,6 +268,7 @@ enum PWESnapshot {
     @MainActor
     private static func write(_ view: NSView, to url: URL) {
         let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.appearance = appearance
         window.contentView = view
         view.layoutSubtreeIfNeeded()
         guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
