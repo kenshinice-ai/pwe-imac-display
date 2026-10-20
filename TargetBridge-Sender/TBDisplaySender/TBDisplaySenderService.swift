@@ -1958,6 +1958,14 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: workItem)
     }
 
+    /// PWE: the receiver is listed but has no address this transport can dial
+    /// (a Network Link to a receiver announced on the cable only). Say so instead
+    /// of leaving the last status, which pointed at the cable.
+    func pweReportNoAddress(_ reason: String) {
+        guard connection == nil, !isConnected, !isStreaming else { return }
+        setStatus(.connectionFailed(reason))
+    }
+
     func startCableTest() {
         guard !isCableTesting, !isConnected, !receiverIP.isEmpty else { return }
         isCableTesting = true

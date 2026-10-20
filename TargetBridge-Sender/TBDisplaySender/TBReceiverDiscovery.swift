@@ -104,7 +104,15 @@ struct TBDiscoveredReceiver: Identifiable, Equatable {
             if localInterfaceIP.hasPrefix("169.254."), !usbIP.isEmpty {
                 return usbIP
             }
-            return !networkIP.isEmpty ? networkIP : preferredIP
+            // PWE: never a cable address. A receiver that announces itself on
+            // the cable only (PWE 1.1 unless its network is allowed) sends no
+            // `netIP`, and its `ip` is the Thunderbolt Bridge address: dialing
+            // that from Wi-Fi can only time out (iMac18,3, 2026-10-20). With no
+            // network address there is no Network Link; return nothing and let
+            // the caller say why.
+            let cableAddresses = Set([thunderboltIP, usbIP].filter { !$0.isEmpty })
+            let candidates = [networkIP, ethernetIP, wifiIP, preferredIP] + resolvedIPv4Addresses
+            return candidates.first { !$0.isEmpty && !cableAddresses.contains($0) } ?? ""
         }
     }
 

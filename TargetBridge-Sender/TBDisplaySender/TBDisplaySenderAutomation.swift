@@ -233,7 +233,7 @@ enum TBSenderAutomation {
                 }
                 apply(selected, receiver: discovered, to: session)
             } else {
-                guard hasAddress(discovered, for: session.transportKind) else { return nil }
+                guard hasAddress(discovered, for: session) else { return nil }
                 service.applyDiscoveredReceiver(discovered, to: session)
             }
         } else if let discovered = discoveredReceivers.first(where: { matches(receiver, $0) }) {
@@ -248,7 +248,7 @@ enum TBSenderAutomation {
                 }
                 apply(selected, receiver: discovered, to: session)
             } else {
-                guard hasAddress(discovered, for: session.transportKind) else { return nil }
+                guard hasAddress(discovered, for: session) else { return nil }
                 service.applyDiscoveredReceiver(discovered, to: session)
             }
         } else {
@@ -414,9 +414,19 @@ enum TBSenderAutomation {
 
     /// A receiver seen only with its Wi-Fi or LAN address cannot be dialed over
     /// the Thunderbolt Bridge. Skip this attempt; the retry loop asks again.
-    private static func hasAddress(_ receiver: TBDiscoveredReceiver, for transportKind: TBTransportKind) -> Bool {
+    private static func hasAddress(_ receiver: TBDiscoveredReceiver, for session: TBDisplaySenderSession) -> Bool {
+        let transportKind = session.transportKind
         guard receiver.ip(for: transportKind).isEmpty else { return true }
-        NSLog("[automation] \(receiver.receiverName) has no \(transportKind.rawValue) address yet; waiting for it")
+        if transportKind == .networkLink {
+            // PWE: not a moment's wait as on the bridge: a receiver announced on
+            // the cable only has no network address until its network is allowed.
+            let reason = "\(receiver.receiverName) announces no network address: it accepts the cable only "
+                + "(allow the network on the receiver, preference AllowLocalNetwork). Not dialing its cable address."
+            NSLog("[automation] \(reason)")
+            session.pweReportNoAddress(reason)
+        } else {
+            NSLog("[automation] \(receiver.receiverName) has no \(transportKind.rawValue) address yet; waiting for it")
+        }
         return false
     }
 
