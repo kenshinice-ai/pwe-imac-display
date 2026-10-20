@@ -53,8 +53,8 @@ def json_packet(ptype: int, obj) -> bytes:
     return packet(ptype, json.dumps(obj).encode("utf-8"))
 
 
-def hello_packet(name: str) -> bytes:
-    return json_packet(PKT_HELLO_RECEIVER, {
+def hello_packet(name: str, renderer: str = "") -> bytes:
+    hello = {
         "senderName": name,
         "uiLanguage": "en",
         "capturePreset": "standard1440p",
@@ -62,7 +62,10 @@ def hello_packet(name: str) -> bytes:
         "captureWidth": 1280,
         "captureHeight": 720,
         "codec": "h264",
-    })
+    }
+    if renderer:
+        hello["receiverRenderer"] = renderer   # PWE: the Mac's rendering choice
+    return json_packet(PKT_HELLO_RECEIVER, hello)
 
 
 def drain_receiver(sock: socket.socket, quiet: bool = False) -> None:
@@ -240,7 +243,7 @@ def run(args) -> int:
         time.sleep(0.2)
         drain_receiver(sock)
 
-    sock.sendall(hello_packet(args.name))
+    sock.sendall(hello_packet(args.name, args.renderer))
     print("[mock] sent HELLO")
 
     try:
@@ -303,6 +306,8 @@ def main() -> int:
     ap.add_argument("--fps", type=int, default=30, help="stream/pointer: frame rate")
     ap.add_argument("--size", default="1280x720", help="stream/pointer: frame size, WxH")
     ap.add_argument("--name", default="MockSender")
+    ap.add_argument("--renderer", choices=["", "opengl", "metal"], default="",
+                    help="PWE: receiverRenderer in the HELLO (absent by default, as from upstream)")
     return run(ap.parse_args())
 
 

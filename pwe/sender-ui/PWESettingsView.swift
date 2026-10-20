@@ -261,6 +261,14 @@ struct PWEAdvancedSettings: View {
                         }
                     }
                 }
+                Picker(selection: $model.rendering) {
+                    ForEach(PWERendering.allCases) { rendering in
+                        Text(strings.renderingName(rendering)).tag(rendering)
+                    }
+                } label: {
+                    Text(strings.iMacRendering)
+                    Text(strings.changesReconnect)
+                }
                 Toggle(isOn: $model.largeCursor) {
                     Text(strings.largeCursor)
                     Text(strings.changesReconnect)
@@ -303,7 +311,7 @@ struct PWEAdvancedSettings: View {
             }
         }
         .formStyle(.grouped)
-        .frame(height: 580)
+        .frame(height: 640)
         .onAppear { model.refreshPairedIMacs() }
         .alert(forgetting.map { strings.forgetConfirm($0.name) } ?? "", isPresented: Binding(
             get: { forgetting != nil },

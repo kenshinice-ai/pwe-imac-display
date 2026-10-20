@@ -12,7 +12,9 @@
 #   5-7. renderers   -> Metal zero-copy with the receiver-drawn pointer, then
 #                       the copy fallback and the OpenGL fallback, each in a
 #                       fresh receiver (also skipped without ffmpeg)
-#   8. log file      -> every receiver above also wrote a stamped receiver.log
+#   8. the Mac's choice -> the HELLO's receiverRenderer switches to Metal and
+#                       back to OpenGL (PWE; skipped without ffmpeg)
+#   9. log file      -> every receiver above also wrote a stamped receiver.log
 #
 # The receiver runs with TB_RECEIVER_NO_BONJOUR=1 on TB_RECEIVER_TEST_PORT, so a
 # sender running on the same Mac cannot find or redial it and take its single
@@ -142,9 +144,18 @@ if (( ! NO_STREAM )) && command -v ffmpeg >/dev/null; then
     mock --mode stream --duration 3 || fail "mock stream exited non-zero"
     expect_log "falling back to OpenGL" "renderer fell back to OpenGL"
     expect_log "[disp] texture " "OpenGL rendered decoded video after the fallback"
+
+    phase "Phase 8: the Mac chooses the renderer"
+    relaunch
+    mock --mode stream --duration 3 --renderer metal || fail "mock stream (metal) exited non-zero"
+    expect_log "the Mac asks for Metal: switching the renderer" "receiver switched to Metal for the session"
+    expect_log "Metal zero-copy: first frame" "Metal path took the session's frames"
+    mock --mode stream --duration 3 --renderer opengl || fail "mock stream (opengl) exited non-zero"
+    expect_log "the Mac asks for OpenGL: switching the renderer" "receiver switched back to OpenGL"
+    expect_log "[disp] texture " "OpenGL rendered the next session"
 fi
 
-phase "Phase 8: log file"
+phase "Phase 9: log file"
 RECEIVER_LOG_FILE="$TB_RECEIVER_LOG_DIR/receiver.log"
 if [[ -s "$RECEIVER_LOG_FILE" ]] &&
    grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:.]{12} \[main\] hello from sender$' "$RECEIVER_LOG_FILE" &&

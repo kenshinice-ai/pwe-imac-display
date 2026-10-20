@@ -1272,6 +1272,14 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
 
             tb_set_receiver_mode_requested(a->mode_text, sizeof(a->mode_text), capture_w, capture_h, source, preset, codec);
         }
+        {
+            /* PWE: Settings › Advanced on the Mac, "metal" or "opengl"; absent
+             * from upstream senders. Applied before the first frame. */
+            char renderer[16];
+            renderer[0] = '\0';
+            extract_json_string_field(payload, len, "\"receiverRenderer\"", renderer, sizeof(renderer));
+            tb_disp_use_renderer(a->disp, renderer[0] ? renderer : NULL);
+        }
         a->session_active = 1;
         fprintf(stderr, "[main] hello from sender\n");
         tb_copy_i18n(a->status_text, sizeof(a->status_text), "receiver.status.sender_connected_profile_sent");

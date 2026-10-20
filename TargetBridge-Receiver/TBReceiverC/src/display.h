@@ -45,6 +45,11 @@ enum tb_display_login_item {
 int tb_disp_setting(const char *env_name, const char *defaults_key, char *out, size_t size);
 
 struct tb_display *tb_disp_create(int fullscreen);
+
+/* PWE: the renderer the Mac asked for at the start of a session ("metal" or
+ * "opengl"; NULL = an upstream sender, OpenGL). Rebuilds the renderer when it
+ * differs; a local TBReceiverRenderDriver setting wins. Main thread. */
+void               tb_disp_use_renderer(struct tb_display *d, const char *wish);
 void               tb_disp_destroy(struct tb_display *d);
 void               tb_disp_set_connection_state(struct tb_display *d, int connected);
 void               tb_disp_set_input_capture_active(struct tb_display *d, int active);

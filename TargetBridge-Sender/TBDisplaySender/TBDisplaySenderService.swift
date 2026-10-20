@@ -1528,6 +1528,9 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     // PWE: pairing and encrypted sessions (TBDisplayShared/PWESecureLink.swift).
     private var pweLink: PWESecureLink?
     @Published private(set) var pweSecurity: PWESecurityState = .none
+    /// PWE: the receiver's renderer for the next connection ("opengl" or "metal"),
+    /// sent in the hello; nil leaves it to the receiver. Set by PWESenderModel.
+    var pweReceiverRenderer: String?
     private var pwePendingCode: String?
     private var pweAllowUnencrypted = false
     private var pweIdentityChanged = false
@@ -2317,7 +2320,8 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                 captureSource: captureSource.title(language),
                 captureWidth: preset.width,
                 captureHeight: preset.height,
-                codec: codecName(for: helloCodecType)
+                codec: codecName(for: helloCodecType),
+                receiverRenderer: pweReceiverRenderer
             )
         ) else { return }
         send(packet)

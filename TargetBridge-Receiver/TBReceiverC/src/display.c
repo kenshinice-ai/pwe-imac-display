@@ -1,13 +1,16 @@
 /* display.c — SDL2 window, status screens and the video renderer.
  *
  * Two ways to put video on screen:
+ *   - SDL's renderer (OpenGL): SDL_UpdateNVTexture copies the planes into an
+ *     NV12 texture and the frame is presented on arrival. The default, and
+ *     the fallback when anything on the Metal path fails.
  *   - Metal zero-copy (PWE 1.1, tb_metal_video.m): VideoToolbox's IOSurface
  *     becomes a texture with no copy, and frames are paced to the display
- *     refresh, newest frame first. The default up to macOS 15.
- *   - SDL's renderer (OpenGL): SDL_UpdateNVTexture copies the planes into an
- *     NV12 texture and the frame is presented on arrival. The default on
- *     macOS 26 and later, where upstream saw Metal flicker on Tahoe (03299cb),
- *     and the fallback when anything on the Metal path fails.
+ *     refresh, newest frame first. Less CPU (iMac18,3: 25-40 % less).
+ * The person chooses on the Mac (PWE Settings › Advanced); the sender's hello
+ * carries it as "receiverRenderer" and tb_disp_use_renderer applies it when
+ * the session starts. Upstream senders say nothing: OpenGL.
+ * A local setting wins over the sender, for testing:
  * TB_RECEIVER_RENDER_DRIVER = metal | opengl | metal-sdl (SDL's own Metal
  * renderer with the copying upload, for comparison) | any SDL driver name.
  * TB_RECEIVER_PACING = vsync | immediate applies to the Metal path.
@@ -95,6 +98,7 @@ struct tb_display {
 
     /* Receiver rendering (PWE 1.1): the Metal zero-copy path and its pacing. */
     struct tb_mtl   *mtl;            /* non-NULL = Metal draws the video */
+    int              metal_unusable; /* Metal failed once: OpenGL for the rest of this run */
     struct tb_vsync *vsync;          /* refresh ticks, when paced */
     int              paced;          /* at most one submit per refresh, newest frame wins */
     int              copy_frames;    /* decoder buffers cannot be textured: copy them */
@@ -915,26 +919,28 @@ static void tb_disp_setup_renderer(struct tb_display *d) {
     tb_trace_configure(d->mtl ? "metal-zero-copy" : info.name, d->paced ? "vsync" : "immediate", refresh_ns);
 }
 
-/* Choose and build the renderer. Metal zero-copy unless told otherwise or on
- * macOS 26+; any failure on that path ends on OpenGL. */
-static int tb_disp_create_renderer(struct tb_display *d) {
+/* Choose and build the renderer: a local setting if there is one, else what
+ * the sender asked for (`wish`: "metal" or "opengl"; NULL = OpenGL). Any
+ * failure on the Metal path ends on OpenGL. */
+static int tb_disp_create_renderer(struct tb_display *d, const char *wish) {
     char driver_buf[32];
     const char *driver = driver_buf;
-    if (tb_disp_setting("TB_RECEIVER_RENDER_DRIVER", "TBReceiverRenderDriver", driver_buf, sizeof(driver_buf))) {
+    const int from_setting =
+        tb_disp_setting("TB_RECEIVER_RENDER_DRIVER", "TBReceiverRenderDriver", driver_buf, sizeof(driver_buf));
+    if (from_setting) {
         fprintf(stderr, "[disp] renderer setting = %s\n", driver);
+    } else {
+        snprintf(driver_buf, sizeof(driver_buf), "%s", wish && strcmp(wish, "metal") == 0 ? "metal" : "opengl");
     }
-    int want_metal = 0;
-    if (strcmp(driver, "metal") == 0) {
-        want_metal = 1;
-    } else if (driver[0] == '\0') {
-        want_metal = !tb_mtl_os_defaults_to_opengl();
-        if (!want_metal) fprintf(stderr, "[disp] macOS 26 or later: OpenGL by default (TB_RECEIVER_RENDER_DRIVER=metal to try Metal)\n");
-    }
+    if (strcmp(driver, "metal") == 0 && d->metal_unusable) driver = "opengl";
 
-    if (want_metal) {
+    if (strcmp(driver, "metal") == 0) {
         char pacing[32];
         tb_disp_setting("TB_RECEIVER_PACING", "TBReceiverPacing", pacing, sizeof(pacing));
         const int paced = strcmp(pacing, "immediate") != 0;
+        if (tb_mtl_os_defaults_to_opengl()) {
+            fprintf(stderr, "[disp] macOS 26 or later: upstream saw Metal flicker here (03299cb)\n");
+        }
         d->ren = tb_disp_try_renderer(d->win, "metal");
         char why[256] = "SDL could not create its Metal renderer";
         if (d->ren) d->mtl = tb_mtl_create(SDL_RenderGetMetalLayer(d->ren), paced, why, sizeof(why));
@@ -950,6 +956,7 @@ static int tb_disp_create_renderer(struct tb_display *d) {
             return 0;
         }
         fprintf(stderr, "[disp] Metal zero-copy unavailable (%s); falling back to OpenGL\n", why);
+        d->metal_unusable = 1;
         if (d->ren) SDL_DestroyRenderer(d->ren);
         d->ren = tb_disp_create_accelerated_renderer(d->win, "opengl");
         if (!d->ren) d->ren = tb_disp_create_accelerated_renderer(d->win, NULL);
@@ -958,6 +965,9 @@ static int tb_disp_create_renderer(struct tb_display *d) {
 
     /* "metal-sdl": SDL's own Metal renderer with its copying NV12 upload. */
     if (strcmp(driver, "metal-sdl") == 0) driver = "metal";
+    /* OpenGL that nobody set locally goes SDL's usual way (OpenGL first, then
+     * Metal), as upstream does, rather than as an override. */
+    if (strcmp(driver, "opengl") == 0 && (!from_setting || d->metal_unusable)) driver = NULL;
     d->ren = tb_disp_create_accelerated_renderer(d->win, driver);
     return d->ren ? 0 : -1;
 }
@@ -990,7 +1000,7 @@ struct tb_display *tb_disp_create(int fullscreen) {
      * produces frames. On Intel iMac with Radeon Pro 570 + 5K display, VSYNC
      * at 60Hz combined with GPU→CPU NV12 transfer was stalling the pipeline
      * to ~4 fps. The Metal path has no transfer and paces to the refresh. */
-    if (tb_disp_create_renderer(d) < 0) {
+    if (tb_disp_create_renderer(d, NULL) < 0) {
         fprintf(stderr, "[disp] CreateRenderer: %s\n", SDL_GetError());
         SDL_DestroyWindow(d->win); free(d); return NULL;
     }
@@ -1661,13 +1671,13 @@ static void tb_disp_metal_release_frames(struct tb_display *d) {
     d->current = NULL;
 }
 
-/* Drop the Metal path for the rest of this run and draw with OpenGL. The SDL
- * window is recreated by SDL for the OpenGL context; nothing caches it. */
 static void tb_disp_sdl_show_frame(struct tb_display *d, const struct tb_frame *f);
 
-static void tb_disp_fall_back_to_opengl(struct tb_display *d, const char *why) {
-    fprintf(stderr, "[disp] Metal zero-copy failed (%s); falling back to OpenGL\n", why);
-    /* Keep the newest picture: with a still desktop no new frame may come. */
+/* Tear the renderer down and build it again for `wish` (see
+ * tb_disp_create_renderer). SDL recreates the window for the other kind of
+ * context; nothing here caches it. The newest picture is kept: with a still
+ * desktop no new frame may come. 0, or -1 when no renderer could be made. */
+static int tb_disp_rebuild_renderer(struct tb_display *d, const char *wish) {
     CVPixelBufferRef keep = d->pending ? d->pending : d->current;
     if (keep) CVPixelBufferRetain(keep);
     tb_disp_metal_release_frames(d);
@@ -1676,6 +1686,9 @@ static void tb_disp_fall_back_to_opengl(struct tb_display *d, const char *why) {
     tb_vsync_destroy(d->vsync);
     d->vsync = NULL;
     d->paced = 0;
+    d->copy_frames = 0;
+    d->frame_checked = 0;
+    d->logged_first_metal_frame = 0;
     tb_disp_destroy_status_texture(d);
     if (d->cursor_tex) SDL_DestroyTexture(d->cursor_tex);
     d->cursor_tex = NULL;
@@ -1684,25 +1697,54 @@ static void tb_disp_fall_back_to_opengl(struct tb_display *d, const char *why) {
     d->tex_w = d->tex_h = 0;
     d->last_drawable_w = d->last_drawable_h = 0;
     SDL_DestroyRenderer(d->ren);
-    d->ren = tb_disp_try_renderer(d->win, "opengl");
-    if (!d->ren) d->ren = tb_disp_try_renderer(d->win, NULL);
-    if (!d->ren) {
-        fprintf(stderr, "[disp] no renderer after the fallback; quitting\n");
+    d->ren = NULL;
+    if (tb_disp_create_renderer(d, wish) < 0 || !d->ren) {
+        fprintf(stderr, "[disp] no renderer after the change; quitting\n");
         if (keep) CVPixelBufferRelease(keep);
         d->quit = 1;
-        return;
+        return -1;
     }
     tb_disp_setup_renderer(d);
     tb_disp_refresh_window_mode(d);
+    if (d->mtl && d->is_connected && d->vsync) {
+        tb_vsync_set_display(d->vsync, tb_mtl_display_id(d->mtl));
+        tb_vsync_start(d->vsync);
+    }
     if (keep) {
         struct tb_frame f = {
             .width = (int)CVPixelBufferGetWidth(keep),
             .height = (int)CVPixelBufferGetHeight(keep),
             .pixel_buffer = keep,
         };
-        if (d->is_connected) tb_disp_sdl_show_frame(d, &f);
+        if (d->is_connected) tb_disp_show_frame(d, &f);
         CVPixelBufferRelease(keep);
     }
+    return 0;
+}
+
+/* Drop the Metal path for the rest of this run and draw with OpenGL. */
+static void tb_disp_fall_back_to_opengl(struct tb_display *d, const char *why) {
+    fprintf(stderr, "[disp] Metal zero-copy failed (%s); falling back to OpenGL\n", why);
+    d->metal_unusable = 1;
+    (void)tb_disp_rebuild_renderer(d, "opengl");
+}
+
+void tb_disp_use_renderer(struct tb_display *d, const char *wish) {
+    if (!d) return;
+    const int want_metal = wish && strcmp(wish, "metal") == 0;
+    char setting[32];
+    if (tb_disp_setting("TB_RECEIVER_RENDER_DRIVER", "TBReceiverRenderDriver", setting, sizeof(setting))) {
+        fprintf(stderr, "[disp] the Mac asks for %s; the local renderer setting (%s) stays\n",
+                want_metal ? "Metal" : "OpenGL", setting);
+        return;
+    }
+    if (want_metal && d->metal_unusable) {
+        fprintf(stderr, "[disp] the Mac asks for Metal; it failed earlier in this run, so OpenGL stays\n");
+        return;
+    }
+    if (want_metal == (d->mtl != NULL)) return;
+    fprintf(stderr, "[disp] the Mac asks for %s: switching the renderer\n", want_metal ? "Metal" : "OpenGL");
+    (void)tb_disp_rebuild_renderer(d, want_metal ? "metal" : "opengl");
 }
 
 /* The vector pointer, rasterised once per shape and size with SDL's software
