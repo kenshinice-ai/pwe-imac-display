@@ -94,12 +94,15 @@ int          tb_disp_pop_input_event(struct tb_display *d, struct tb_input_event
 int  tb_disp_get_info(struct tb_display *d, struct tb_display_info *info);
 
 /* PWE pairing: a notice on the calm idle screen (the pairing code, a short
- * message, a warning); a warning also shows on the connecting screen. */
+ * message, a warning, an error); a warning or an error also shows on the
+ * connecting screen. A warning needs the person's attention (not encrypted);
+ * an error says something failed (a refused computer, an unreadable keychain). */
 enum tb_display_notice {
     TB_DISP_NOTICE_NONE = 0,
-    TB_DISP_NOTICE_PAIRING_CODE,   /* line1 large: the code; line2, line3: what to do */
+    TB_DISP_NOTICE_PAIRING_CODE,   /* line1 large: the code digits; line2, line3: what to do */
     TB_DISP_NOTICE_INFO,
-    TB_DISP_NOTICE_WARNING
+    TB_DISP_NOTICE_WARNING,
+    TB_DISP_NOTICE_ERROR
 };
 void tb_disp_set_notice(struct tb_display *d, enum tb_display_notice kind,
                         const char *line1, const char *line2, const char *line3);

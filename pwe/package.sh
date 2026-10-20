@@ -157,6 +157,8 @@ lipo -create "$WORK/tbreceiver-arm64" "$WORK/tbreceiver-x86_64" \
   -output "$RECEIVER/Contents/MacOS/PWEiMacDisplayReceiver"
 cp "$SRC/TargetBridge-Shared/Languages/"*.json "$RECEIVER/Contents/Resources/Languages/"
 iconutil -c icns "$SRC/pwe/assets/AppIcon.iconset" -o "$RECEIVER/Contents/Resources/AppIcon.icns"
+# The paper wing on the receiver's screens (display.c, tb_disp_draw_wing).
+cp "$SRC/pwe/brand/receiver/receiver-wing.pdf" "$RECEIVER/Contents/Resources/"
 cat > "$RECEIVER/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -226,6 +228,8 @@ for ARCH in arm64 x86_64; do
   MIN="$(vtool -arch $ARCH -show-build "$SENDER/Contents/MacOS/$NAME" | awk '/minos/ {print $2}')"
   [[ "$MIN" == 14.0 ]] || { echo "✗ sender $ARCH needs macOS $MIN, not the 14.0 the docs promise"; exit 1; }
 done
+# Without the wing the receiver falls back to the app icon: it works, but it is not the design.
+[[ -s "$RECEIVER/Contents/Resources/receiver-wing.pdf" ]] || { echo "✗ the receiver has no receiver-wing.pdf"; exit 1; }
 # Weak imports for older systems, and the old URL scheme hidden in code.
 python3 -I "$SRC/pwe/check-bundle.py" "$SENDER" "$RECEIVER"
 

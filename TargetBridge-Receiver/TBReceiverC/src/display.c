@@ -37,6 +37,7 @@
 #include <SDL.h>
 #include <dlfcn.h>
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -254,12 +255,82 @@ static void tb_disp_destroy_status_texture(struct tb_display *d) {
     }
 }
 
+/* A font by name. Upstream's screens name PostScript fonts (Helvetica, Menlo,
+ * PingFang). PWE's screens use the system font through three tokens:
+ *   ".system"           the system UI font, regular
+ *   ".system-semibold"  the same, semibold
+ *   "...-digits"        either of them with monospaced figures (codes, addresses,
+ *                       version numbers), e.g. ".system-semibold-digits"
+ * Chinese falls back to PingFang through the system font's cascade list. The
+ * receiver's own language is passed so Han text takes the Simplified Chinese
+ * face even when the iMac's system language is not Chinese (L switches it).
+ * CTFontCreateUIFontForLanguage and the weight trait both exist on macOS 11. */
+static CTFontRef tb_disp_create_font(const char *font_name, CGFloat font_size) {
+    if (!font_name) return NULL;
+    if (strncmp(font_name, ".system", 7) != 0) {
+        CFStringRef cf_font_name = CFStringCreateWithCString(NULL, font_name, kCFStringEncodingUTF8);
+        if (!cf_font_name) return NULL;
+        CTFontRef font = CTFontCreateWithName(cf_font_name, font_size, NULL);
+        CFRelease(cf_font_name);
+        return font;
+    }
+
+    const char *language = tb_i18n_current_language();
+    CTFontRef base = CTFontCreateUIFontForLanguage(
+        kCTFontUIFontSystem, font_size,
+        language && strncmp(language, "zh", 2) == 0 ? CFSTR("zh-Hans") : NULL);
+    if (!base) return NULL;
+    const int semibold = strstr(font_name, "-semibold") != NULL;
+    const int digits = strstr(font_name, "-digits") != NULL;
+    if (!semibold && !digits) return base;
+
+    CFMutableDictionaryRef attrs = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks,
+                                                             &kCFTypeDictionaryValueCallBacks);
+    if (!attrs) return base;
+    if (semibold) {
+        const CGFloat weight = 0.3;   /* NSFontWeightSemibold */
+        CFNumberRef weight_ref = CFNumberCreate(NULL, kCFNumberCGFloatType, &weight);
+        const void *keys[] = { kCTFontWeightTrait };
+        const void *values[] = { weight_ref };
+        CFDictionaryRef traits = CFDictionaryCreate(NULL, keys, values, 1, &kCFTypeDictionaryKeyCallBacks,
+                                                    &kCFTypeDictionaryValueCallBacks);
+        if (traits) {
+            CFDictionarySetValue(attrs, kCTFontTraitsAttribute, traits);
+            CFRelease(traits);
+        }
+        if (weight_ref) CFRelease(weight_ref);
+    }
+    if (digits) {
+        const int type = kNumberSpacingType, selector = kMonospacedNumbersSelector;
+        CFNumberRef type_ref = CFNumberCreate(NULL, kCFNumberIntType, &type);
+        CFNumberRef selector_ref = CFNumberCreate(NULL, kCFNumberIntType, &selector);
+        const void *keys[] = { kCTFontFeatureTypeIdentifierKey, kCTFontFeatureSelectorIdentifierKey };
+        const void *values[] = { type_ref, selector_ref };
+        CFDictionaryRef setting = CFDictionaryCreate(NULL, keys, values, 2, &kCFTypeDictionaryKeyCallBacks,
+                                                     &kCFTypeDictionaryValueCallBacks);
+        CFArrayRef settings = setting ? CFArrayCreate(NULL, (const void **)&setting, 1, &kCFTypeArrayCallBacks) : NULL;
+        if (settings) {
+            CFDictionarySetValue(attrs, kCTFontFeatureSettingsAttribute, settings);
+            CFRelease(settings);
+        }
+        if (setting) CFRelease(setting);
+        if (selector_ref) CFRelease(selector_ref);
+        if (type_ref) CFRelease(type_ref);
+    }
+    CTFontDescriptorRef descriptor = CTFontDescriptorCreateWithAttributes(attrs);
+    CFRelease(attrs);
+    CTFontRef font = descriptor ? CTFontCreateCopyWithAttributes(base, font_size, NULL, descriptor) : NULL;
+    if (descriptor) CFRelease(descriptor);
+    if (!font) return base;
+    CFRelease(base);
+    return font;
+}
+
 /* Typographic width of `text` in the given font, for centring. */
 static CGFloat tb_disp_text_width(const char *text, const char *font_name, CGFloat font_size) {
     if (!text || !*text) return 0;
     CFStringRef cf_text = CFStringCreateWithCString(NULL, text, kCFStringEncodingUTF8);
-    CFStringRef cf_font_name = CFStringCreateWithCString(NULL, font_name, kCFStringEncodingUTF8);
-    CTFontRef font = cf_font_name ? CTFontCreateWithName(cf_font_name, font_size, NULL) : NULL;
+    CTFontRef font = tb_disp_create_font(font_name, font_size);
     CGFloat width = 0;
     if (cf_text && font) {
         const void *keys[] = { kCTFontAttributeName };
@@ -275,39 +346,32 @@ static CGFloat tb_disp_text_width(const char *text, const char *font_name, CGFlo
         if (attrs) CFRelease(attrs);
     }
     if (font) CFRelease(font);
-    if (cf_font_name) CFRelease(cf_font_name);
     if (cf_text) CFRelease(cf_text);
     return width;
 }
 
-static void tb_disp_draw_text(CGContextRef ctx,
-                              const char *text,
-                              const char *font_name,
-                              CGFloat font_size,
-                              CGFloat x,
-                              CGFloat y,
-                              CGFloat r,
-                              CGFloat g,
-                              CGFloat b) {
+static void tb_disp_draw_text_rgba(CGContextRef ctx,
+                                   const char *text,
+                                   const char *font_name,
+                                   CGFloat font_size,
+                                   CGFloat x,
+                                   CGFloat y,
+                                   CGFloat r,
+                                   CGFloat g,
+                                   CGFloat b,
+                                   CGFloat a) {
     if (!text || !*text) return;
 
     CFStringRef cf_text = CFStringCreateWithCString(NULL, text, kCFStringEncodingUTF8);
     if (!cf_text) return;
 
-    CFStringRef cf_font_name = CFStringCreateWithCString(NULL, font_name, kCFStringEncodingUTF8);
-    if (!cf_font_name) {
-        CFRelease(cf_text);
-        return;
-    }
-
-    CTFontRef font = CTFontCreateWithName(cf_font_name, font_size, NULL);
-    CFRelease(cf_font_name);
+    CTFontRef font = tb_disp_create_font(font_name, font_size);
     if (!font) {
         CFRelease(cf_text);
         return;
     }
 
-    CGFloat components[4] = { r, g, b, 1.0 };
+    CGFloat components[4] = { r, g, b, a };
     CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
     CGColorRef color = CGColorCreate(color_space, components);
     CGColorSpaceRelease(color_space);
@@ -349,6 +413,11 @@ static void tb_disp_draw_text(CGContextRef ctx,
     CGColorRelease(color);
     CFRelease(font);
     CFRelease(cf_text);
+}
+
+static void tb_disp_draw_text(CGContextRef ctx, const char *text, const char *font_name, CGFloat font_size,
+                              CGFloat x, CGFloat y, CGFloat r, CGFloat g, CGFloat b) {
+    tb_disp_draw_text_rgba(ctx, text, font_name, font_size, x, y, r, g, b, 1.0);
 }
 
 /* Draw `text` centred on `center_x`, so any language and any product name fit. */
@@ -455,6 +524,46 @@ static void tb_disp_draw_app_icon(CGContextRef ctx, CGFloat x, CGFloat y, CGFloa
 
 static void tb_disp_draw_connecting_spinner(struct tb_display *d, int drawable_w, int drawable_h) {
     if (!d || !d->ren) return;
+#if TB_RECEIVER_COMPACT_IDLE
+    /* PWE (BRAND §2.6): twelve paper spokes at up to 40 % (label-3), centred
+     * C + 100 u, outer radius 14 u. Each spoke is a quad, not a 1-pixel line, so
+     * it keeps its weight on a 5K panel. */
+    {
+        const float u = (float)(drawable_w < drawable_h ? drawable_w : drawable_h) / 720.0f;
+        const float cx = (float)drawable_w / 2.0f;
+        const float cy = (float)drawable_h / 2.0f + 100.0f * u;
+        const float r_out = 14.0f * u, r_in = 7.0f * u, half_w = 1.1f * u;
+        const int phase = (int)((SDL_GetTicks() / 83u) % 12u);
+        SDL_Vertex verts[48];
+        int indices[72];
+        for (int i = 0; i < 12; i++) {
+            const float angle = (float)i * 0.5235988f;   /* 30 degrees */
+            const float dx = sinf(angle), dy = -cosf(angle);   /* spoke 0 points up */
+            const float px = -dy * half_w, py = dx * half_w;
+            const int age = (i - phase + 12) % 12;
+            const Uint8 alpha = (Uint8)(102.0f * (0.25f + 0.75f * (float)(11 - age) / 11.0f));
+            const float ends[2][2] = { { cx + dx * r_in, cy + dy * r_in }, { cx + dx * r_out, cy + dy * r_out } };
+            for (int k = 0; k < 4; k++) {
+                SDL_Vertex *v = &verts[i * 4 + k];
+                const float sign = (k & 1) ? -1.0f : 1.0f;
+                v->position.x = ends[k >> 1][0] + px * sign;
+                v->position.y = ends[k >> 1][1] + py * sign;
+                v->color = (SDL_Color){ 247, 245, 242, alpha };
+                v->tex_coord.x = 0.0f;
+                v->tex_coord.y = 0.0f;
+            }
+            const int base = i * 4;
+            const int quad[6] = { base, base + 1, base + 2, base + 2, base + 1, base + 3 };
+            memcpy(&indices[i * 6], quad, sizeof(quad));
+        }
+        SDL_BlendMode old_blend = SDL_BLENDMODE_NONE;
+        SDL_GetRenderDrawBlendMode(d->ren, &old_blend);
+        SDL_SetRenderDrawBlendMode(d->ren, SDL_BLENDMODE_BLEND);
+        SDL_RenderGeometry(d->ren, NULL, verts, 48, indices, 72);
+        SDL_SetRenderDrawBlendMode(d->ren, old_blend);
+        return;
+    }
+#endif
 
     static const int vectors[12][2] = {
         { 0, -100 }, { 50, -87 }, { 87, -50 }, { 100, 0 },
@@ -484,13 +593,138 @@ static void tb_disp_draw_connecting_spinner(struct tb_display *d, int drawable_w
     SDL_SetRenderDrawBlendMode(d->ren, old_blend);
 }
 
-/* The details screen of the PWE build (COMPACT_IDLE or OFFER_LOGIN_ITEM). It is
- * the upstream details layout, kept in the else branch below untouched, with
- * three changes: it is measured in units of min_side / 720 like the compact
- * screen, so it fits a 980x620 window on a non-Retina iMac and is not half size
- * on a Retina one; its rows are tighter so the help lines clear the cards; and
- * opening at login has its own cell, with a line on how to go back. The canvas
- * has a top-left origin: y grows down. */
+/* ---- PWE's screens (COMPACT_IDLE / OFFER_LOGIN_ITEM builds) ---------------
+ * docs/pwe/BRAND-iMac-Display-2026-10-20.md §2.2, §2.3, §2.6. Colours are the
+ * dark-appearance tokens of 01 BRAND ASSETS/tokens/armature.json; there is no
+ * green, no card behind the waiting screens and no capitals for emphasis.
+ * Lengths are in u = short side / 720 (2560x1440 points: 1 u = 2 pt). The
+ * canvas has a top-left origin: y grows down. */
+struct tb_pwe_colour { CGFloat r, g, b, a; };
+static const struct tb_pwe_colour TB_PWE_NIGHT   = { 14 / 255.0, 23 / 255.0, 41 / 255.0, 1.0 };    /* night   #0E1729 */
+static const struct tb_pwe_colour TB_PWE_NIGHT_2 = { 22 / 255.0, 35 / 255.0, 61 / 255.0, 1.0 };    /* night-2 #16233D */
+static const struct tb_pwe_colour TB_PWE_LABEL   = { 247 / 255.0, 245 / 255.0, 242 / 255.0, 1.0 }; /* label   #F7F5F2 */
+static const struct tb_pwe_colour TB_PWE_LABEL_2 = { 247 / 255.0, 245 / 255.0, 242 / 255.0, 0.66 };
+static const struct tb_pwe_colour TB_PWE_LINE    = { 247 / 255.0, 245 / 255.0, 242 / 255.0, 0.12 };
+static const struct tb_pwe_colour TB_PWE_SIGNAL  = { 245 / 255.0, 179 / 255.0, 53 / 255.0, 1.0 };  /* signal  #F5B335 */
+static const struct tb_pwe_colour TB_PWE_ALERT   = { 232 / 255.0, 101 / 255.0, 78 / 255.0, 1.0 };  /* alert   #E8654E */
+
+static void tb_pwe_text(CGContextRef ctx, const char *text, const char *font, CGFloat size,
+                        CGFloat x, CGFloat y, struct tb_pwe_colour c) {
+    tb_disp_draw_text_rgba(ctx, text, font, size, x, y, c.r, c.g, c.b, c.a);
+}
+
+static void tb_pwe_text_centered(CGContextRef ctx, const char *text, const char *font, CGFloat size,
+                                 CGFloat center_x, CGFloat y, struct tb_pwe_colour c) {
+    tb_pwe_text(ctx, text, font, size, center_x - tb_disp_text_width(text, font, size) / 2.0, y, c);
+}
+
+static void tb_pwe_text_right(CGContextRef ctx, const char *text, const char *font, CGFloat size,
+                              CGFloat right_x, CGFloat y, struct tb_pwe_colour c) {
+    tb_pwe_text(ctx, text, font, size, right_x - tb_disp_text_width(text, font, size), y, c);
+}
+
+static void tb_pwe_fill(CGContextRef ctx, CGFloat x, CGFloat y, CGFloat w, CGFloat h, CGFloat radius,
+                        struct tb_pwe_colour c) {
+    if (radius > 0) tb_disp_fill_rounded_rect(ctx, x, y, w, h, radius, c.r, c.g, c.b, c.a);
+    else tb_disp_fill_rect(ctx, x, y, w, h, c.r, c.g, c.b, c.a);
+}
+
+/* The paper wing (pwe/brand/receiver/receiver-wing.pdf: pwe/brand/make.py draws
+ * it from the brand's wing geometry; pwe/package.sh puts it in Resources), its
+ * first page `width` wide, top edge at `top`, centred on `center_x`. Returns 0
+ * when there is no wing to draw: a bare binary has no bundle, unless it was
+ * built with TB_RECEIVER_WING_DEV_PATH (offscreen renders). */
+static int tb_disp_draw_wing(CGContextRef ctx, CGFloat center_x, CGFloat top, CGFloat width) {
+    CFURLRef url = NULL;
+    CFBundleRef bundle = CFBundleGetMainBundle();
+    if (bundle) url = CFBundleCopyResourceURL(bundle, CFSTR("receiver-wing"), CFSTR("pdf"), NULL);
+#ifdef TB_RECEIVER_WING_DEV_PATH
+    if (!url) {
+        url = CFURLCreateFromFileSystemRepresentation(NULL, (const UInt8 *)TB_RECEIVER_WING_DEV_PATH,
+                                                      (CFIndex)strlen(TB_RECEIVER_WING_DEV_PATH), false);
+    }
+#endif
+    if (!url) return 0;
+    CGPDFDocumentRef pdf = CGPDFDocumentCreateWithURL(url);
+    CFRelease(url);
+    if (!pdf) return 0;
+    int drawn = 0;
+    CGPDFPageRef page = CGPDFDocumentGetPage(pdf, 1);
+    const CGRect box = page ? CGPDFPageGetBoxRect(page, kCGPDFMediaBox) : CGRectZero;
+    if (box.size.width > 0 && box.size.height > 0) {
+        const CGFloat scale = width / box.size.width;
+        CGContextSaveGState(ctx);
+        /* PDF pages are bottom-up; the canvas is top-down. */
+        CGContextTranslateCTM(ctx, center_x - width / 2.0, top + box.size.height * scale);
+        CGContextScaleCTM(ctx, scale, -scale);
+        CGContextTranslateCTM(ctx, -box.origin.x, -box.origin.y);
+        CGContextDrawPDFPage(ctx, page);
+        CGContextRestoreGState(ctx);
+        drawn = 1;
+    }
+    CGPDFDocumentRelease(pdf);
+    return drawn;
+}
+
+/* The waiting screens, idle, pairing code and connecting, are one layout: the
+ * wing and the name never move and only the lines under them change, so a new
+ * state does not make the screen jump. C is the vertical centre. The connecting
+ * spinner (C + 100 u) is drawn on top by tb_disp_draw_connecting_spinner. */
+static void tb_disp_draw_waiting_screen(CGContextRef ctx, const struct tb_display *d,
+                                        int drawable_w, int drawable_h, int connecting) {
+    const CGFloat W = (CGFloat)drawable_w;
+    const CGFloat H = (CGFloat)drawable_h;
+    const CGFloat u = (W < H ? W : H) / 720.0;
+    const CGFloat cx = W / 2.0;
+    const CGFloat C = H / 2.0;
+    const int kind = d->pwe_notice_kind;
+
+    tb_pwe_fill(ctx, 0, 0, W, H, 0, TB_PWE_NIGHT);
+    if (!tb_disp_draw_wing(ctx, cx, C - 190.0 * u, 144.0 * u)) {
+        tb_disp_draw_app_icon(ctx, cx - 44.5 * u, C - 190.0 * u, 89.0 * u);
+    }
+    tb_pwe_text_centered(ctx, tb_i18n_get("common.app_name"), ".system-semibold", 28.0 * u, cx, C - 24.0 * u,
+                         TB_PWE_LABEL);
+
+    if (connecting) {
+        tb_pwe_text_centered(ctx, tb_i18n_get("receiver.splash.connecting"), ".system", 22.0 * u,
+                             cx, C + 26.0 * u, TB_PWE_LABEL);
+        tb_pwe_text_centered(ctx, tb_i18n_get("receiver.splash.waiting_first_frame"), ".system", 15.0 * u,
+                             cx, C + 56.0 * u, TB_PWE_LABEL_2);
+    } else if (kind == TB_DISP_NOTICE_PAIRING_CODE) {
+        tb_pwe_text_centered(ctx, d->pwe_notice[0], ".system-semibold-digits", 34.0 * u,
+                             cx, C + 26.0 * u, TB_PWE_LABEL);
+        tb_pwe_text_centered(ctx, d->pwe_notice[1], ".system", 17.0 * u, cx, C + 70.0 * u, TB_PWE_LABEL);
+        tb_pwe_text_centered(ctx, d->pwe_notice[2], ".system", 15.0 * u, cx, C + 94.0 * u, TB_PWE_LABEL_2);
+    } else if (kind == TB_DISP_NOTICE_INFO) {
+        tb_pwe_text_centered(ctx, d->pwe_notice[0], ".system", 22.0 * u, cx, C + 26.0 * u, TB_PWE_LABEL);
+        tb_pwe_text_centered(ctx, d->pwe_notice[1], ".system", 15.0 * u, cx, C + 56.0 * u, TB_PWE_LABEL_2);
+    } else {
+        tb_pwe_text_centered(ctx, tb_i18n_get("receiver.ui.compact_waiting"), ".system", 22.0 * u,
+                             cx, C + 26.0 * u, TB_PWE_LABEL);
+        tb_pwe_text_centered(ctx, tb_i18n_get("receiver.ui.compact_hint"), ".system", 15.0 * u,
+                             cx, C + 56.0 * u, TB_PWE_LABEL_2);
+    }
+    /* What needs the person (amber) or what failed (red), below everything else. */
+    if (kind == TB_DISP_NOTICE_WARNING || kind == TB_DISP_NOTICE_ERROR) {
+        tb_pwe_text_centered(ctx, d->pwe_notice[0], ".system", 15.0 * u, cx, C + 130.0 * u,
+                             kind == TB_DISP_NOTICE_ERROR ? TB_PWE_ALERT : TB_PWE_SIGNAL);
+        tb_pwe_text_centered(ctx, d->pwe_notice[1], ".system", 15.0 * u, cx, C + 154.0 * u, TB_PWE_LABEL_2);
+    }
+
+    /* The address is on the details screen. I opens it only while idle, so the
+     * connecting screen shows the version alone. */
+    char footer[160];
+    if (connecting) snprintf(footer, sizeof(footer), "%s", TB_RECEIVER_VERSION);
+    else snprintf(footer, sizeof(footer), "%s · %s", TB_RECEIVER_VERSION, tb_i18n_get("receiver.ui.compact_details"));
+    tb_pwe_text_centered(ctx, footer, ".system-digits", 12.0 * u, cx, H - 34.0 * u, TB_PWE_LABEL_2);
+}
+
+/* The details screen of the PWE build (COMPACT_IDLE or OFFER_LOGIN_ITEM): the
+ * same facts as upstream's details layout (kept in the else branch of
+ * tb_disp_rebuild_status_texture, untouched), on PWE's night ground, measured
+ * in u so it fits a 980x620 window on a non-Retina iMac and is not half size on
+ * a Retina one. Opening at login has its own card. */
 static void tb_disp_draw_details_scaled(CGContextRef ctx,
                                         const struct tb_display *d,
                                         const char *ip,
@@ -501,98 +735,94 @@ static void tb_disp_draw_details_scaled(CGContextRef ctx,
                                         const char *language,
                                         const char *permissions,
                                         int drawable_w,
-                                        int drawable_h,
-                                        int zh) {
-    const char *title_font = zh ? "PingFangSC-Semibold" : "Helvetica-Bold";
-    const char *body_font = zh ? "PingFangSC-Regular" : "Helvetica";
-    const char *section_font = zh ? "PingFangSC-Semibold" : "Helvetica-Bold";
-    const char *mono_font = "Menlo";
-    const char *mono_bold_font = "Menlo-Bold";
+                                        int drawable_h) {
+    const char *title_font = ".system-semibold";
+    const char *body_font = ".system";
+    const char *label_font = ".system-semibold";
+    const char *digits_font = ".system-digits";
 
     const CGFloat W = (CGFloat)drawable_w;
     const CGFloat H = (CGFloat)drawable_h;
     const CGFloat s = (W < H ? W : H) / 720.0;
+    /* One device pixel at least, so the rule survives a 980x620 window. */
+    const CGFloat hairline = s < 1.0 ? 1.0 : s;
 
-    tb_disp_fill_rect(ctx, 0, 0, W, H, 0.06, 0.07, 0.09, 1.0);
-    tb_disp_fill_rect(ctx, 48 * s, 52 * s, W - 96 * s, H - 104 * s, 0.11, 0.12, 0.15, 1.0);
-    tb_disp_fill_rect(ctx, 48 * s, 128 * s, W - 96 * s, 2 * s, 0.22, 0.24, 0.29, 1.0);
+    tb_pwe_fill(ctx, 0, 0, W, H, 0, TB_PWE_NIGHT);
 
     const CGFloat outer_x = 72 * s;
     const CGFloat outer_w = W - 144 * s;
     const CGFloat outer_right = outer_x + outer_w;
-    const CGFloat card_gap = 28 * s;
-    const CGFloat card_w = (outer_w - card_gap) / 2.0;
+    const CGFloat gap = 16 * s;
+    const CGFloat card_w = (outer_w - gap) / 2.0;
     const CGFloat pad = 20 * s;
-    const CGFloat right_x = outer_x + card_w + card_gap + pad;
+    const CGFloat right_x = outer_x + card_w + gap;
+    const CGFloat radius = 13 * s;
 
-    tb_disp_draw_text(ctx, tb_i18n_get("receiver.ui.title"), title_font, 28 * s, outer_x, 84 * s, 0.95, 0.97, 1.0);
-    tb_disp_draw_text(ctx, tb_i18n_get("receiver.ui.subtitle"), body_font, 17 * s, outer_x, 110 * s, 0.72, 0.76, 0.84);
-    tb_disp_draw_text(ctx, TB_RECEIVER_VERSION, mono_bold_font, 17 * s,
-                      outer_right - tb_disp_text_width(TB_RECEIVER_VERSION, mono_bold_font, 17 * s), 82 * s,
-                      0.64, 0.69, 0.78);
-    tb_disp_draw_text(ctx, TB_RECEIVER_BUILD, mono_font, 13 * s,
-                      outer_right - tb_disp_text_width(TB_RECEIVER_BUILD, mono_font, 13 * s), 108 * s,
-                      0.53, 0.57, 0.66);
+    tb_pwe_text(ctx, tb_i18n_get("receiver.ui.title"), title_font, 28 * s, outer_x, 84 * s, TB_PWE_LABEL);
+    tb_pwe_text(ctx, tb_i18n_get("receiver.ui.subtitle"), body_font, 15 * s, outer_x, 108 * s, TB_PWE_LABEL_2);
+    tb_pwe_text_right(ctx, TB_RECEIVER_VERSION, digits_font, 15 * s, outer_right, 82 * s, TB_PWE_LABEL_2);
+    tb_pwe_text_right(ctx, TB_RECEIVER_BUILD, digits_font, 12 * s, outer_right, 104 * s, TB_PWE_LABEL_2);
+    tb_pwe_fill(ctx, outer_x, 128 * s, outer_w, hairline, 0, TB_PWE_LINE);
 
-    tb_disp_draw_text(ctx, tb_i18n_get("receiver.ui.ip_thunderbolt_bridge"), section_font, 15 * s, outer_x, 160 * s, 0.54, 0.62, 0.76);
-    tb_disp_draw_text(ctx, ip, mono_bold_font, 34 * s, outer_x, 196 * s, 0.43, 0.93, 0.60);
+    tb_pwe_text(ctx, tb_i18n_get("receiver.ui.ip_thunderbolt_bridge"), label_font, 13 * s, outer_x, 160 * s,
+                TB_PWE_LABEL_2);
+    tb_pwe_text(ctx, ip, ".system-semibold-digits", 28 * s, outer_x, 194 * s, TB_PWE_LABEL);
 
-    /* Two cards of two label/value rows each; the second card is full width. */
-    const CGFloat row_label_1 = 30 * s, row_value_1 = 60 * s;
-    const CGFloat row_label_2 = 96 * s, row_value_2 = 126 * s;
-    const CGFloat card_h = 146 * s;
+    /* Two rows of cards, two label/value pairs in each card. */
+    const CGFloat label_1 = 30 * s, value_1 = 58 * s, label_2 = 88 * s, value_2 = 116 * s;
+    const CGFloat card_h = 136 * s;
+    const CGFloat row_1 = 216 * s;
+    const CGFloat row_2 = row_1 + card_h + gap;
+    const int login_card = d->login_item_state != TB_DISP_LOGIN_ITEM_HIDDEN;
 
-    const CGFloat info_top = 216 * s;
-    tb_disp_fill_rect(ctx, outer_x, info_top, card_w, card_h, 0.14, 0.15, 0.19, 1.0);
-    tb_disp_fill_rect(ctx, outer_x + card_w + card_gap, info_top, card_w, card_h, 0.14, 0.15, 0.19, 1.0);
+    tb_pwe_fill(ctx, outer_x, row_1, card_w, card_h, radius, TB_PWE_NIGHT_2);
+    tb_pwe_fill(ctx, right_x, row_1, card_w, card_h, radius, TB_PWE_NIGHT_2);
+    tb_pwe_fill(ctx, outer_x, row_2, login_card ? card_w : outer_w, card_h, radius, TB_PWE_NIGHT_2);
+    if (login_card) tb_pwe_fill(ctx, right_x, row_2, card_w, card_h, radius, TB_PWE_NIGHT_2);
 
-    tb_disp_draw_text(ctx, tb_i18n_get("receiver.ui.status"), section_font, 15 * s, outer_x + pad, info_top + row_label_1, 0.54, 0.62, 0.76);
-    tb_disp_draw_text(ctx, status, body_font, 22 * s, outer_x + pad, info_top + row_value_1, 0.94, 0.96, 0.99);
-    tb_disp_draw_text(ctx, tb_i18n_get("receiver.ui.sender"), section_font, 14 * s, outer_x + pad, info_top + row_label_2, 0.54, 0.62, 0.76);
-    tb_disp_draw_text(ctx, sender, body_font, 20 * s, outer_x + pad, info_top + row_value_2, 0.94, 0.96, 0.99);
+    tb_pwe_text(ctx, tb_i18n_get("receiver.ui.status"), label_font, 13 * s, outer_x + pad, row_1 + label_1, TB_PWE_LABEL_2);
+    tb_pwe_text(ctx, status, body_font, 20 * s, outer_x + pad, row_1 + value_1, TB_PWE_LABEL);
+    tb_pwe_text(ctx, tb_i18n_get("receiver.ui.sender"), label_font, 13 * s, outer_x + pad, row_1 + label_2, TB_PWE_LABEL_2);
+    tb_pwe_text(ctx, sender, body_font, 20 * s, outer_x + pad, row_1 + value_2, TB_PWE_LABEL);
 
-    tb_disp_draw_text(ctx, tb_i18n_get("receiver.ui.display"), section_font, 15 * s, right_x, info_top + row_label_1, 0.54, 0.62, 0.76);
-    tb_disp_draw_text(ctx, panel, zh ? body_font : mono_font, 20 * s, right_x, info_top + row_value_1, 0.94, 0.96, 0.99);
-    tb_disp_draw_text(ctx, tb_i18n_get("receiver.ui.stream_profile"), section_font, 14 * s, right_x, info_top + row_label_2, 0.54, 0.62, 0.76);
-    tb_disp_draw_text(ctx, mode, zh ? body_font : mono_font, 20 * s, right_x, info_top + row_value_2, 0.94, 0.96, 0.99);
+    tb_pwe_text(ctx, tb_i18n_get("receiver.ui.display"), label_font, 13 * s, right_x + pad, row_1 + label_1, TB_PWE_LABEL_2);
+    tb_pwe_text(ctx, panel, digits_font, 20 * s, right_x + pad, row_1 + value_1, TB_PWE_LABEL);
+    tb_pwe_text(ctx, tb_i18n_get("receiver.ui.stream_profile"), label_font, 13 * s, right_x + pad, row_1 + label_2, TB_PWE_LABEL_2);
+    tb_pwe_text(ctx, mode, digits_font, 20 * s, right_x + pad, row_1 + value_2, TB_PWE_LABEL);
 
-    const CGFloat footer_top = info_top + card_h + 16 * s;
-    tb_disp_fill_rect(ctx, outer_x, footer_top, outer_w, card_h, 0.14, 0.15, 0.19, 1.0);
+    tb_pwe_text(ctx, tb_i18n_get("receiver.ui.language"), label_font, 13 * s, outer_x + pad, row_2 + label_1, TB_PWE_LABEL_2);
+    tb_pwe_text(ctx, language, body_font, 20 * s, outer_x + pad, row_2 + value_1, TB_PWE_LABEL);
+    tb_pwe_text(ctx, tb_i18n_get("receiver.ui.permissions"), label_font, 13 * s, outer_x + pad, row_2 + label_2, TB_PWE_LABEL_2);
+    tb_pwe_text(ctx, permissions, body_font, 20 * s, outer_x + pad, row_2 + value_2, TB_PWE_LABEL);
 
-    tb_disp_draw_text(ctx, tb_i18n_get("receiver.ui.language"), section_font, 15 * s, outer_x + pad, footer_top + row_label_1, 0.54, 0.62, 0.76);
-    tb_disp_draw_text(ctx, language, body_font, 20 * s, outer_x + pad, footer_top + row_value_1, 0.94, 0.96, 0.99);
-
-    if (d->login_item_state != TB_DISP_LOGIN_ITEM_HIDDEN) {
-        tb_disp_draw_text(ctx, tb_i18n_get("receiver.ui.login_item"), section_font, 15 * s, right_x, footer_top + row_label_1, 0.54, 0.62, 0.76);
+    if (login_card) {
+        tb_pwe_text(ctx, tb_i18n_get("receiver.ui.login_item"), label_font, 13 * s, right_x + pad, row_2 + label_1,
+                    TB_PWE_LABEL_2);
         if (d->login_item_state == TB_DISP_LOGIN_ITEM_UNAVAILABLE) {
-            tb_disp_draw_text(ctx, tb_i18n_get("receiver.login.unavailable"), body_font, 20 * s,
-                              right_x, footer_top + row_value_1, 0.58, 0.63, 0.71);
+            tb_pwe_text(ctx, tb_i18n_get("receiver.login.unavailable"), body_font, 20 * s,
+                        right_x + pad, row_2 + value_1, TB_PWE_LABEL_2);
         } else {
             const char *state = tb_i18n_get(d->login_item_state == TB_DISP_LOGIN_ITEM_ON
                                             ? "receiver.login.state_on" : "receiver.login.state_off");
             char hint[160];
-            snprintf(hint, sizeof(hint), "   ·   %s", tb_i18n_get("receiver.login.toggle_hint"));
-            tb_disp_draw_text(ctx, state, body_font, 20 * s, right_x, footer_top + row_value_1, 0.94, 0.96, 0.99);
-            tb_disp_draw_text(ctx, hint, body_font, 20 * s,
-                              right_x + tb_disp_text_width(state, body_font, 20 * s), footer_top + row_value_1,
-                              0.58, 0.63, 0.71);
+            snprintf(hint, sizeof(hint), " · %s", tb_i18n_get("receiver.login.toggle_hint"));
+            tb_pwe_text(ctx, state, body_font, 20 * s, right_x + pad, row_2 + value_1, TB_PWE_LABEL);
+            tb_pwe_text(ctx, hint, body_font, 20 * s,
+                        right_x + pad + tb_disp_text_width(state, body_font, 20 * s), row_2 + value_1,
+                        TB_PWE_LABEL_2);
         }
     }
 
-    tb_disp_draw_text(ctx, tb_i18n_get("receiver.ui.permissions"), section_font, 15 * s, outer_x + pad, footer_top + row_label_2, 0.54, 0.62, 0.76);
-    tb_disp_draw_text(ctx, permissions, body_font, 20 * s, outer_x + pad, footer_top + row_value_2, 0.94, 0.96, 0.99);
-
-    /* Help lines, bottom up; the compact screen is one key away. */
-    const char *help[4];
-    int help_count = 0;
-    help[help_count++] = tb_i18n_get("receiver.ui.help_1");
-    help[help_count++] = tb_i18n_get("receiver.ui.help_2");
-    help[help_count++] = tb_i18n_get("receiver.ui.help_4");
-    if (TB_RECEIVER_COMPACT_IDLE) help[help_count++] = tb_i18n_get("receiver.ui.details_back");
-    for (int i = 0; i < help_count; i++) {
-        tb_disp_draw_text(ctx, help[i], body_font, 17 * s, outer_x,
-                          H - (78 + 24 * (help_count - 1 - i)) * s, 0.76, 0.80, 0.88);
+    /* Two lines: how to connect, then the keys. */
+    char keys[256];
+    if (TB_RECEIVER_COMPACT_IDLE) {
+        snprintf(keys, sizeof(keys), "%s · %s", tb_i18n_get("receiver.ui.help_4"),
+                 tb_i18n_get("receiver.ui.details_back"));
+    } else {
+        snprintf(keys, sizeof(keys), "%s", tb_i18n_get("receiver.ui.help_4"));
     }
+    tb_pwe_text(ctx, tb_i18n_get("receiver.ui.help_1"), body_font, 15 * s, outer_x, H - 66 * s, TB_PWE_LABEL_2);
+    tb_pwe_text(ctx, keys, body_font, 15 * s, outer_x, H - 42 * s, TB_PWE_LABEL_2);
 }
 
 static void tb_disp_rebuild_status_texture(struct tb_display *d,
@@ -641,7 +871,9 @@ static void tb_disp_rebuild_status_texture(struct tb_display *d,
     const char *mono_font = "Menlo";
     const char *mono_bold_font = "Menlo-Bold";
 
-    if (connecting) {
+    if (connecting && TB_RECEIVER_COMPACT_IDLE) {
+        tb_disp_draw_waiting_screen(ctx, d, drawable_w, drawable_h, 1);
+    } else if (connecting) {
         const CGFloat min_side = (CGFloat)(drawable_w < drawable_h ? drawable_w : drawable_h);
         const CGFloat scale = min_side / 720.0;
         const CGFloat icon_size = 132.0 * scale;
@@ -670,7 +902,8 @@ static void tb_disp_rebuild_status_texture(struct tb_display *d,
         tb_disp_draw_text_centered(ctx, tb_i18n_get("receiver.splash.waiting_first_frame"), body_font, 17.0 * scale,
                                    center_x, icon_y + icon_size + 202.0 * scale,
                                    0.62, 0.68, 0.77);
-        if (d->pwe_notice_kind == TB_DISP_NOTICE_WARNING) {   /* PWE: e.g. not encrypted */
+        if (d->pwe_notice_kind == TB_DISP_NOTICE_WARNING ||   /* PWE: e.g. not encrypted */
+            d->pwe_notice_kind == TB_DISP_NOTICE_ERROR) {
             tb_disp_draw_text_centered(ctx, d->pwe_notice[0], body_font, 17.0 * scale,
                                        center_x, icon_y + icon_size + 248.0 * scale, 1.0, 0.72, 0.30);
         }
@@ -679,48 +912,11 @@ static void tb_disp_rebuild_status_texture(struct tb_display *d,
                                    0.40, 0.45, 0.53);
     } else if (TB_RECEIVER_COMPACT_IDLE && !d->show_details) {
         /* The calm idle screen: what this screen is, what it is waiting for, and
-         * the one thing to do. The address and diagnostics are one key away.
-         * Like the connecting screen, the canvas has a top-left origin: y grows down. */
-        const CGFloat min_side = drawable_w < drawable_h ? (CGFloat)drawable_w : (CGFloat)drawable_h;
-        const CGFloat scale = min_side / 720.0;
-        const CGFloat center_x = (CGFloat)drawable_w / 2.0;
-        const CGFloat icon_size = 132.0 * scale;
-        const CGFloat icon_y = (CGFloat)drawable_h / 2.0 - 170.0 * scale;
-
-        tb_disp_fill_rect(ctx, 0, 0, (CGFloat)drawable_w, (CGFloat)drawable_h, 0.06, 0.07, 0.09, 1.0);
-        tb_disp_draw_app_icon(ctx, center_x - icon_size / 2.0, icon_y, icon_size);
-        tb_disp_draw_text_centered(ctx, tb_i18n_get("common.app_name"), title_font, 34.0 * scale,
-                                   center_x, icon_y + icon_size + 66.0 * scale, 0.95, 0.97, 1.0);
-        if (d->pwe_notice_kind == TB_DISP_NOTICE_PAIRING_CODE) {
-            /* PWE pairing: the code, large, then what to do with it. */
-            tb_disp_draw_text_centered(ctx, d->pwe_notice[0], mono_bold_font, 54.0 * scale,
-                                       center_x, icon_y + icon_size + 136.0 * scale, 0.43, 0.93, 0.60);
-            tb_disp_draw_text_centered(ctx, d->pwe_notice[1], body_font, 22.0 * scale,
-                                       center_x, icon_y + icon_size + 184.0 * scale, 0.80, 0.84, 0.90);
-            tb_disp_draw_text_centered(ctx, d->pwe_notice[2], body_font, 15.0 * scale,
-                                       center_x, icon_y + icon_size + 216.0 * scale, 0.58, 0.63, 0.71);
-        } else if (d->pwe_notice_kind != TB_DISP_NOTICE_NONE) {
-            const int warn = d->pwe_notice_kind == TB_DISP_NOTICE_WARNING;
-            tb_disp_draw_text_centered(ctx, d->pwe_notice[0], body_font, 22.0 * scale,
-                                       center_x, icon_y + icon_size + 112.0 * scale,
-                                       warn ? 1.0 : 0.80, warn ? 0.72 : 0.84, warn ? 0.30 : 0.90);
-            tb_disp_draw_text_centered(ctx, d->pwe_notice[1], body_font, 16.0 * scale,
-                                       center_x, icon_y + icon_size + 146.0 * scale, 0.58, 0.63, 0.71);
-        } else {
-        tb_disp_draw_text_centered(ctx, tb_i18n_get("receiver.ui.compact_waiting"), body_font, 22.0 * scale,
-                                   center_x, icon_y + icon_size + 112.0 * scale, 0.80, 0.84, 0.90);
-        tb_disp_draw_text_centered(ctx, tb_i18n_get("receiver.ui.compact_hint"), body_font, 16.0 * scale,
-                                   center_x, icon_y + icon_size + 146.0 * scale, 0.58, 0.63, 0.71);
-        }
-
-        char footer[256];
-        snprintf(footer, sizeof(footer), "%s   ·   %s   ·   %s",
-                 ip, TB_RECEIVER_VERSION, tb_i18n_get("receiver.ui.compact_details"));
-        tb_disp_draw_text_centered(ctx, footer, zh ? body_font : mono_font, 13.0 * scale,
-                                   center_x, (CGFloat)drawable_h - 36.0 * scale, 0.40, 0.45, 0.53);
+         * the one thing to do. The address and diagnostics are one key away. */
+        tb_disp_draw_waiting_screen(ctx, d, drawable_w, drawable_h, 0);
     } else if (TB_RECEIVER_COMPACT_IDLE || d->login_item_state != TB_DISP_LOGIN_ITEM_HIDDEN) {
         tb_disp_draw_details_scaled(ctx, d, ip, status, sender, panel, mode, language, permissions,
-                                    drawable_w, drawable_h, zh);
+                                    drawable_w, drawable_h);
     } else {
     /* The canvas has a top-left origin (y grows down). This layout was written
      * for a bottom-left origin and drew upside down (title at the bottom, each

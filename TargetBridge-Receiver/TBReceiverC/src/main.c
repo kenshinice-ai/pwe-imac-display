@@ -2051,12 +2051,15 @@ static void tb_pwe_message(struct app *a, enum tb_display_notice kind, const cha
  * short message, the unencrypted warning, or why encryption is unavailable. */
 static void tb_pwe_refresh_notice(struct app *a, uint64_t now) {
     char line1[192] = "", line2[192] = "", line3[192] = "";
+    char status[192] = "";   /* the details screen's status line, when not line1 */
     enum tb_display_notice kind = TB_DISP_NOTICE_NONE;
     if (a->gate.code[0]) {
-        char spaced[8];
-        snprintf(spaced, sizeof(spaced), "%.3s %.3s", a->gate.code, a->gate.code + 3);
-        struct tb_i18n_pair pairs[] = { { "code", spaced } };
-        tb_format_i18n(line1, sizeof(line1), "receiver.pairing.code", pairs, 1);
+        /* The screen shows the digits alone, in two groups of three with an en
+         * space between (U+2002); the next line says what they are. The details
+         * screen's status line names them ("Pairing code 482 913"). */
+        snprintf(line1, sizeof(line1), "%.3s\xE2\x80\x82%.3s", a->gate.code, a->gate.code + 3);
+        struct tb_i18n_pair pairs[] = { { "code", line1 } };
+        tb_format_i18n(status, sizeof(status), "receiver.pairing.code", pairs, 1);
         tb_copy_i18n(line2, sizeof(line2), "receiver.pairing.enter_on_mac");
         tb_copy_i18n(line3, sizeof(line3), "receiver.pairing.not_you");
         kind = TB_DISP_NOTICE_PAIRING_CODE;
@@ -2069,7 +2072,7 @@ static void tb_pwe_refresh_notice(struct app *a, uint64_t now) {
         kind = TB_DISP_NOTICE_WARNING;
     } else if (!a->have_keys) {
         tb_copy_i18n(line1, sizeof(line1), "receiver.pairing.keychain");
-        kind = TB_DISP_NOTICE_WARNING;
+        kind = TB_DISP_NOTICE_ERROR;
     }
     tb_disp_set_notice(a->disp, kind, line1, line2, line3);
     /* The menu follows the receiver's language. */
@@ -2083,7 +2086,7 @@ static void tb_pwe_refresh_notice(struct app *a, uint64_t now) {
     /* The details screen shows the status line: the notice goes there too. */
     if (!a->session_active) {
         if (kind != TB_DISP_NOTICE_NONE) {
-            snprintf(a->status_text, sizeof(a->status_text), "%s", line1);
+            snprintf(a->status_text, sizeof(a->status_text), "%s", status[0] ? status : line1);
             a->pwe_status_overridden = 1;
         } else if (a->pwe_status_overridden) {
             a->pwe_status_overridden = 0;
@@ -2124,7 +2127,7 @@ static void tb_pwe_on_conn_event(struct tb_conn *c, int ev, void *ud) {
         fprintf(stderr, "[sec] pairing code hidden\n");
     }
     if (ev & TB_CONN_EV_PLAINTEXT_REFUSED) {
-        tb_pwe_message(a, TB_DISP_NOTICE_WARNING, tb_i18n_get("receiver.pairing.refused_unencrypted"),
+        tb_pwe_message(a, TB_DISP_NOTICE_ERROR, tb_i18n_get("receiver.pairing.refused_unencrypted"),
                        TB_PWE_REFUSED_NOTICE_MS);
     }
 #if TB_RECEIVER_TEST_HOOKS
