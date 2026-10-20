@@ -5,6 +5,7 @@
 > 2026-10-20 给 Marco 发了补充报告（回在 10-14 那封的线程里）。他 10-16 把 #212–#216 合进了 `maint-3.6`，3.6.1 候选版是上游 PR #218。
 > 候选版验证（2026-10-20，这台 Mac）：发送端 313 个测试、接收端全部单元测试、Apple 芯片和 Intel 冒烟都通过，DMG 挂载验签通过；**没上真机**，清单 `docs/pwe/TEST-1.1-rc-2026-10-21.md`。
 > 方案和决定：`docs/pwe/PLAN-1.1-2026-10-19.md`、`DESIGN-pairing-2026-10-19.md`、`RESEARCH-Metal-2026-10-19.md`（三份都不入库）。
+> 2026-10-20 申请了 OpenAI Codex for Open Source 和 Claude for Open Source（Lee 提交；名字 Li Liu，lee.liu.melbourne@gmail.com）。结果会发邮件，滚动审核。
 > pwestudio.site 产品页冻结中（Lee），方案在 `docs/pwe/SITE-PLAN.md`。
 > 2026-10-19 在真机 iMac18,3（macOS 13.7.8）上做了基线：画面、真 5K（48 和 60 帧）、拔线和睡眠恢复都能用；声音不工作。
 > 结果和证据在 `docs/pwe/BASELINE-iMac18,3.md`（未入库），本文件「八」节是摘要。
