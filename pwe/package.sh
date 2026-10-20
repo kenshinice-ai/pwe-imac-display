@@ -85,6 +85,23 @@ VERSION="$(<"$SRC/pwe/VERSION")"
 DMG="$DIST/PWE-iMac-Display-$VERSION.dmg"   # the name the release and the cask use
 python3 -I "$SRC/pwe/rebrand.py" "$SRC" --version "$VERSION" --build "$BUILD"
 
+# ---------------------------------------------------------------- disk-image tool
+
+# dmgbuild lays out the disk-image window (background, icon places, volume icon)
+# by writing .DS_Store itself, so no Finder window opens during a build. Pinned
+# wheels in a cached venv, reinstalled when pwe/brand/dmg/requirements.txt changes.
+# Early, so a missing tool stops the run before ten minutes of building.
+DMGBUILD="${PWE_DMGBUILD:-${TMPDIR:-/tmp}/pwe-imacdisplay-dmgbuild}"
+DMG_REQS="$SRC/pwe/brand/dmg/requirements.txt"
+if ! cmp -s "$DMG_REQS" "$DMGBUILD/requirements.txt" || [[ ! -x "$DMGBUILD/bin/dmgbuild" ]]; then
+  echo "▸ Installing dmgbuild into $DMGBUILD…"
+  rm -rf "$DMGBUILD"
+  python3 -m venv "$DMGBUILD"
+  "$DMGBUILD/bin/pip" install -q --require-hashes --only-binary :all: -r "$DMG_REQS" \
+    || { rm -rf "$DMGBUILD"; echo "✗ could not install dmgbuild (pwe/brand/dmg/requirements.txt)"; exit 1; }
+  cp "$DMG_REQS" "$DMGBUILD/requirements.txt"
+fi
+
 # ---------------------------------------------------------------- libraries
 
 # Before the sender: it links libsodium from here too (pairing and encryption).
@@ -257,11 +274,26 @@ STAGE="$WORK/stage"
 mkdir -p "$STAGE"
 ditto "$SENDER" "$STAGE/$NAME.app"
 ditto "$RECEIVER" "$STAGE/$RECEIVER_NAME.app"
-ln -s /Applications "$STAGE/Applications"
 cp "$SRC/pwe/read-me-first.txt" "$STAGE/读我 Read Me First.txt"
 ditto "$LICENSES" "$STAGE/Licenses"
-hdiutil create -volname "$NAME $VERSION" -srcfolder "$STAGE" -ov -format UDZO \
-  "$WORK/image.dmg" >/dev/null
+iconutil -c icns "$SRC/pwe/assets/AppIcon.iconset" -o "$WORK/VolumeIcon.icns"
+# The window: pwe/brand/dmg/settings.py (icon places, the Applications link) and
+# pwe/brand/dmg/background{,@2x}.png (pwe/brand/make.py).
+"$DMGBUILD/bin/dmgbuild" -s "$SRC/pwe/brand/dmg/settings.py" \
+  -D stage="$STAGE" -D icon="$WORK/VolumeIcon.icns" \
+  -D background="$SRC/pwe/brand/dmg/background.png" \
+  "$NAME $VERSION" "$WORK/image.dmg" >"$WORK/dmgbuild.log" 2>&1 \
+  || { tail -20 "$WORK/dmgbuild.log"; exit 1; }
+# The apps must come out of the image as they went in: a Finder flag on a bundle
+# (dmgbuild's hide-extension, for one) breaks its signature. Read-only, not shown.
+CHECK_MNT="$WORK/check-mount"
+mkdir -p "$CHECK_MNT"
+hdiutil attach -quiet -nobrowse -readonly -noautoopen -mountpoint "$CHECK_MNT" "$WORK/image.dmg"
+for APP in "$NAME.app" "$RECEIVER_NAME.app"; do
+  codesign --verify --deep --strict "$CHECK_MNT/$APP" \
+    || { hdiutil detach -quiet "$CHECK_MNT"; echo "✗ $APP in the image fails codesign --verify"; exit 1; }
+done
+hdiutil detach -quiet "$CHECK_MNT"
 codesign --force "${TIMESTAMP[@]}" --sign "$IDENTITY" "$WORK/image.dmg"
 
 if [[ "$NOTARIZE" == 1 ]]; then
