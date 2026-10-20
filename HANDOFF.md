@@ -14,6 +14,14 @@
 > `main` = 上游基线 + `pwe/PATCHES.md` 登记的补丁 + PWE 自己的文件（本文件、`docs/pwe/`、`pwe/`、`.github/README.md`、`.github/SECURITY.md`）。
 > 改上游文件之前先提 PR 给上游，再登记进 `pwe/PATCHES.md`。改名在打包时对副本做（`pwe/rebrand.py`），不改仓库里的文件。
 
+## 阶段
+
+- **[阶段] 内测** — 下一步：Lee 在测试机上复测 RC2（`TEST-1.1-rc-2026-10-21.md` 的 RC2 一节）· 负责：Lee（测试）、本仓库会话（修复和打包）· 卡在：没有 · 自 2026-10-21
+
+## 宣发
+
+- **[已发] 官网 · 2026-10-21 · pwestudio.site/screenencore/ 产品页** — 工具站会话部署，状态「10 月底推出」，无下载链接 · 数据：未抄
+
 ## 等 Lee
 
 - **[动手] 在 iMac 上测 RC2** — 按 `docs/pwe/TEST-1.1-rc-2026-10-21.md`（不入库）测 `pwe/dist/local/PWE-Screen-Encore-1.1.0.dmg`（构建号 20261021012201）；先复测 T32、T33、T35–T37，再做 T34 实验和 2 小时 soak · 不测则 10-28 发不了 · 自 2026-10-21
