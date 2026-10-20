@@ -4,9 +4,10 @@ import SwiftUI
 /// The PWE window: first setup, and the iMac's status at a glance. One question
 /// answered at a time, one primary action.
 ///
-/// Day-to-day controls live in the menu bar (PWEStatusMenu) and every setting in
-/// Settings (PWESettingsView); this window shows only what someone needs to turn
-/// an iMac into a display and to know whether it is one.
+/// Day-to-day controls live in the menu bar (PWEStatusMenu) and set-once choices
+/// in Settings (PWESettingsView); this window is for first setup and for when
+/// something needs the person: once the iMac is a display it says so, and offers
+/// only Arrange Displays and Disconnect.
 struct PWEMainView: View {
     @ObservedObject var model: PWESenderModel
     let strings: PWEStrings
@@ -67,7 +68,7 @@ struct PWEMainView: View {
         case .choose: return "choose"
         case .ready: return "ready"
         case .connecting: return "connecting"
-        case .connected: return model.setupFinished ? "connected" : "setup"
+        case .connected: return "connected"
         case .interrupted: return "interrupted"
         case .security(_, let security):
             switch security {
@@ -154,12 +155,6 @@ struct PWEMainView: View {
         VStack(alignment: .leading, spacing: 16) {
             symbol("desktopcomputer")
             receiverLabel(receiver, large: true)
-            Picker(strings.modeLabel, selection: $model.displayMode) {
-                Text(strings.modeExtended).tag(PWEDisplayMode.extended)
-                Text(strings.modeMirror).tag(PWEDisplayMode.mirror)
-            }
-            .pickerStyle(.segmented)
-            .fixedSize()
             Button(strings.useAsDisplay) { model.connect(to: receiver) }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
@@ -182,58 +177,39 @@ struct PWEMainView: View {
         }
     }
 
-    @ViewBuilder private func connectedView(_ receiver: PWEReceiver?) -> some View {
-        if model.setupFinished {
-            VStack(alignment: .leading, spacing: 16) {
-                connectedHeader(receiver)
-                if model.isUnencrypted { unencryptedWarning }
-                brightnessSlider
-                HStack(spacing: 10) {
-                    Button(strings.arrange) { model.openDisplaySettings() }
-                        .controlSize(.large)
-                    Button(strings.disconnect) { model.disconnect() }
-                        .controlSize(.large)
-                }
-                Text(strings.menuBarHint)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-        } else {
-            setupView(receiver)
-        }
-    }
-
-    /// The last setup screen, shown the first time an iMac becomes a display:
-    /// the two questions that decide what happens next time, asked once.
-    private func setupView(_ receiver: PWEReceiver?) -> some View {
+    private func connectedView(_ receiver: PWEReceiver?) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             connectedHeader(receiver)
             if model.isUnencrypted { unencryptedWarning }
-            VStack(alignment: .leading, spacing: 12) {
-                Text(strings.setupTitle).font(.headline)
-                preference(strings.launchAtLogin, isOn: Binding(
-                    get: { model.launchAtLogin },
-                    set: { model.setLaunchAtLogin($0) }))
-                if model.launchAtLoginNeedsApproval {
-                    Button(strings.launchAtLoginApproval) { model.openLoginItemsSettings() }
-                        .buttonStyle(.link)
-                        .font(.callout)
-                }
-                preference(strings.autoConnect, isOn: $model.autoConnect)
-                Text(strings.setupBody)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
+                Button(strings.arrange) { model.openDisplaySettings() }
+                    .controlSize(.large)
+                Button(strings.disconnect) { model.disconnect() }
+                    .controlSize(.large)
             }
-            .padding(14)
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
-            Text(strings.menuBarHint)
-                .font(.callout)
+            if model.firstConnection { firstConnectionTips }
+        }
+    }
+
+    /// Two lines the first time an iMac becomes a display, and never again: where
+    /// the everyday controls are, and Open at login, already ticked.
+    private var firstConnectionTips: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Divider()
+            let tip = strings.menuBarTip
+            Text("\(tip.before)\(Image(systemName: "desktopcomputer"))\(tip.after)")
                 .foregroundStyle(.secondary)
-            Button(strings.setupDone) { model.setupFinished = true }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .keyboardShortcut(.defaultAction)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel(strings.menuBarTipSpoken)
+            Toggle(strings.launchAtLogin, isOn: Binding(
+                get: { model.launchAtLogin },
+                set: { model.setLaunchAtLogin($0) }))
+                .toggleStyle(.checkbox)
+            if model.launchAtLoginNeedsApproval {
+                Button(strings.launchAtLoginApproval) { model.openLoginItemsSettings() }
+                    .buttonStyle(.link)
+                    .font(.callout)
+            }
         }
     }
 
@@ -258,18 +234,6 @@ struct PWEMainView: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
-    }
-
-    private var brightnessSlider: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(strings.brightness).font(.callout).foregroundStyle(.secondary)
-            HStack(spacing: 8) {
-                Image(systemName: "sun.min").foregroundStyle(.secondary).accessibilityHidden(true)
-                Slider(value: $model.brightness, in: 0...1)
-                    .accessibilityLabel(strings.brightness)
-                Image(systemName: "sun.max").foregroundStyle(.secondary).accessibilityHidden(true)
-            }
-        }
     }
 
     private func interruptedView(_ receiver: PWEReceiver?, _ reason: PWEReason, _ retrying: Bool) -> some View {
@@ -301,18 +265,6 @@ struct PWEMainView: View {
 
     // MARK: - Pieces
 
-    /// Label on the leading edge, switch on the trailing edge, as in System Settings.
-    private func preference(_ title: String, isOn: Binding<Bool>) -> some View {
-        HStack {
-            Text(title)
-            Spacer()
-            Toggle(title, isOn: isOn)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.small)
-        }
-    }
-
     private func symbol(_ name: String) -> some View {
         Image(systemName: name)
             .font(.system(size: 34, weight: .light))
@@ -341,8 +293,8 @@ struct PWEMainView: View {
 }
 
 /// Version, credit, source, support and the update check — the app's one About,
-/// and the one place it mentions support (PWE Tools handoff §0.9). The daily
-/// check is switched in Settings › General.
+/// and the one place it mentions support (PWE Tools handoff §0.9) or offers a
+/// check right now. The daily check is switched in Settings › General.
 struct PWEAboutView: View {
     @ObservedObject var updates: UpdateCheck
     let strings: PWEStrings
