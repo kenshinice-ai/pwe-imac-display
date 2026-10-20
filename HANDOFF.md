@@ -1,7 +1,7 @@
 # PWE iMac Display — 交接
 
-> 状态（2026-10-20）：1.0.0 已发布（GitHub 标签 `pwe-1.0.0`，Homebrew `kenshinice-ai/tap/pwe-imac-display`）；2026-10-16 给它的 release 补上了 FFmpeg 源码包。
-> 1.0.1（接收端加固 + 附加功能修复）在本地分支 `security-1.0.1`（d4b4598）上，计划 2026-10-22 发布，先过真线测试。发布说明草稿 `docs/pwe/RELEASE-NOTES-1.0.1-draft.md`（不入库）。
+> 状态（2026-10-20）：1.0.0 已撤下（Lee 2026-10-20 定）：release 改回草稿、Homebrew cask 删除、README 写「1.1 即将推出」。不单独发 1.0.1，它的修复并进 1.1。
+> `security-1.0.1`（接收端加固 + 附加功能修复）正在合进 `pwe-1.1`（分支 `pwe-1.1-hardening`，未推送）。Marco 2026-10-20 已收到通知：修复改随 1.1 发，发布前至少提前一周告诉他。
 > 2026-10-20 给 Marco 发了补充报告（回在 10-14 那封的线程里）。他 10-16 把 #212–#216 合进了 `maint-3.6`，3.6.1 候选版是上游 PR #218。
 > 1.1 在本地分支 `pwe-1.1`（f2b39f8，未推送）。2026-10-20 合进了界面简化，并修了测试机清单 `docs/pwe/ISSUES-test-mac-2026-10-20.md` 里的 P1 和大部分 P2：菜单晚一拍、输码画面跟连接走、插拔和睡眠后直拨雷雳地址、Network Link 拨对地址、切换声音不重连、接收端日志文件、渲染方式可选（默认 OpenGL）、iMac 鼠标控制 Mac 的两处指针缺陷。发送端 312 个测试、接收端全部单元测试、两种架构的冒烟测试都通过；**都没上真机**。
 > 接收端 8 组单元测试、发送端 247 个测试、本地无签名打包都通过（2026-10-19，这台 M1）；**全部未在真机上验证**。测试清单 `docs/pwe/TEST-1.1-2026-10-19.md`。
@@ -18,10 +18,8 @@
 
 - **[动手] 1.1 第二轮真机复测** — 按 `docs/pwe/TEST-1.1-round2-2026-10-20.md`（不入库）测 `pwe/dist/local/PWE-iMac-Display-1.1.0.dmg`（构建号 20261020193318）；重点是第 1–3 节（菜单、输码、插拔 ≤ 5 秒） · 不测则 2026-10-20 的修复都没有真机证据 · 自 2026-10-20
 - **[决定] iMac 上默认用哪种渲染方式** — 推荐先按复测第 5 节用新的同口径计时重测；在那之前默认 OpenGL · 不定则按 OpenGL 发 · 自 2026-10-20
-- **[决定] 产品名要不要去掉「iMac」** — Apple 的第三方商标指南不允许产品名含 iMac，只允许「for iMac」这样的指代说法（不是法律意见）。推荐 1.1 起改名、bundle ID 不动；名字定了再出宣传物料和英文渠道。方案见 `docs/pwe/BRAND-iMac-Display-2026-10-20.md` 第六节 · 不定则宣传物料出不了终稿 · 自 2026-10-20
-- **[决定] 一对图标（发送端琥珀框、接收端纸色框，都是带下巴的 iMac）** — 推荐采用，并把 iMac 外框登记进品牌标准 08 §4.6；预览 `pwe/brand/preview/icon-before-after.png` · 不定则两端继续共用一个图标 · 自 2026-10-20
+- **[决定] 确认新名字「PWE Screen Encore」** — Lee 2026-10-20 提出；符合品牌标准 08 的命名语法（PWE + 两个名词），网页搜索没有同名产品（相近的是 Barco Encore3、Encore Screens 幕布），商标库未查。确认后一次改完界面、文档、DMG 和接收端名（bundle ID 不动） · 不定则宣传物料出不了终稿 · 自 2026-10-20
 - **[决定] 推广按 `docs/pwe/LAUNCH-PLAN-2026-10-20.md` 走** — 推荐：1.0.1 安静发布不推广；1.1 过四道门（真机复测、名字、站点解冻、和 Marco 对过说法）再正式发布，中文渠道先、英文后 · 不定则不影响开发 · 自 2026-10-20
-- **[决定] 2026-10-22 发布 1.0.1 吗** — 2026-10-20 真线 4 步全部通过（`BASELINE-iMac18,3.md`），推荐发；Claude 按下面「1.0.1 发布步骤」做 · 不定则加固和声音修复留在本地 · 自 2026-10-15
 - **[决定] `docs/pwe/TEST-1.1-2026-10-19.md`「G」节的六件事** — 推荐 E、F 组测完再定；不定则按现在的默认值发 · 不定不卡 1.0.1 · 自 2026-10-19
 - **[决定] 解冻 pwestudio.site 并加 `imacdisplay`** — 产品页方案在 `docs/pwe/SITE-PLAN.md`；1.1 的检查更新要在 `functions/_release.js` 加一条 `imacdisplay` · 不定则「检查更新」只会说「已经是最新版本」 · 自 2026-10-14
 - **[决定] 本仓库 Sponsor 按钮** — 组规矩 §0.9 要求放 `custom: [pwestudio.site/support]`，并由 Lee 同意打开 Sponsorships 开关；1.1 的「关于」里已有「支持 PWE…」 · 不定则仓库页没有支持入口 · 自 2026-10-15
@@ -38,20 +36,15 @@
 5. **换成 1.1。** 两边都换成 `PWE-iMac-Display-1.1.0.dmg` 里的 App，按 `docs/pwe/TEST-1.1-2026-10-19.md` 的 A–F 组测。
 6. **记结果。** 每一步的结果写进 `docs/pwe/BASELINE-iMac18,3.md`，第 1–4 步的结论写进本文件「八」节。
 
-## 1.0.1 发布步骤（2026-10-22，Claude 做，测试顺序第 1–3 步通过之后）
+## 1.0.0 撤下后怎么恢复（2026-10-20）
 
-1. 在 `main` 上合并：`git merge --no-ff security-1.0.1`。成功判据：`git merge-base --is-ancestor security-1.0.1 main` 退出码 0。
-2. 把 `docs/pwe/AUDIT-2026-10-15.md` 和 `PLAN-2026-10-15.md` 入库（2026-10-15 定：1.0.1 发布后再入库）。
-3. 打标签 `git tag pwe-1.0.1`，在解锁的屏幕上运行 `pwe/package.sh --notarize`。成功判据：DMG 显示 `source=Notarized Developer ID`，`bundle checks passed`。
-4. 推送：`git push origin main pwe-1.0.1`。只推这一个标签。
-5. 用草稿发 release，上传 `pwe/dist/` 的三个文件。成功判据：`gh release download` 回来的文件通过 `shasum -c`。
-6. 改 cask 的 `version` 和 `sha256`。成功判据：`brew fetch --cask kenshinice-ai/tap/pwe-imac-display` 显示 ✔。
-7. 写信告诉 Marco 1.0.1 已发布（回在 10-14 那封的线程里）。
-8. 接着做下面「1.1 发版前」的第一条。
+- release：`gh release edit pwe-1.0.0 --draft=false`。1.1 发布时不恢复它，直接发 `pwe-1.1.0`。
+- cask：在 `kenshinice-ai/homebrew-tap` 里 `git revert 90bfd31`，再改 `version` 和 `sha256`。
+- README：`.github/README.md`、`docs/pwe/README.en.md` 第一段改回下载说明。
 
 ## 1.1 发版前（Claude 做，不等 Lee）
 
-- 先发 1.0.1，再把 `main` 合进 `pwe-1.1`。成功判据：`git merge-base --is-ancestor security-1.0.1 pwe-1.1` 退出码 0，证明加固进了 1.1。
+- 把 `security-1.0.1` 合进 `pwe-1.1`（2026-10-20 进行中）。成功判据：`git merge-base --is-ancestor security-1.0.1 pwe-1.1` 退出码 0。
 - `package.sh` 的接收端 make 行合并后要同时带 `DIRECT_LINK_ONLY=1 COMPACT_IDLE=1 OFFER_LOGIN_ITEM=1`。
 - cask 的 `zap` 加上 `~/Library/LaunchAgents/com.pwegroup.pweimacdisplay.receiver.plist`。
 - 给上游提 PR：发送端「重新打开」按钮只退出不重开（PWE 已在 `rebrand.py` 里修）。
