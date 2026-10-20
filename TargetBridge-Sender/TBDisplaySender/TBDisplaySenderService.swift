@@ -3118,10 +3118,22 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                 self.scheduleDesktopMirrorRecovery(for: self.session.displayID)
             }
 
-            self.setStatus(.captureStartedWaitingFirstFrame)
-            self.startFirstFrameWatchdog()
+            self.pweCaptureDidStart()
         }
     }
+
+    /// PWE: startCapture returned. The first encoded frame can arrive while it
+    /// is suspended (see the note on sessionAckSent above); then the status is
+    /// already captureActive and handleFirstEncodedFrame will not run again.
+    /// Upstream wrote "waiting for the first frame" over it unconditionally, and
+    /// the session read so for as long as it streamed (T33, test Mac 2026-10-20).
+    func pweCaptureDidStart() {
+        if !sessionAckSent { setStatus(.captureStartedWaitingFirstFrame) }
+        startFirstFrameWatchdog()
+    }
+
+    /// PWE: the current capture has sent its first encoded frame.
+    var pweHasFirstFrame: Bool { sessionAckSent }
 
     private func startCapture(for profile: TBMonitorDisplayProfile) async -> Bool {
         do {
@@ -4789,6 +4801,28 @@ extension TBDisplaySenderSession {
 }
 
 #if DEBUG
+// PWE: tests only. The status steps of a capture start, through the engine's own
+// setters, in either order the first frame and startCapture's return can take
+// (PWEConnectionPhaseTests). No connection, display or screen capture.
+extension TBDisplaySenderSession {
+    func pweTestCaptureStart(firstFrameWhileStarting: Bool) {
+        sessionAckSent = false
+        setStatus(.startingCapture(capturePreset.description, captureSource))
+        if firstFrameWhileStarting { handleFirstEncodedFrame() }
+        isStreaming = true
+        pweCaptureDidStart()
+        if !firstFrameWhileStarting { handleFirstEncodedFrame() }
+    }
+
+    func pweTestCaptureEnd() {
+        firstFrameTimer?.invalidate()
+        firstFrameTimer = nil
+        sessionAckSent = false
+        isStreaming = false
+        setStatus(.stopped)
+    }
+}
+
 // PWE: tests only. The same pipeline, codec choice, sealing and pointer source as
 // a capture; only the pixels are generated here (a moving gradient, 5K BGRA).
 extension TBDisplaySenderSession {
