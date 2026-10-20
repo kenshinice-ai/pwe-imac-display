@@ -17,7 +17,7 @@ final class PWEStatusMenu: NSObject {
     private let model: PWESenderModel
     private var statusItem: NSStatusItem?
     private var cancellables = Set<AnyCancellable>()
-    private var pendingAction: (@MainActor () -> Void)?
+    private let actions = PWEMenuActionQueue()
     private var sliderTargets: [TBMenuSliderTarget] = []
     /// Snapshots: the words without an engine to ask.
     private let previewLanguage: TBDisplaySenderLanguage?
@@ -209,7 +209,7 @@ final class PWEStatusMenu: NSObject {
 
     @objc private func runMenuAction(_ sender: NSMenuItem) {
         guard let action = sender.representedObject as? PWEMenuAction else { return }
-        pendingAction = action.work
+        actions.chose(action.work)
     }
 
     /// A slider row: the same layout as upstream's brightness row (small glyph,
@@ -261,9 +261,54 @@ extension PWEStatusMenu: NSMenuDelegate {
         rebuild(menu)
     }
 
+    func menuWillOpen(_ menu: NSMenu) {
+        guard menu === statusItem?.menu else { return }
+        actions.menuWillOpen()
+    }
+
     func menuDidClose(_ menu: NSMenu) {
-        guard let work = pendingAction else { return }
-        pendingAction = nil
+        guard menu === statusItem?.menu else { return }
+        actions.menuDidClose()
+    }
+}
+
+/// Runs a chosen menu item's work exactly once, after the menu has closed.
+///
+/// AppKit calls the delegate's `menuDidClose` before it sends the chosen
+/// item's action. Work parked by the action and run from `menuDidClose` so ran
+/// one choice late: each click did what the previous click asked (T11,
+/// 2026-10-20). Both orders work here: work chosen while the menu is open waits
+/// for the close, and work chosen after the close runs on the next turn of the
+/// main run loop, outside menu tracking. Tested in PWEMenuActionQueueTests.
+@MainActor
+final class PWEMenuActionQueue {
+    typealias Work = @MainActor () -> Void
+    private var isOpen = false
+    private var pending: Work?
+    private let schedule: @MainActor (@escaping Work) -> Void
+
+    init(schedule: @escaping @MainActor (@escaping Work) -> Void = PWEMenuActionQueue.nextTurn) {
+        self.schedule = schedule
+    }
+
+    func menuWillOpen() {
+        isOpen = true
+        pending = nil
+    }
+
+    /// A menu item's action (or its key equivalent while the menu is closed).
+    func chose(_ work: @escaping Work) {
+        if isOpen { pending = work } else { schedule(work) }
+    }
+
+    func menuDidClose() {
+        isOpen = false
+        guard let work = pending else { return }
+        pending = nil
+        schedule(work)
+    }
+
+    nonisolated static func nextTurn(_ work: @escaping Work) {
         DispatchQueue.main.async { MainActor.assumeIsolated { work() } }
     }
 }
