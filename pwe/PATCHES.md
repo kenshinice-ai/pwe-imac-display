@@ -13,6 +13,7 @@
 |---|---|---|---|---|
 | `3ee1bff`（经 `2a5319b` 合并） | 简体中文：`zh.json` 和发送端 Swift 里的中文 | 夹杂英文、术语不统一、用词与 macOS 不一致 | [#212](https://github.com/swellweb/targetBridge/pull/212) | 已合并进上游 `maint-3.6`（`5c4ec84`），上游 3.6.1 未发布 |
 | `081c7a5` | 接收端连接画面按字宽居中；新键 `receiver.splash.role`（五种语言） | 文字偏离中心，「RECEIVER」没有翻译 | [#214](https://github.com/swellweb/targetBridge/pull/214) | 已合并进上游 `maint-3.6`（`320be5d`），上游 3.6.1 未发布 |
+| `b2316e8` | 接收端：音频环形缓冲独立成 `audio_ring.c` 并限定边界；可选的 `DIRECT_LINK_ONLY` 构建开关，只接受直连（雷雳网桥、USB、回环）的发送端，用户可用 `AllowLocalNetwork` 放开。并入 1.1 时（合并 `security-1.0.1`）改为 `net.c` 的 `tb_net_accept_policy()`：非直连的发送端在读任何字节前关闭；放开后只接受已配对 Mac 的加密会话，配对仍只走线缆；带测试 | 接收端加固（1.0.1） | 2026-10-15 私下发给维护者，等他选择接收方式 | 等回复 |
 | `3e9915f` | 接收端：详情画面方向修正；连接画面用 App 自己的图标、窗口标题用 App 名；`TB_RECEIVER_SNAPSHOT` 截图钩子；可选的安静等待画面（`COMPACT_IDLE`）和开机自启询问（`OFFER_LOGIN_ITEM`），默认都关 | 详情画面一直是上下颠倒的；PWE 1.1 要安静画面和开机自启 | 方向修正：[#215](https://github.com/swellweb/targetBridge/pull/215)；其余待提 | 方向修正已合并进上游 `maint-3.6`（`6ec97a3`），上游 3.6.1 未发布 |
 | `e3788cf` | 发送端 `project.yml` 排除 `TargetBridge-Shared/scripts/`，重新生成工程 | 开发用的 `check_localizations.sh` 被打进了 App（2026-10-16 检查成品时发现） | [#216](https://github.com/swellweb/targetBridge/pull/216) | 已合并进上游 `maint-3.6`（`060450a`），上游 3.6.1 未发布 |
 | `bd2ecac`、`83ec2fc` | 接收端 1.1 修正：开机自启只登记留在原处的副本（11/12 用 `open -b`，13+ 迁走旧 LaunchAgent）；详情画面按窗口缩放、开机自启单独一格；L/I/A 不响应按住重复和组合键；询问框在第一帧之后弹出 | 评审发现：从磁盘映像接受询问后开机不打开、13+ 可能开两个接收端、980×620 窗口里详情画面溢出 | 随 `3e9915f` 的其余部分待提 | 旗标关闭时只有一处不同：L 键不再响应按住重复和 Cmd/Ctrl/Option 组合 |

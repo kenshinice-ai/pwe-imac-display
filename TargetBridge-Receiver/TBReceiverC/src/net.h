@@ -64,6 +64,34 @@ int  tb_net_is_direct_link(const char *ifname, const char *local_host, int is_wi
  * `ifname` when known. */
 int  tb_net_client_is_direct_link(int fd, char *ifname, size_t ifname_size);
 
+/* ---- PWE: accept policy ----------------------------------------------------
+ * What a new client may do, decided from the link it arrived on before a
+ * single byte of it is read. */
+enum tb_link_kind {
+    TB_LINK_NETWORK = 0,   /* Wi-Fi, Ethernet LAN, VPN, unknown */
+    TB_LINK_LOOPBACK,      /* this Mac (tests, local tools) */
+    TB_LINK_CABLE          /* Thunderbolt Bridge, or wired link-local (USB) */
+};
+
+/* `direct` is tb_net_client_is_direct_link's verdict for `ifname`. */
+enum tb_link_kind tb_net_link_kind(const char *ifname, int direct);
+
+struct tb_accept_policy {
+    int accept;      /* 0: close the socket before reading anything */
+    int pairing;     /* may pair (the iMac shows a code): the cable only */
+    int plaintext;   /* may stay unencrypted (compatibility mode) */
+};
+
+/* network_allowed: the build accepts every interface (DIRECT_LINK_ONLY=0) or
+ * the user set AllowLocalNetwork. compat_mode: unencrypted connections are
+ * allowed (AllowUnencryptedConnections).
+ *   cable    -> accepted; pairing; unencrypted if compat_mode
+ *   loopback -> accepted; no pairing; unencrypted if compat_mode
+ *   network  -> refused unless network_allowed; then encrypted sessions of
+ *               an already paired Mac only (no pairing, never unencrypted) */
+struct tb_accept_policy tb_net_accept_policy(enum tb_link_kind link,
+                                             int network_allowed, int compat_mode);
+
 /* ---- PWE: secure connection (tb_conn.c) ----------------------------------
  * One client connection: bytes in -> packets -> handshake or decryption ->
  * the usual packet callback. A connection whose first packet is SEC_HELLO is

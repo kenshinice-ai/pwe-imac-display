@@ -277,6 +277,35 @@ int tb_net_client_is_direct_link(int fd, char *ifname, size_t ifname_size) {
     return direct;
 }
 
+/* ---- PWE: accept policy (net.h) ------------------------------------------ */
+enum tb_link_kind tb_net_link_kind(const char *ifname, int direct) {
+    if (!direct || !ifname || !*ifname) return TB_LINK_NETWORK;
+    if (strncmp(ifname, "lo", 2) == 0) return TB_LINK_LOOPBACK;
+    return TB_LINK_CABLE;
+}
+
+struct tb_accept_policy tb_net_accept_policy(enum tb_link_kind link,
+                                             int network_allowed, int compat_mode) {
+    struct tb_accept_policy p = { 0, 0, 0 };
+    switch (link) {
+    case TB_LINK_CABLE:
+        p.accept = 1;
+        p.pairing = 1;
+        p.plaintext = compat_mode != 0;
+        break;
+    case TB_LINK_LOOPBACK:
+        p.accept = 1;
+        p.plaintext = compat_mode != 0;
+        break;
+    case TB_LINK_NETWORK:
+    default:
+        /* Only a paired Mac's encrypted session; pairing stays on the cable. */
+        p.accept = network_allowed != 0;
+        break;
+    }
+    return p;
+}
+
 int tb_net_get_tb_ip(char *buf, size_t bufsz) {
     struct ifaddrs *ifap = NULL;
     if (getifaddrs(&ifap) != 0) return -1;

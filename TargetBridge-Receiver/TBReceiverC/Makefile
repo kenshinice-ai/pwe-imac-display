@@ -35,6 +35,13 @@ CFLAGS   += -DTB_RECEIVER_COMPACT_IDLE=$(COMPACT_IDLE)
 OFFER_LOGIN_ITEM ?= 0
 CFLAGS   += -DTB_RECEIVER_OFFER_LOGIN_ITEM=$(OFFER_LOGIN_ITEM)
 
+# 1 = accept senders only over direct links (Thunderbolt Bridge, USB, loopback)
+# unless the user turns on AllowLocalNetwork; 0 = accept on every interface.
+# Either way a sender on any other link must resume an encrypted, already
+# paired session (net.h, tb_net_accept_policy).
+DIRECT_LINK_ONLY ?= 0
+CFLAGS   += -DTB_RECEIVER_DIRECT_LINK_ONLY=$(DIRECT_LINK_ONLY)
+
 LDFLAGS  += $(shell $(PKG) --libs libavcodec libavutil libswscale sdl2)
 
 # ---- PWE: pairing and encrypted sessions -----------------------------------
@@ -57,7 +64,7 @@ ifeq ($(UNAME_S),Darwin)
 LDFLAGS  += -framework ApplicationServices -framework AppKit -framework CoreFoundation -framework CoreGraphics -framework CoreText -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework IOSurface -framework CoreServices -framework CoreAudio -framework SystemConfiguration -framework ServiceManagement
 endif
 
-C_SRC = src/main.c src/net.c src/decoder.c src/display.c src/input_queue.c src/idle_watchdog.c src/receiver_profile.c src/tb_i18n.c
+C_SRC = src/main.c src/net.c src/audio_ring.c src/decoder.c src/display.c src/input_queue.c src/idle_watchdog.c src/receiver_profile.c src/tb_i18n.c
 # Receiver rendering (PWE 1.1): frame timing behind TB_RECEIVER_TRACE=1, Metal
 # zero-copy video paced to the display refresh.
 C_SRC += src/tb_trace.c src/tb_vsync.c
@@ -88,7 +95,7 @@ src/pwe_%.o: $(SEC_DIR)/pwe_%.c $(SEC_DIR)/pwe_secure.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
-	rm -f $(OBJ) $(BIN) $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEIVER_PROFILE_BIN) test_monitor_shield
+	rm -f $(OBJ) $(BIN) $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEIVER_PROFILE_BIN) $(TEST_AUDIO_RING_BIN) test_monitor_shield
 	rm -f $(PWE_RENDER_TEST_BINS)
 	rm -f $(TEST_SECURE_BIN) bench_secure secure_receiver secure_peer
 	rm -rf *.dSYM
@@ -104,6 +111,7 @@ TEST_BIN = test_net_parser
 TEST_INPUT_QUEUE_BIN = test_input_queue
 TEST_IDLE_WATCHDOG_BIN = test_idle_watchdog
 TEST_RECEIVER_PROFILE_BIN = test_receiver_profile
+TEST_AUDIO_RING_BIN = test_audio_ring
 
 test_net_parser: tests/test_net_parser.c src/net.c src/net.h src/proto.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_net_parser.c src/net.c $(TEST_LDFLAGS) -o $@
@@ -113,6 +121,9 @@ $(TEST_INPUT_QUEUE_BIN): tests/test_input_queue.c src/input_queue.c src/input_qu
 
 $(TEST_IDLE_WATCHDOG_BIN): tests/test_idle_watchdog.c src/idle_watchdog.c src/idle_watchdog.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_idle_watchdog.c src/idle_watchdog.c -o $@
+
+$(TEST_AUDIO_RING_BIN): tests/test_audio_ring.c src/audio_ring.c src/audio_ring.h
+	$(CC) $(TEST_CFLAGS) -Isrc tests/test_audio_ring.c src/audio_ring.c -o $@
 
 $(TEST_RECEIVER_PROFILE_BIN): tests/test_receiver_profile.c src/receiver_profile.c src/receiver_profile.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_receiver_profile.c src/receiver_profile.c -o $@
@@ -151,11 +162,12 @@ bench-secure: bench_secure
 	./bench_secure --bench
 # ---- end PWE ---------------------------------------------------------------
 
-test: $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEIVER_PROFILE_BIN) $(PWE_RENDER_TEST_BINS) $(TEST_SECURE_BIN)
+test: $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEIVER_PROFILE_BIN) $(TEST_AUDIO_RING_BIN) $(PWE_RENDER_TEST_BINS) $(TEST_SECURE_BIN)
 	./$(TEST_BIN)
 	./$(TEST_INPUT_QUEUE_BIN)
 	./$(TEST_IDLE_WATCHDOG_BIN)
 	./$(TEST_RECEIVER_PROFILE_BIN)
+	./$(TEST_AUDIO_RING_BIN)
 	for t in $(PWE_RENDER_TEST_BINS); do ./$$t || exit 1; done
 	./$(TEST_SECURE_BIN)
 
