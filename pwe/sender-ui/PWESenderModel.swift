@@ -231,6 +231,17 @@ enum PWEConnection: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// How the iMac draws the picture. The raw value travels in the hello as
+/// "receiverRenderer". On iMac18,3 (2026-10-20, BASELINE "E 组") Metal used
+/// 25–40 % less of the iMac's CPU; OpenGL measured 11–13 ms lower and dropped
+/// no frames, but its trace stops at the hand-off to the window server while
+/// Metal's runs to the screen. Lee: keep both, OpenGL by default.
+enum PWERendering: String, CaseIterable, Identifiable {
+    case openGL = "opengl"
+    case metal
+    var id: String { rawValue }
+}
+
 @MainActor
 final class PWESenderModel: ObservableObject {
     @Published private(set) var phase: PWEPhase = .searching
@@ -336,6 +347,10 @@ final class PWESenderModel: ObservableObject {
         static let inputRole = "pwe.inputRole"
         /// Set once 1.1 has turned off a Network Link inherited from 1.0.x.
         static let networkLinkReset = "pwe.networkLinkReset.1.1"
+        /// [receiver identity: PWERendering raw value]
+        static let renderings = "pwe.renderings"
+        /// The last rendering chosen: what an iMac with nothing remembered gets.
+        static let rendering = "pwe.rendering"
         /// Upstream's per-receiver display profile, a second memory for the picture.
         static let upstreamDisplayProfiles = "fd.tbdisplaysender.receiverDisplayProfiles.v1"
     }
@@ -426,6 +441,7 @@ final class PWESenderModel: ObservableObject {
 
     private func refresh() {
         guard let service else { return }
+        syncRendering()
         let retrying = TBSenderAutomation.isConnectingAutomatically
         if wasRetrying, !retrying, !pausedUntilReplug {
             NSLog("[pwe] the engine stopped retrying; waiting for a replug")
@@ -549,6 +565,7 @@ final class PWESenderModel: ObservableObject {
         if let preset = rememberedPicture(for: receiverKey) ?? defaultPicture {
             components.queryItems?.append(URLQueryItem(name: "preset", value: preset.rawValue))
         }
+        syncRendering()
         if let url = components.url { TBSenderAutomation.handle(url: url) }
         // The engine has started (or, with retry=0, ended) its retrying already;
         // that change is ours, not one to read as a Disconnect.
@@ -744,6 +761,41 @@ final class PWESenderModel: ObservableObject {
 
     var pictureChoices: [TBDisplayCapturePreset] {
         Self.pictureChoices.contains(picture) ? Self.pictureChoices : Self.pictureChoices + [picture]
+    }
+
+    // MARK: - iMac rendering
+
+    /// How the iMac draws the picture, remembered per iMac like the picture. An
+    /// iMac with nothing remembered gets the last choice made, so the setting
+    /// never snaps back while no iMac is known. The receiver applies it when a
+    /// connection starts: changing it while connected reconnects.
+    var rendering: PWERendering {
+        get { rendering(for: receiverKey) }
+        set {
+            guard newValue != rendering else { return }
+            if let key = receiverKey {
+                var renderings = defaults.dictionary(forKey: Keys.renderings) as? [String: String] ?? [:]
+                renderings[key] = newValue.rawValue
+                defaults.set(renderings, forKey: Keys.renderings)
+            }
+            defaults.set(newValue.rawValue, forKey: Keys.rendering)
+            objectWillChange.send()
+            reconnectIfShowing(because: "iMac rendering changed to \(newValue.rawValue)") { syncRendering() }
+        }
+    }
+
+    private func rendering(for key: String?) -> PWERendering {
+        if let key, let raw = (defaults.dictionary(forKey: Keys.renderings) as? [String: String])?[key],
+           let remembered = PWERendering(rawValue: raw) {
+            return remembered
+        }
+        return PWERendering(rawValue: defaults.string(forKey: Keys.rendering) ?? "") ?? .openGL
+    }
+
+    /// The engine sends it in every hello, whichever path connects: here, the
+    /// engine's own retries, or the Full Console.
+    private func syncRendering() {
+        session?.pweReceiverRenderer = rendering.rawValue
     }
 
     // MARK: - Connected controls
@@ -1134,7 +1186,7 @@ final class PWESenderModel: ObservableObject {
             if let rate = session.cableTestResult { lines.append(String(format: "Cable test: %.2f Gbit/s", rate)) }
             lines.append("Security: \(session.pweSecurity)")
         }
-        lines.append("PWE: picture=\(picture.rawValue) sound=\(sound.rawValue) mode=\(displayMode.rawValue) autoConnect=\(autoConnect) login=\(launchAtLogin) input=\(inputRole.rawValue)")
+        lines.append("PWE: picture=\(picture.rawValue) sound=\(sound.rawValue) mode=\(displayMode.rawValue) autoConnect=\(autoConnect) login=\(launchAtLogin) input=\(inputRole.rawValue) rendering=\(rendering.rawValue)")
         lines.append("")
         lines.append("Log (last 30 minutes):")
         lines.append(contentsOf: PWELogExport.recentLines(minutes: 30))

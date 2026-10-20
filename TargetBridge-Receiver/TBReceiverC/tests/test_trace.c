@@ -85,6 +85,7 @@ static void test_summary(void) {
     CHECK(strstr(text, "upload 2.0/2.0") != NULL);
     CHECK(strstr(text, "display 13.0/13.0") != NULL);
     CHECK(strstr(text, "total 20.0/60.0") != NULL);
+    CHECK(strstr(text, "handoff 7.0/7.0") != NULL);   /* only frame a was submitted */
     /* exactly one summary line */
     const char *first = strstr(text, "[trace]");
     CHECK(first != NULL && strstr(first + 1, "[trace]") == NULL);

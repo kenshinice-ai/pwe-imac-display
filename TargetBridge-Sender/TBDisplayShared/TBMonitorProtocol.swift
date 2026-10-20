@@ -45,6 +45,9 @@ struct TBMonitorHelloReceiver: Codable {
     var captureWidth: Int?
     var captureHeight: Int?
     var codec: String?
+    /// PWE: how the receiver draws the video, "opengl" or "metal" (PWE Settings ›
+    /// Advanced). Absent, the receiver uses its default; older receivers ignore it.
+    var receiverRenderer: String? = nil
 }
 
 struct TBMonitorDisplayProfile: Codable {

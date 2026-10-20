@@ -488,6 +488,56 @@ enum TBReceiverPointerGeometry {
     }
 }
 
+/// Where a relayed mouse move from the receiver (input role receiverMaster) puts
+/// this Mac's pointer. Global display coordinates: Quartz, top-left origin, points.
+enum TBRelayedPointer {
+    /// The point a relayed move starts from. The last injected point is exact
+    /// while the pointer is still where this relay left it: the real position
+    /// can lag a posted drag by an event or two. Anything else moved the pointer
+    /// (the trackpad, an app, a display change, a new session): start from where
+    /// it really is. Without this the next iMac move threw the pointer back to
+    /// the stale spot, often on another screen (T30, iMac18,3, 2026-10-20).
+    static func start(cached: CGPoint?, recentTargets: [CGPoint], real: CGPoint?) -> CGPoint? {
+        guard let cached else { return real }
+        guard let real else { return cached }
+        let ours = ([cached] + recentTargets).contains { abs($0.x - real.x) <= 2 && abs($0.y - real.y) <= 2 }
+        return ours ? cached : real
+    }
+
+    /// `current` moved by (dx, dy), kept on a display. A target on a display is
+    /// taken as is. One in the gap beside a display keeps the axis that still
+    /// lands on a display and pins the other inside it, so a diagonal move near
+    /// the end of a shared edge slides across, as the trackpad does, instead of
+    /// stopping on the old display. Otherwise the pointer stays on the display it
+    /// is on (the nearest one if it is on none), pinned at that display's edge.
+    static func target(from current: CGPoint, dx: Int, dy: Int, displays: [CGRect]) -> CGPoint {
+        let raw = CGPoint(x: current.x + CGFloat(dx), y: current.y + CGFloat(dy))
+        guard !displays.isEmpty else { return raw }
+        if displays.contains(where: { $0.contains(raw) }) { return raw }
+
+        let alongX = CGPoint(x: raw.x, y: current.y)
+        let alongY = CGPoint(x: current.x, y: raw.y)
+        let tries = abs(dx) >= abs(dy) ? [alongX, alongY] : [alongY, alongX]
+        for point in tries {
+            if let frame = displays.first(where: { $0.contains(point) }) { return pin(raw, to: frame) }
+        }
+        let frame = displays.first(where: { $0.contains(current) })
+            ?? displays.min { distance(current, $0) < distance(current, $1) }!
+        return pin(raw, to: frame)
+    }
+
+    private static func pin(_ point: CGPoint, to frame: CGRect) -> CGPoint {
+        CGPoint(x: min(max(point.x, frame.minX), frame.maxX - 1),
+                y: min(max(point.y, frame.minY), frame.maxY - 1))
+    }
+
+    private static func distance(_ point: CGPoint, _ frame: CGRect) -> CGFloat {
+        let x = max(frame.minX - point.x, 0, point.x - (frame.maxX - 1))
+        let y = max(frame.minY - point.y, 0, point.y - (frame.maxY - 1))
+        return x * x + y * y
+    }
+}
+
 enum TBInputGestureMode: String, CaseIterable, Identifiable {
     case native
     case relayToSlave
@@ -1509,6 +1559,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             inputRelayActive = (inputControlRole == .senderMaster)
             if inputControlRole != .receiverMaster {
                 injectedRemoteMouseLocation = nil
+                recentInjectedMouseLocations.removeAll()
                 injectedLeftClickTracker.reset()
                 releaseInjectedModifiersIfNeeded()
                 remoteHeldModifierKeyCodes.removeAll()
@@ -1528,6 +1579,9 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     // PWE: pairing and encrypted sessions (TBDisplayShared/PWESecureLink.swift).
     private var pweLink: PWESecureLink?
     @Published private(set) var pweSecurity: PWESecurityState = .none
+    /// PWE: the receiver's renderer for the next connection ("opengl" or "metal"),
+    /// sent in the hello; nil leaves it to the receiver. Set by PWESenderModel.
+    var pweReceiverRenderer: String?
     private var pwePendingCode: String?
     private var pweAllowUnencrypted = false
     private var pweIdentityChanged = false
@@ -1597,6 +1651,8 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     private var pointerImageID: UInt32 = 0
     private var lastPointerPicture: TBMonitorCursorImage?
     private var injectedRemoteMouseLocation: CGPoint?
+    /// The points injected just before the last one (TBRelayedPointer.start).
+    private var recentInjectedMouseLocations: [CGPoint] = []
     private var cachedLocalInputEventSource: CGEventSource?
     private var injectedLeftClickTracker = TBInjectedClickStateTracker()
     private let localPointerModifierBridge = TBLocalPointerModifierBridge()
@@ -2369,7 +2425,8 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                 captureSource: captureSource.title(language),
                 captureWidth: preset.width,
                 captureHeight: preset.height,
-                codec: codecName(for: helloCodecType)
+                codec: codecName(for: helloCodecType),
+                receiverRenderer: pweReceiverRenderer
             )
         ) else { return }
         send(packet)
@@ -2586,32 +2643,12 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         activeDisplayBounds().first(where: { $0.contains(point) })
     }
 
-    private func clampedMouseTarget(from current: CGPoint, dx: Int, dy: Int) -> CGPoint {
-        let rawTarget = CGPoint(x: current.x + CGFloat(dx), y: current.y + CGFloat(dy))
-        let displays = activeDisplayBounds()
-        guard !displays.isEmpty else { return rawTarget }
-
-        // If the target lands on any display, allow it unchanged. This lets the
-        // relayed cursor cross from one screen onto an adjacent one (e.g. the
-        // receiver-backed virtual extended display), matching how the pointer
-        // behaves with the local touchpad. Clamping to a single screen's bounds
-        // previously trapped the pointer on the sender's main display (issue #97).
-        if displays.contains(where: { $0.contains(rawTarget) }) {
-            return rawTarget
-        }
-
-        // Off every display: keep the pointer on the display it is currently on so
-        // the injected cursor can never get lost in a gap between displays.
-        let frame = displays.first(where: { $0.contains(current) }) ?? displays[0]
-        let minX = frame.minX
-        let maxX = frame.maxX - 1
-        let minY = frame.minY
-        let maxY = frame.maxY - 1
-
-        return CGPoint(
-            x: min(max(rawTarget.x, minX), maxX),
-            y: min(max(rawTarget.y, minY), maxY)
-        )
+    /// Where the relayed pointer is now: the last injected point, unless
+    /// something else has moved the pointer since (TBRelayedPointer.start).
+    private func relayedMouseLocation() -> CGPoint? {
+        TBRelayedPointer.start(cached: injectedRemoteMouseLocation,
+                               recentTargets: recentInjectedMouseLocations,
+                               real: currentLocalMouseLocation())
     }
 
     private func localInputEventSource() -> CGEventSource? {
@@ -2634,8 +2671,13 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
 
     private func postLocalMouseMove(dx: Int, dy: Int, type: CGEventType = .mouseMoved, button: CGMouseButton = .left) {
         logLocalInputInjectionStateIfNeeded(context: "mouseMove")
-        guard let current = injectedRemoteMouseLocation ?? currentLocalMouseLocation() else { return }
-        let target = clampedMouseTarget(from: current, dx: dx, dy: dy)
+        guard let current = relayedMouseLocation() else { return }
+        let target = TBRelayedPointer.target(from: current, dx: dx, dy: dy, displays: activeDisplayBounds())
+        if let previous = injectedRemoteMouseLocation, previous == current {
+            recentInjectedMouseLocations = Array((recentInjectedMouseLocations + [previous]).suffix(8))
+        } else {
+            recentInjectedMouseLocations.removeAll()   // started again from the real pointer
+        }
         injectedRemoteMouseLocation = target
         let shouldWarp = (type == .mouseMoved)
         if shouldWarp {
@@ -2664,7 +2706,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
 
     private func postLocalMouseButton(type: CGEventType, button: CGMouseButton, clickCount: Int? = nil) {
         logLocalInputInjectionStateIfNeeded(context: "mouseButton")
-        guard let current = injectedRemoteMouseLocation ?? currentLocalMouseLocation() else { return }
+        guard let current = relayedMouseLocation() else { return }
         guard let event = TBInjectedPointerEvent.mouse(source: localInputEventSource(), type: type,
             position: current, button: button, modifiers: currentInjectedModifierFlags()) else { return }
         if let clickCount {

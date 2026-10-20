@@ -294,6 +294,13 @@ struct PWEStrings {
     var reconnectNotice: String { t("Reconnecting to apply the change…", "正在重新连接以应用更改…") }
     var largeCursor: String { t("Larger pointer on the iMac", "iMac 上使用大指针") }
     var changesReconnect: String { t("Changes reconnect for a moment.", "更改后会重新连接一下。") }
+    var iMacRendering: String { t("iMac rendering", "iMac 上的渲染方式") }
+    func renderingName(_ rendering: PWERendering) -> String {
+        switch rendering {
+        case .openGL: return t("Lowest latency (OpenGL)", "低延迟（OpenGL）")
+        case .metal: return t("Lower power (Metal)", "省电（Metal）")
+        }
+    }
     var iMacVolume: String { t("iMac volume", "iMac 音量") }
     var experimental: String { t("Experimental", "实验性") }
     var inputTitle: String { t("Share keyboard and mouse", "共享键盘和鼠标") }

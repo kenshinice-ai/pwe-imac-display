@@ -11,9 +11,9 @@
 #define TB_TRACE_SLOTS   256   /* frames in flight that can still be stamped */
 #define TB_TRACE_SAMPLES 1024  /* per stage per second; 1024 > any real frame rate */
 
-enum { STAGE_DECODE, STAGE_UPLOAD, STAGE_SUBMIT, STAGE_DISPLAY, STAGE_TOTAL, STAGE_GAP, STAGE_COUNT };
+enum { STAGE_DECODE, STAGE_UPLOAD, STAGE_SUBMIT, STAGE_DISPLAY, STAGE_TOTAL, STAGE_GAP, STAGE_HANDOFF, STAGE_COUNT };
 static const char *const k_stage_names[STAGE_COUNT] = {
-    "decode", "upload", "submit", "display", "total", "gap"
+    "decode", "upload", "submit", "display", "total", "gap", "handoff"
 };
 
 struct tb_trace_slot {
@@ -88,6 +88,7 @@ static void close_slot(struct tb_trace_slot *s) {
     push_sample(STAGE_SUBMIT,  t[TB_TRACE_TEX_READY], t[TB_TRACE_SUBMITTED]);
     push_sample(STAGE_DISPLAY, t[TB_TRACE_SUBMITTED], t[TB_TRACE_PRESENTED]);
     push_sample(STAGE_TOTAL,   t[TB_TRACE_ARRIVE],    t[TB_TRACE_PRESENTED]);
+    push_sample(STAGE_HANDOFF, t[TB_TRACE_ARRIVE],    t[TB_TRACE_SUBMITTED]);
     g_win.shown++;
     if (t[TB_TRACE_DECODED] && t[TB_TRACE_PRESENTED] > t[TB_TRACE_DECODED] &&
         t[TB_TRACE_PRESENTED] - t[TB_TRACE_DECODED] > 2 * g_refresh_ns) {

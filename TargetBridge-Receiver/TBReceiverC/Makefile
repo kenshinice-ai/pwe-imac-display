@@ -63,6 +63,8 @@ C_SRC = src/main.c src/net.c src/decoder.c src/display.c src/input_queue.c src/i
 C_SRC += src/tb_trace.c src/tb_vsync.c
 # Receiver-drawn pointer: the picture packet (0x39).
 C_SRC += src/tb_cursor_image.c
+# The log file, ~/Library/Logs/<app>/receiver.log (PWE 1.1).
+C_SRC += src/tb_log.c
 OBJC_SRC_PWE_RENDER = src/tb_metal_video.m
 LDFLAGS += -framework Metal -framework QuartzCore
 OBJC_SRC = src/tb_gesture_bridge.m src/tb_display_tweaks.m src/tb_login_item.m
@@ -116,7 +118,7 @@ $(TEST_RECEIVER_PROFILE_BIN): tests/test_receiver_profile.c src/receiver_profile
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_receiver_profile.c src/receiver_profile.c -o $@
 
 # Receiver rendering (PWE 1.1): tests for the pure-C parts.
-PWE_RENDER_TEST_BINS = test_trace test_metal_video test_cursor_image
+PWE_RENDER_TEST_BINS = test_trace test_metal_video test_cursor_image test_log
 
 
 # ---- PWE: secure layer tests (need libsodium; AddressSanitizer on) -----------
@@ -159,6 +161,9 @@ test: $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEI
 
 test_trace: tests/test_trace.c src/tb_trace.c src/tb_trace.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_trace.c src/tb_trace.c -o $@
+
+test_log: tests/test_log.c src/tb_log.c src/tb_log.h
+	$(CC) $(TEST_CFLAGS) -Isrc tests/test_log.c src/tb_log.c -o $@
 
 test_cursor_image: tests/test_cursor_image.c src/tb_cursor_image.c src/tb_cursor_image.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_cursor_image.c src/tb_cursor_image.c -o $@
