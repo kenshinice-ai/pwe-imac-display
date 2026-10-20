@@ -194,6 +194,16 @@ enum PWESound: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// When changing the sound choice must reconnect (PWESoundRulesTests). The
+/// engine captures system audio only when relay is on as the picture starts,
+/// so turning relay on reconnects unless this connection's capture already
+/// has audio (relay was on when it started, then turned off).
+enum PWESoundRules {
+    static func needsReconnect(relayOn: Bool, relayWasOn: Bool, capturingAudio: Bool) -> Bool {
+        relayOn && !relayWasOn && !capturingAudio
+    }
+}
+
 enum PWEDisplayMode: String, CaseIterable, Identifiable {
     case extended, mirror
     var id: String { rawValue }
@@ -755,16 +765,19 @@ final class PWESenderModel: ObservableObject {
             let relayOn = newValue != .onlyThisMac
             if relayOn { soundOnlyOnIMac = newValue == .onlyIMac }
             objectWillChange.send()
-            if relayOn, !relayWasOn {
-                // The engine opens its audio capture only if relay was on when the
-                // picture started, and its add-on switch refuses a live connection.
+            if PWESoundRules.needsReconnect(relayOn: relayOn, relayWasOn: relayWasOn,
+                                            capturingAudio: session?.pweCapturingAudio ?? false) {
+                // The engine captures audio only if relay was on when the picture
+                // started, and records nothing it does not send.
                 reconnectIfShowing(because: "sound now relayed to the iMac") {
                     enableAddon(.audioRelay)
                     session?.audioEnabled = true
                     service.audioEnabled = true
                 }
             } else {
-                // Turning relay off, or moving between iMac-only and both, takes effect at once.
+                // Turning relay off (the capture's audio is dropped, not sent), on
+                // again over that capture, or moving between iMac-only and both
+                // takes effect at once.
                 session?.audioEnabled = relayOn
                 service.audioEnabled = relayOn
             }

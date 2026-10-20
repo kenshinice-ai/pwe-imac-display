@@ -1532,6 +1532,17 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     private var pweAllowUnencrypted = false
     private var pweIdentityChanged = false
     private var pweHelloTimeout: DispatchWorkItem?
+    /// PWE: the current dial is a redial of the last bridge address (TBBridgeRedial).
+    /// Until it connects, its failure is expected and leaves the status alone.
+    var pweSpeculativeDial = false
+    /// PWE: the running capture includes system audio (relay was on when it
+    /// started). Relay can then be turned off and on again inside this session;
+    /// while it is off, processAudio drops the audio before conversion (T14).
+    private(set) var pweCapturingAudio = false
+    /// PWE: when the current capture pipeline started, and when the screens last
+    /// went to sleep or locked (system uptime). See pweCaptureNeedsWakeRestart.
+    private var pweCaptureStartedAt: TimeInterval?
+    private var pweScreensAsleepAt: TimeInterval?
     #if DEBUG
     /// Tests only: stream this many generated frames through the real encoder
     /// and the encrypted send path instead of capturing the screen (needs no
@@ -1886,6 +1897,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                 case .ready:
                     self.connectTimeoutWorkItem?.cancel()
                     self.connectTimeoutWorkItem = nil
+                    self.pweSpeculativeDial = false
                     self.isConnected = true
                     TBLog.connection.info("connect: ready — \(self.receiverIP, privacy: .public) via \(self.connectInterfaceName ?? "?", privacy: .public)")
                     self.setStatus(.waitingDisplayProfile)
@@ -1900,6 +1912,11 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                     self.lastConnectionStateDetail = "waiting(\(error.localizedDescription))"
                     TBLog.connection.warning("connect: waiting — \(error.localizedDescription, privacy: .public)")
                 case .failed(let error):
+                    if self.pweSpeculativeDial, !self.isConnected {
+                        TBLog.connection.info("connect: redial failed — \(error.localizedDescription, privacy: .public)")
+                        self.pweAbandonSpeculativeDial()
+                        return
+                    }
                     self.lastConnectionStateDetail = "failed(\(error.localizedDescription))"
                     let detail = TBConnectionDiagnostics.failureDetail(
                         receiverHost: self.receiverIP,
@@ -1956,6 +1973,32 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         }
         routeLossWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: workItem)
+    }
+
+    /// PWE: end a redial of the last bridge address (TBBridgeRedial) that has
+    /// not connected. Cancel the dial at once rather than through stop(): a
+    /// teardown queued on a dial that connects a moment later would hold the
+    /// receiver's only connection while the next redial arrives. The status
+    /// stays as it was; the retry loop decides what comes next.
+    func pweAbandonSpeculativeDial() {
+        guard pweSpeculativeDial else { return }
+        pweSpeculativeDial = false
+        guard !isConnected, let conn = connection else { return }
+        connectTimeoutWorkItem?.cancel()
+        connectTimeoutWorkItem = nil
+        conn.stateUpdateHandler = nil
+        conn.viabilityUpdateHandler = nil
+        conn.cancel()
+        connection = nil
+        pweLink = nil
+    }
+
+    /// PWE: the receiver is listed but has no address this transport can dial
+    /// (a Network Link to a receiver announced on the cable only). Say so instead
+    /// of leaving the last status, which pointed at the cable.
+    func pweReportNoAddress(_ reason: String) {
+        guard connection == nil, !isConnected, !isStreaming else { return }
+        setStatus(.connectionFailed(reason))
     }
 
     func startCableTest() {
@@ -2114,6 +2157,9 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     ) {
         let connectionToClose = connection
         let linkToClose = pweLink
+        pweSpeculativeDial = false
+        pweCapturingAudio = false
+        pweCaptureStartedAt = nil
         pweHelloTimeout?.cancel()
         pweHelloTimeout = nil
         // PWE: a code is typed into a live exchange only. With the connection
@@ -3088,6 +3134,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             )
             guard pipeline.start() else { return false }
             self.pipeline = pipeline
+            pweCaptureStartedAt = ProcessInfo.processInfo.systemUptime
             TBLog.connection.info("capture: pipeline started preset=\(preset.rawValue, privacy: .public) source=\(String(describing: self.captureSource), privacy: .public) codec=\(codecName, privacy: .public) rawNV12=\(usesRawNV12, privacy: .public)")
 
             let display: SCDisplay
@@ -3178,6 +3225,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             }
             try await stream.startCapture()
             scStream = stream
+            pweCapturingAudio = shouldRelayAudio
             isStreaming = true
             if usesCursorOverlay { startCursorUpdates(displayID: display.displayID) }
             beginCaptureActivity(wakeDisplay: false)
@@ -3312,6 +3360,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             try await stream.startCapture()
             captureDelegate = delegate
             scStream = stream
+            pweCapturingAudio = true
             TBLog.connection.info("capture: auxiliary audio stream active beside direct video")
         } catch {
             TBLog.connection.warning("capture: auxiliary audio unavailable: \(error.localizedDescription, privacy: .public)")
@@ -3915,6 +3964,25 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                 self?.handleSystemWake()
             }
         }
+        // PWE: the other half of each wake signal, so a wake can tell whether
+        // the running capture lived through the sleep (pweCaptureNeedsWakeRestart).
+        let asleep: @Sendable (Notification) -> Void = { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.pweScreensAsleepAt = ProcessInfo.processInfo.systemUptime
+            }
+        }
+        for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification] {
+            wakeObservers.append(
+                NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: nil, using: asleep)
+            )
+        }
+        for name in ["com.apple.screenIsLocked", "com.apple.screensaver.didstart"] {
+            wakeObservers.append(
+                DistributedNotificationCenter.default().addObserver(
+                    forName: Notification.Name(name), object: nil, queue: nil, using: asleep
+                )
+            )
+        }
 
         wakeObservers.append(
             NSWorkspace.shared.notificationCenter.addObserver(
@@ -4056,7 +4124,23 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
 
     private func handleSystemWake() {
         guard autoRestartOnWake else { return }
+        guard Self.pweCaptureNeedsWakeRestart(captureStartedAt: pweCaptureStartedAt, screensAsleepAt: pweScreensAsleepAt) else {
+            if isStreaming {
+                TBLog.connection.info("capture: started after the screens slept; no restart after wake")
+            }
+            return
+        }
         scheduleCaptureRestart(reason: "system wake", delaySeconds: 1.0)
+    }
+
+    /// PWE: restart capture after a wake only if it was running when the screens
+    /// went to sleep or locked. A session that connected after the wake has a
+    /// fresh capture; restarting it 3 s after its first frame only interrupts
+    /// the picture (T15: screen unlock, iMac18,3, 2026-10-20). With no sleep seen
+    /// since launch, keep upstream's restart.
+    nonisolated static func pweCaptureNeedsWakeRestart(captureStartedAt: TimeInterval?, screensAsleepAt: TimeInterval?) -> Bool {
+        guard let captureStartedAt, let screensAsleepAt else { return true }
+        return captureStartedAt <= screensAsleepAt
     }
 
     func restartCaptureNow() {
@@ -4118,6 +4202,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         endCaptureActivity()
         pipeline?.stop()
         pipeline = nil
+        pweCapturingAudio = false
         isStreaming = false
         liveMetrics.senderFPS = 0
         senderFPS = 0
@@ -4509,6 +4594,9 @@ extension TBDisplaySenderSession {
     func pweSessionReady() {
         pweHelloTimeout?.cancel()
         pweHelloTimeout = nil
+        if transportKind == .thunderboltBridge {
+            TBBridgeRedial.remember(receiverIP, for: selectedReceiverID)
+        }
         startHeartbeat()
         sendHello()
         sendInputControlModeUpdate()
