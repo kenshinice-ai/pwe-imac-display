@@ -707,16 +707,18 @@ final class PWESenderModel: ObservableObject {
             let relayOn = newValue != .onlyThisMac
             if relayOn { soundOnlyOnIMac = newValue == .onlyIMac }
             objectWillChange.send()
-            if relayOn, !relayWasOn {
-                // The engine opens its audio capture only if relay was on when the
-                // picture started, and its add-on switch refuses a live connection.
+            let capturingAudio = session?.pweCapturingAudio ?? false
+            if relayOn, !relayWasOn, !capturingAudio {
+                // The engine captures audio only if its add-on was on when the
+                // picture started; with it on, relay starts inside the session.
                 reconnectIfShowing(because: "sound now relayed to the iMac") {
                     enableAddon(.audioRelay)
                     session?.audioEnabled = true
                     service.audioEnabled = true
                 }
             } else {
-                // Turning relay off, or moving between iMac-only and both, takes effect at once.
+                // Turning relay on or off over a capture that includes audio, or
+                // moving between iMac-only and both, takes effect at once.
                 session?.audioEnabled = relayOn
                 service.audioEnabled = relayOn
             }
