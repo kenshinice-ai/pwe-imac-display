@@ -1538,6 +1538,10 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     /// PWE: the running capture includes system audio, so relaying it can start
     /// inside this session (T14).
     private(set) var pweCapturingAudio = false
+    /// PWE: when the current capture pipeline started, and when the screens last
+    /// went to sleep or locked (system uptime). See pweCaptureNeedsWakeRestart.
+    private var pweCaptureStartedAt: TimeInterval?
+    private var pweScreensAsleepAt: TimeInterval?
     #if DEBUG
     /// Tests only: stream this many generated frames through the real encoder
     /// and the encrypted send path instead of capturing the screen (needs no
@@ -2154,6 +2158,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         let linkToClose = pweLink
         pweSpeculativeDial = false
         pweCapturingAudio = false
+        pweCaptureStartedAt = nil
         pweHelloTimeout?.cancel()
         pweHelloTimeout = nil
         if !pweSecurity.waitsForUser, pweSecurity != .checkingCode { pweSecurity = .none }
@@ -3122,6 +3127,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             )
             guard pipeline.start() else { return false }
             self.pipeline = pipeline
+            pweCaptureStartedAt = ProcessInfo.processInfo.systemUptime
             TBLog.connection.info("capture: pipeline started preset=\(preset.rawValue, privacy: .public) source=\(String(describing: self.captureSource), privacy: .public) codec=\(codecName, privacy: .public) rawNV12=\(usesRawNV12, privacy: .public)")
 
             let display: SCDisplay
@@ -3951,6 +3957,25 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                 self?.handleSystemWake()
             }
         }
+        // PWE: the other half of each wake signal, so a wake can tell whether
+        // the running capture lived through the sleep (pweCaptureNeedsWakeRestart).
+        let asleep: @Sendable (Notification) -> Void = { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.pweScreensAsleepAt = ProcessInfo.processInfo.systemUptime
+            }
+        }
+        for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification] {
+            wakeObservers.append(
+                NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: nil, using: asleep)
+            )
+        }
+        for name in ["com.apple.screenIsLocked", "com.apple.screensaver.didstart"] {
+            wakeObservers.append(
+                DistributedNotificationCenter.default().addObserver(
+                    forName: Notification.Name(name), object: nil, queue: nil, using: asleep
+                )
+            )
+        }
 
         wakeObservers.append(
             NSWorkspace.shared.notificationCenter.addObserver(
@@ -4092,7 +4117,23 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
 
     private func handleSystemWake() {
         guard autoRestartOnWake else { return }
+        guard Self.pweCaptureNeedsWakeRestart(captureStartedAt: pweCaptureStartedAt, screensAsleepAt: pweScreensAsleepAt) else {
+            if isStreaming {
+                TBLog.connection.info("capture: started after the screens slept; no restart after wake")
+            }
+            return
+        }
         scheduleCaptureRestart(reason: "system wake", delaySeconds: 1.0)
+    }
+
+    /// PWE: restart capture after a wake only if it was running when the screens
+    /// went to sleep or locked. A session that connected after the wake has a
+    /// fresh capture; restarting it 3 s after its first frame only interrupts
+    /// the picture (T15: screen unlock, iMac18,3, 2026-10-20). With no sleep seen
+    /// since launch, keep upstream's restart.
+    nonisolated static func pweCaptureNeedsWakeRestart(captureStartedAt: TimeInterval?, screensAsleepAt: TimeInterval?) -> Bool {
+        guard let captureStartedAt, let screensAsleepAt else { return true }
+        return captureStartedAt <= screensAsleepAt
     }
 
     func restartCaptureNow() {
