@@ -307,6 +307,8 @@ final class PWESenderModel: ObservableObject {
         // item is the app's way in and always shows. The stored value stays.
         static let setupFinished = "pwe.setupFinished"
         static let inputRole = "pwe.inputRole"
+        /// Set once 1.1 has turned off a Network Link inherited from 1.0.x.
+        static let networkLinkReset = "pwe.networkLinkReset.1.1"
         /// Upstream's per-receiver display profile, a second memory for the picture.
         static let upstreamDisplayProfiles = "fd.tbdisplaysender.receiverDisplayProfiles.v1"
     }
@@ -327,6 +329,7 @@ final class PWESenderModel: ObservableObject {
         self.inputRole = PWEInputRole(rawValue: defaults.string(forKey: Keys.inputRole) ?? "") ?? .off
         self.localMute = PWELocalAudioMute(defaults: defaults)
         refreshLaunchAtLogin()
+        resetNetworkLinkOnce()
 
         service.objectWillChange
             .receive(on: RunLoop.main)
@@ -961,6 +964,25 @@ final class PWESenderModel: ObservableObject {
 
     // Compression, render matching, keeping the displays awake and detailed
     // logging are left at the engine's defaults; the Full Console still sets them.
+
+    /// 1.1 starts with Network Link off. 1.0.x kept it in the same preferences,
+    /// so a Mac that tried it there dialled the iMac's old Wi-Fi address on the
+    /// first 1.1 launch (T12, T17 on the test Mac, 2026-10-20). Turned off once;
+    /// turning it on again in 1.1 sticks. Other preferences are left alone.
+    private func resetNetworkLinkOnce() {
+        guard let service, !defaults.bool(forKey: Keys.networkLinkReset) else { return }
+        defaults.set(true, forKey: Keys.networkLinkReset)
+        let overNetwork = service.sessions.filter { $0.transportKind == .networkLink }
+        guard networkLinkEnabled || !overNetwork.isEmpty else { return }
+        NSLog("[pwe] Network Link from an earlier version turned off; connecting over Thunderbolt")
+        // The engine moves its sessions back to Thunderbolt when the add-on goes off.
+        setAddon(.networkLink, enabled: false)
+        for session in overNetwork {
+            session.transportKind = .thunderboltBridge
+            session.receiverIP = ""   // a network address; Bonjour gives the bridge one
+            service.transportDidChange(for: session)
+        }
+    }
 
     var networkLinkEnabled: Bool {
         get { service?.availableTransportKinds.contains(.networkLink) ?? false }
