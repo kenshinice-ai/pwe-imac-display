@@ -277,28 +277,57 @@ static void in6_take_embedded_scope(struct in6_addr *addr, uint32_t *scope) {
     addr->s6_addr[3] = 0;
 }
 
-/* A bridge the system's network settings know: the Thunderbolt Bridge.
+/* Bridges the system's network settings know: the Thunderbolt Bridge.
  * SystemConfiguration lists configured bridges only, so a bridge made on the
- * fly for a virtual machine or Internet Sharing (bridge100, ...) is not one. */
-static int interface_is_cable_bridge(const char *name) {
-    if (!name || strncmp(name, "bridge", 6) != 0) return 0;
+ * fly for a virtual machine or Internet Sharing (bridge100, ...) is not one.
+ * Writes up to `max` names; returns how many there are. */
+static int listed_cable_bridges(char names[][IFNAMSIZ], int max) {
+    int n = 0;
 #if defined(__APPLE__)
     CFArrayRef interfaces = SCNetworkInterfaceCopyAll();
     if (!interfaces) return 0;
-    int found = 0;
     CFIndex count = CFArrayGetCount(interfaces);
-    for (CFIndex index = 0; index < count && !found; index++) {
+    for (CFIndex index = 0; index < count; index++) {
         SCNetworkInterfaceRef interface = (SCNetworkInterfaceRef)CFArrayGetValueAtIndex(interfaces, index);
         CFStringRef bsd_name = SCNetworkInterfaceGetBSDName(interface);
         char candidate[IFNAMSIZ] = {0};
-        if (bsd_name && CFStringGetCString(bsd_name, candidate, sizeof(candidate), kCFStringEncodingUTF8))
-            found = strcmp(candidate, name) == 0;
+        if (!bsd_name || !CFStringGetCString(bsd_name, candidate, sizeof(candidate), kCFStringEncodingUTF8)) continue;
+        if (strncmp(candidate, "bridge", 6) != 0) continue;
+        if (n < max) snprintf(names[n], IFNAMSIZ, "%s", candidate);
+        n++;
     }
     CFRelease(interfaces);
-    return found;
+#else
+    (void)names; (void)max;
+#endif
+    return n;
+}
+
+static int interface_is_cable_bridge(const char *name) {
+    if (!name || strncmp(name, "bridge", 6) != 0) return 0;
+#if defined(__APPLE__)
+    char names[8][IFNAMSIZ];
+    const int n = listed_cable_bridges(names, 8);
+    for (int i = 0; i < n && i < 8; i++)
+        if (strcmp(names[i], name) == 0) return 1;
+    return 0;
 #else
     return 1;
 #endif
+}
+
+int tb_net_cable_bridges(char *buf, size_t bufsz) {
+    if (!buf || bufsz == 0) return 0;
+    buf[0] = '\0';
+    char names[8][IFNAMSIZ];
+    const int n = listed_cable_bridges(names, 8);
+    size_t used = 0;
+    for (int i = 0; i < n && i < 8 && used < bufsz; i++) {
+        int w = snprintf(buf + used, bufsz - used, "%s%s", i ? ", " : "", names[i]);
+        if (w < 0) break;
+        used += (size_t)w;
+    }
+    return n;
 }
 
 /* Usable for a connection now. Optimistic duplicate address detection (the
@@ -417,10 +446,12 @@ int tb_net_is_link_local_ipv4(const char *host) {
     return a == 169 && b == 254 && c <= 255 && d <= 255;
 }
 
-int tb_net_is_direct_link(const char *ifname, const char *local_host, int is_wifi) {
+int tb_net_is_direct_link(const char *ifname, const char *local_host, int is_wifi,
+                          int is_cable_bridge) {
     if (!ifname || !*ifname) return 0;
     if (strncmp(ifname, "lo", 2) == 0) return 1;
-    if (strncmp(ifname, "bridge", 6) == 0) return 1;
+    /* PWE: only the Thunderbolt Bridge, as for IPv6. */
+    if (strncmp(ifname, "bridge", 6) == 0) return is_cable_bridge != 0;
     if (is_wifi) return 0;
     return is_likely_lan_interface_name(ifname) && tb_net_is_link_local_ipv4(local_host);
 }
@@ -460,7 +491,8 @@ int tb_net_client_is_direct_link(int fd, char *ifname, size_t ifname_size) {
     if (name) {
         if (ifname && ifname_size > 0) snprintf(ifname, ifname_size, "%s", name);
         direct = tb_net_is_direct_link(name, host,
-                                       interface_matches_kind(name, TB_LAN_INTERFACE_WIFI));
+                                       interface_matches_kind(name, TB_LAN_INTERFACE_WIFI),
+                                       interface_is_cable_bridge(name));
     }
     freeifaddrs(ifap);
     return direct;

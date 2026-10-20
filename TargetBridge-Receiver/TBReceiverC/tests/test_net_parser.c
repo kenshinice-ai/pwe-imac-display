@@ -93,17 +93,30 @@ static void test_link_local_ipv4_classifier(void) {
 }
 
 static void test_direct_link_classifier(void) {
-    CHECK(tb_net_is_direct_link("lo0", "127.0.0.1", 0), "loopback is direct");
-    CHECK(tb_net_is_direct_link("bridge0", "169.254.10.2", 0), "Thunderbolt Bridge is direct");
-    CHECK(tb_net_is_direct_link("bridge0", "10.0.0.5", 0), "Thunderbolt Bridge with a manual address is direct");
-    CHECK(tb_net_is_direct_link("en5", "169.254.189.3", 0), "USB-NCM link-local is direct");
-    CHECK(!tb_net_is_direct_link("en0", "192.168.1.20", 0), "Ethernet LAN is not direct");
-    CHECK(!tb_net_is_direct_link("en1", "10.0.0.7", 1), "Wi-Fi LAN is not direct");
-    CHECK(!tb_net_is_direct_link("en1", "169.254.3.3", 1), "Wi-Fi link-local is not direct");
-    CHECK(!tb_net_is_direct_link("awdl0", "169.254.3.3", 0), "AirDrop peer link is not direct");
-    CHECK(!tb_net_is_direct_link("utun3", "10.8.0.2", 0), "VPN tunnel is not direct");
-    CHECK(!tb_net_is_direct_link("", "127.0.0.1", 0), "unknown interface is not direct");
-    CHECK(!tb_net_is_direct_link(NULL, "169.254.1.1", 0), "missing interface is not direct");
+    CHECK(tb_net_is_direct_link("lo0", "127.0.0.1", 0, 0), "loopback is direct");
+    CHECK(tb_net_is_direct_link("bridge0", "169.254.10.2", 0, 1), "Thunderbolt Bridge is direct");
+    CHECK(tb_net_is_direct_link("bridge0", "10.0.0.5", 0, 1), "Thunderbolt Bridge with a manual address is direct");
+    CHECK(tb_net_is_direct_link("en5", "169.254.189.3", 0, 0), "USB-NCM link-local is direct");
+    CHECK(!tb_net_is_direct_link("en0", "192.168.1.20", 0, 0), "Ethernet LAN is not direct");
+    CHECK(!tb_net_is_direct_link("en1", "10.0.0.7", 1, 0), "Wi-Fi LAN is not direct");
+    CHECK(!tb_net_is_direct_link("en1", "169.254.3.3", 1, 0), "Wi-Fi link-local is not direct");
+    CHECK(!tb_net_is_direct_link("awdl0", "169.254.3.3", 0, 0), "AirDrop peer link is not direct");
+    CHECK(!tb_net_is_direct_link("utun3", "10.8.0.2", 0, 0), "VPN tunnel is not direct");
+    CHECK(!tb_net_is_direct_link("", "127.0.0.1", 0, 0), "unknown interface is not direct");
+    CHECK(!tb_net_is_direct_link(NULL, "169.254.1.1", 0, 0), "missing interface is not direct");
+    /* PWE: only a bridge the network settings know is the cable. */
+    CHECK(!tb_net_is_direct_link("bridge100", "192.168.2.1", 0, 0), "a VM / Internet Sharing bridge is not direct");
+    CHECK(!tb_net_is_direct_link("bridge100", "169.254.7.7", 0, 0), "an unlisted bridge is not direct, link-local or not");
+    CHECK(!tb_net_is_direct_link("bridge0", "169.254.10.2", 0, 0), "a bridge0 the settings do not list is not direct");
+    CHECK(tb_net_is_direct_link("lo0", "127.0.0.1", 0, 1), "loopback is unaffected by the bridge flag");
+    CHECK(tb_net_is_direct_link("en5", "169.254.189.3", 0, 1), "USB-NCM is unaffected by the bridge flag");
+    CHECK(!tb_net_is_direct_link("en0", "192.168.1.20", 0, 1), "Ethernet LAN is unaffected by the bridge flag");
+    {
+        char bridges[64];
+        const int n = tb_net_cable_bridges(bridges, sizeof(bridges));
+        CHECK(n >= 0 && (n == 0) == (bridges[0] == '\0'), "cable bridge list matches its count");
+        printf("net cable bridges on this Mac: %s\n", n ? bridges : "none");
+    }
 }
 
 /* The accept decision (PWE): every link kind x AllowLocalNetwork x

@@ -69,10 +69,17 @@ int  tb_net_is_link_local_ipv4(const char *host);
 
 /* Whether a connection that arrived on interface `ifname` at local address
  * `local_host` came over a direct cable rather than a shared network:
- * loopback, Thunderbolt Bridge (bridge*), or a link-local address on a wired
- * enX/ethX interface (direct USB networking). Wi-Fi never counts. Exposed for
- * hardware-free unit tests. */
-int  tb_net_is_direct_link(const char *ifname, const char *local_host, int is_wifi);
+ * loopback, the Thunderbolt Bridge, or a link-local address on a wired
+ * enX/ethX interface (direct USB networking). Wi-Fi never counts.
+ * PWE: a bridge* counts only with `is_cable_bridge`, a bridge the system's
+ * network settings know (tb_net_cable_bridges). Exposed for hardware-free
+ * unit tests. */
+int  tb_net_is_direct_link(const char *ifname, const char *local_host, int is_wifi,
+                           int is_cable_bridge);
+
+/* PWE: the bridges that count as the cable, as "bridge0" or "bridge0, bridge1"
+ * ("" if none). Returns how many. */
+int  tb_net_cable_bridges(char *buf, size_t bufsz);
 
 /* PWE: the same question for an IPv6 connection, hardware-free for unit tests.
  * Direct only when both ends are link-local on the Thunderbolt Bridge

@@ -2322,6 +2322,13 @@ int main(int argc, char **argv) {
             tb_pwe_network_allowed(&a)
                 ? "every interface (off the cable: paired, encrypted sessions only)"
                 : "direct links only (Thunderbolt Bridge, USB, loopback)");
+    {
+        /* PWE: what counts as the Thunderbolt Bridge on this Mac (net.c). */
+        char bridges[128];
+        fprintf(stderr, "[net] cable bridges: %s\n",
+                tb_net_cable_bridges(bridges, sizeof(bridges)) ? bridges
+                    : "none (no bridge in the network settings)");
+    }
     if (tb_receiver_load_or_create_id(a.receiver_id, sizeof(a.receiver_id), a.app_id) == 0) {
         fprintf(stderr, "[identity] receiver ID ready\n");
     } else {
