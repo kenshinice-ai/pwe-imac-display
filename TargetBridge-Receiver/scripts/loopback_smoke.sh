@@ -5,6 +5,8 @@
 # Builds the receiver, runs it windowed, then drives it over 127.0.0.1 with
 # tests/mock_sender.py through four phases:
 #   1. handshake     -> receiver logs the sender hello
+#   1b. IPv6         -> the same over ::1 and fe80::1%lo0 (PWE, T34: the
+#                       Thunderbolt Bridge's link-local IPv6 path)
 #   2. badlen        -> parser rejects a corrupt length and disconnects
 #   3. hang          -> idle watchdog reaps a silent sender (~10s)
 #   4. stream        -> real H.264 decode (skipped without ffmpeg CLI or
@@ -43,6 +45,16 @@ RECEIVER_PID=""
 phase() { print -P "%B== $1 ==%b"; }
 pass()  { print -P "%F{green}PASS%f  $1"; }
 fail()  { print -P "%F{red}FAIL%f  $1"; FAILURES=$((FAILURES + 1)); }
+
+expect_count() {   # <needle> <count> <what>: at least <count> lines
+    local needle="$1" want="$2" what="$3" tries=0
+    while (( tries < 20 )); do
+        if (( $(grep -cF "$needle" "$LOG") >= want )); then pass "$what"; return 0; fi
+        sleep 0.5; tries=$((tries + 1))
+    done
+    fail "$what (wanted $want log lines: $needle)"
+    return 1
+}
 
 expect_log() {
     local needle="$1" what="$2" tries=0
@@ -91,6 +103,17 @@ phase "Phase 1: handshake"
 mock --mode handshake --duration 3 || fail "mock handshake exited non-zero"
 expect_log "[main] hello from sender" "receiver saw HELLO"
 expect_log "[main] teardown requested by sender" "receiver honored TEARDOWN"
+sleep 1
+
+phase "Phase 1b: IPv6 (::1 and fe80::1%%lo0)"
+expect_log "over IPv4 and IPv6" "receiver listens on IPv6 too"
+mock --host ::1 --mode handshake --duration 2 || fail "mock handshake over ::1 exited non-zero"
+expect_count "client connected (lo0, IPv6" 1 "receiver took the ::1 client as loopback"
+expect_count "[main] hello from sender" 2 "receiver saw HELLO over ::1"
+sleep 1
+mock --host "fe80::1%lo0" --mode handshake --duration 2 || fail "mock handshake over fe80::1%%lo0 exited non-zero"
+expect_count "client connected (lo0, IPv6" 2 "receiver took the fe80::1%%lo0 client as loopback"
+expect_count "[main] hello from sender" 3 "receiver saw HELLO over fe80::1%%lo0"
 sleep 1
 
 phase "Phase 2: corrupt length"

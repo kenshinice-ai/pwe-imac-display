@@ -14,8 +14,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <netinet6/in6_var.h>   /* SIOCGIFAFLAG_IN6, IN6_IFF_* */
+#endif
 
 #if defined(__APPLE__)
 #include <CoreFoundation/CoreFoundation.h>
@@ -114,6 +118,37 @@ int tb_net_listen(uint16_t port) {
     }
     if (listen(fd, 1) < 0) {
         perror("[net] listen"); close(fd); return -1;
+    }
+
+    int fl = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+    return fd;
+}
+
+int tb_net_listen6(uint16_t port) {
+    int fd = socket(AF_INET6, SOCK_STREAM, 0);
+    if (fd < 0) { perror("[net] socket (IPv6)"); return -1; }
+
+    int yes = 1;
+    /* IPv6 only: IPv4 clients stay on tb_net_listen's socket, where they are
+     * classified exactly as before. */
+    if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &yes, sizeof(yes)) < 0) {
+        perror("[net] IPV6_V6ONLY"); close(fd); return -1;
+    }
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+    setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes));
+
+    struct sockaddr_in6 a;
+    memset(&a, 0, sizeof(a));
+    a.sin6_len    = sizeof(a);
+    a.sin6_family = AF_INET6;
+    a.sin6_port   = htons(port);
+    a.sin6_addr   = in6addr_any;
+    if (bind(fd, (struct sockaddr *)&a, sizeof(a)) < 0) {
+        perror("[net] bind (IPv6)"); close(fd); return -1;
+    }
+    if (listen(fd, 1) < 0) {
+        perror("[net] listen (IPv6)"); close(fd); return -1;
     }
 
     int fl = fcntl(fd, F_GETFL, 0);
@@ -229,6 +264,152 @@ static int get_lan_ip_for_kind(char *buf, size_t bufsz, enum tb_lan_interface_ki
     return ret;
 }
 
+/* ---- PWE: IPv6 on the Thunderbolt Bridge ---------------------------------- */
+
+/* macOS may hand out a link-local address with its scope embedded in bytes
+ * 2-3 (the KAME convention; getifaddrs on some releases). Move it to *scope
+ * and clear it, so addresses compare and print the same everywhere. */
+static void in6_take_embedded_scope(struct in6_addr *addr, uint32_t *scope) {
+    if (!IN6_IS_ADDR_LINKLOCAL(addr)) return;
+    uint32_t embedded = ((uint32_t)addr->s6_addr[2] << 8) | addr->s6_addr[3];
+    if (embedded && scope && *scope == 0) *scope = embedded;
+    addr->s6_addr[2] = 0;
+    addr->s6_addr[3] = 0;
+}
+
+/* A bridge the system's network settings know: the Thunderbolt Bridge.
+ * SystemConfiguration lists configured bridges only, so a bridge made on the
+ * fly for a virtual machine or Internet Sharing (bridge100, ...) is not one. */
+static int interface_is_cable_bridge(const char *name) {
+    if (!name || strncmp(name, "bridge", 6) != 0) return 0;
+#if defined(__APPLE__)
+    CFArrayRef interfaces = SCNetworkInterfaceCopyAll();
+    if (!interfaces) return 0;
+    int found = 0;
+    CFIndex count = CFArrayGetCount(interfaces);
+    for (CFIndex index = 0; index < count && !found; index++) {
+        SCNetworkInterfaceRef interface = (SCNetworkInterfaceRef)CFArrayGetValueAtIndex(interfaces, index);
+        CFStringRef bsd_name = SCNetworkInterfaceGetBSDName(interface);
+        char candidate[IFNAMSIZ] = {0};
+        if (bsd_name && CFStringGetCString(bsd_name, candidate, sizeof(candidate), kCFStringEncodingUTF8))
+            found = strcmp(candidate, name) == 0;
+    }
+    CFRelease(interfaces);
+    return found;
+#else
+    return 1;
+#endif
+}
+
+/* Usable for a connection now. Optimistic duplicate address detection (the
+ * kernel's default for link-local) already allows it; a plain tentative or a
+ * duplicate address does not. */
+static int ipv6_address_usable(const char *ifname, const struct sockaddr_in6 *sa) {
+#if defined(__APPLE__) && defined(SIOCGIFAFLAG_IN6)
+    int s = socket(AF_INET6, SOCK_DGRAM, 0);
+    if (s < 0) return 1;   /* cannot tell: let the dial find out */
+    struct in6_ifreq req;
+    memset(&req, 0, sizeof(req));
+    snprintf(req.ifr_name, sizeof(req.ifr_name), "%s", ifname);
+    memcpy(&req.ifr_ifru.ifru_addr, sa, sizeof(*sa));
+    int usable = 1;
+    if (ioctl(s, SIOCGIFAFLAG_IN6, &req) == 0) {
+        const int f = req.ifr_ifru.ifru_flags6;
+        if (f & IN6_IFF_DUPLICATED) usable = 0;
+        else if ((f & IN6_IFF_TENTATIVE) && !(f & IN6_IFF_OPTIMISTIC)) usable = 0;
+    }
+    close(s);
+    return usable;
+#else
+    (void)ifname; (void)sa;
+    return 1;
+#endif
+}
+
+int tb_net_get_tb_ip6(char *buf, size_t bufsz, unsigned int *ifindex) {
+    if (!buf || bufsz == 0) return -1;
+    buf[0] = '\0';
+    if (ifindex) *ifindex = 0;
+    struct ifaddrs *ifap = NULL;
+    if (getifaddrs(&ifap) != 0) return -1;
+
+    int ret = -1;
+    for (struct ifaddrs *p = ifap; p && ret != 0; p = p->ifa_next) {
+        if (!p->ifa_addr || p->ifa_addr->sa_family != AF_INET6) continue;
+        if (strncmp(p->ifa_name, "bridge", 6) != 0) continue;
+        if ((p->ifa_flags & (IFF_UP | IFF_RUNNING)) != (IFF_UP | IFF_RUNNING)) continue;
+        struct sockaddr_in6 sa;
+        memcpy(&sa, p->ifa_addr, sizeof(sa));
+        if (!IN6_IS_ADDR_LINKLOCAL(&sa.sin6_addr)) continue;
+        if (!ipv6_address_usable(p->ifa_name, (const struct sockaddr_in6 *)p->ifa_addr)) continue;
+        if (!interface_is_cable_bridge(p->ifa_name)) continue;
+
+        uint32_t scope = sa.sin6_scope_id;
+        in6_take_embedded_scope(&sa.sin6_addr, &scope);
+        char host[INET6_ADDRSTRLEN];
+        if (!inet_ntop(AF_INET6, &sa.sin6_addr, host, sizeof(host))) continue;
+        snprintf(buf, bufsz, "%s", host);
+        if (ifindex) *ifindex = if_nametoindex(p->ifa_name);
+        ret = 0;
+    }
+    freeifaddrs(ifap);
+    return ret;
+}
+
+int tb_net_is_direct_link_ipv6(const char *ifname, const struct in6_addr *local,
+                               const struct in6_addr *peer, int is_cable_bridge) {
+    if (!ifname || !*ifname || !local || !peer) return 0;
+    if (IN6_IS_ADDR_V4MAPPED(local) || IN6_IS_ADDR_V4MAPPED(peer)) return 0;
+    if (strncmp(ifname, "lo", 2) == 0) {
+        return (IN6_IS_ADDR_LOOPBACK(local) && IN6_IS_ADDR_LOOPBACK(peer)) ||
+               (IN6_IS_ADDR_LINKLOCAL(local) && IN6_IS_ADDR_LINKLOCAL(peer));
+    }
+    if (strncmp(ifname, "bridge", 6) == 0 && is_cable_bridge) {
+        return IN6_IS_ADDR_LINKLOCAL(local) && IN6_IS_ADDR_LINKLOCAL(peer);
+    }
+    return 0;
+}
+
+/* The interface an accepted IPv6 connection arrived on, and its verdict. */
+static int client_is_direct_link6(int fd, const struct sockaddr_in6 *local_sa,
+                                  char *ifname, size_t ifname_size) {
+    struct sockaddr_in6 peer_sa;
+    socklen_t peer_len = sizeof(peer_sa);
+    memset(&peer_sa, 0, sizeof(peer_sa));
+    if (getpeername(fd, (struct sockaddr *)&peer_sa, &peer_len) != 0) return 0;
+    if (peer_sa.sin6_family != AF_INET6) return 0;
+
+    struct in6_addr local = local_sa->sin6_addr, peer = peer_sa.sin6_addr;
+    uint32_t local_scope = local_sa->sin6_scope_id, peer_scope = peer_sa.sin6_scope_id;
+    in6_take_embedded_scope(&local, &local_scope);
+    in6_take_embedded_scope(&peer, &peer_scope);
+
+    char name[IFNAMSIZ] = "";
+    if (IN6_IS_ADDR_LINKLOCAL(&local)) {
+        /* Link-local: the scope is the interface. A peer on another link is
+         * not on this one. */
+        if (!local_scope || !if_indextoname(local_scope, name)) return 0;
+        if (IN6_IS_ADDR_LINKLOCAL(&peer) && peer_scope && peer_scope != local_scope) name[0] = '\0';
+    } else {
+        struct ifaddrs *ifap = NULL;
+        if (getifaddrs(&ifap) != 0) return 0;
+        for (struct ifaddrs *p = ifap; p; p = p->ifa_next) {
+            if (!p->ifa_addr || p->ifa_addr->sa_family != AF_INET6) continue;
+            struct in6_addr candidate = ((const struct sockaddr_in6 *)p->ifa_addr)->sin6_addr;
+            uint32_t unused = 0;
+            in6_take_embedded_scope(&candidate, &unused);
+            if (memcmp(&candidate, &local, sizeof(local)) == 0) {
+                snprintf(name, sizeof(name), "%s", p->ifa_name);
+                break;
+            }
+        }
+        freeifaddrs(ifap);
+    }
+    if (!name[0]) return 0;
+    if (ifname && ifname_size > 0) snprintf(ifname, ifname_size, "%s", name);
+    return tb_net_is_direct_link_ipv6(name, &local, &peer, interface_is_cable_bridge(name));
+}
+
 int tb_net_is_link_local_ipv4(const char *host) {
     unsigned int a = 0, b = 0, c = 0, d = 0;
     if (!host) return 0;
@@ -246,6 +427,14 @@ int tb_net_is_direct_link(const char *ifname, const char *local_host, int is_wif
 
 int tb_net_client_is_direct_link(int fd, char *ifname, size_t ifname_size) {
     if (ifname && ifname_size > 0) ifname[0] = '\0';
+
+    /* PWE: an IPv6 client (tb_net_listen6) has its own rule. */
+    struct sockaddr_storage any;
+    socklen_t any_len = sizeof(any);
+    memset(&any, 0, sizeof(any));
+    if (getsockname(fd, (struct sockaddr *)&any, &any_len) != 0) return 0;
+    if (any.ss_family == AF_INET6)
+        return client_is_direct_link6(fd, (const struct sockaddr_in6 *)&any, ifname, ifname_size);
 
     struct sockaddr_in local;
     socklen_t local_len = sizeof(local);
