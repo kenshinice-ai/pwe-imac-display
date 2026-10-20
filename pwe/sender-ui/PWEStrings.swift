@@ -298,7 +298,9 @@ struct PWEStrings {
     func renderingName(_ rendering: PWERendering) -> String {
         switch rendering {
         case .openGL: return t("Lowest latency (OpenGL)", "低延迟（OpenGL）")
-        case .metal: return t("Lower power (Metal)", "省电（Metal）")
+        // Measured: 25–40 % less of the iMac's CPU (PWERendering). Power was
+        // never measured, so the name does not promise it (audit P2-02).
+        case .metal: return t("Less CPU (Metal)", "占用更少（Metal）")
         }
     }
     var iMacVolume: String { t("iMac volume", "iMac 音量") }
