@@ -171,6 +171,7 @@ struct PWEStrings {
             switch security {
             case .needsCode, .wrongCode, .codeExpired: return waitingForCode
             case .checkingCode: return codeChecking
+            case .locked: return codeLockedStatus
             default: return needsAnswer
             }
         }
@@ -190,11 +191,22 @@ struct PWEStrings {
     var codeWrong: String {
         t("That code didn’t match. Your iMac is showing a new one.", "配对码不对。iMac 上已换了新码，请重新输入。")
     }
-    /// DRAFT
     var codeExpired: String {
-        t("That code expired. Your iMac will show a new one — enter it to pair.", "配对码已过期。iMac 会显示新码，请重新输入。")
+        t("The code expired. Your iMac is showing a new one.", "配对码已过期。iMac 上已换了新码，请重新输入。")
     }
-    var codeLocked: String { t("Too many attempts. Try again in a minute.", "尝试次数太多，请 1 分钟后再试。") }
+    /// While the Mac asks the iMac for a new code (a moment): why, then what is happening.
+    var codeWrongShort: String { t("That code didn’t match.", "配对码不对。") }
+    var codeExpiredShort: String { t("The code expired.", "配对码已过期。") }
+    var codeRequesting: String { t("Asking your iMac for a new code…", "正在向 iMac 要新的配对码…") }
+    /// Five wrong codes lock pairing on the iMac for a minute; this counts down.
+    func codeLocked(seconds: Int) -> String {
+        zh ? "输错太多次。请 \(seconds) 秒后再试。"
+           : "Too many wrong codes. Try again in \(seconds) \(seconds == 1 ? "second" : "seconds")."
+    }
+    var codeLockedNext: String {
+        t("Then this Mac asks your iMac for a new code.", "到时这台 Mac 会自动向 iMac 要新码。")
+    }
+    var codeLockedStatus: String { t("Too many wrong codes", "配对码输错太多次") }   // menu status
     /// DRAFT
     var codeChecking: String { t("Checking the code…", "正在核对配对码…") }
     var codePlaceholder: String { t("6 digits", "6 位数字") }

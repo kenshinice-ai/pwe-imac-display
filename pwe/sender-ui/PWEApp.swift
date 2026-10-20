@@ -151,7 +151,9 @@ enum PWESnapshot {
             ("p02-code-identity-changed", .security(imac, .needsCode(secondsLeft: 60, identityChanged: true)), .none),
             ("p03-checking", .security(imac, .checkingCode), .none),
             ("p04-wrong-code", .security(imac, .wrongCode), .none),
+            ("p04b-new-code-after-wrong", .security(imac, .needsCode(secondsLeft: 59, identityChanged: false)), .none),
             ("p05-code-expired", .security(imac, .codeExpired), .none),
+            ("p05b-new-code-after-expiry", .security(imac, .needsCode(secondsLeft: 59, identityChanged: false)), .none),
             ("p06-locked", .security(imac, .locked(seconds: 60)), .none),
             ("p07-original-receiver", .security(upstream, .legacyReceiver(previouslyPaired: false)), .none),
             ("p08-pwe-1.0-receiver", .security(imac, .legacyReceiver(previouslyPaired: false)), .none),
@@ -192,7 +194,10 @@ enum PWESnapshot {
             write(PWEAboutView(updates: UpdateCheck(), strings: strings),
                   to: directory.appendingPathComponent("\(stem)-9-about.png"))
             for (name, phase, security) in pairing {
-                let view = PWEMainView(model: PWESenderModel(preview: phase, security: security), strings: strings)
+                // The code step after a wrong or expired code says why it asks again.
+                let note: PWECodeNote? = name.hasPrefix("p04b") ? .wrong : name.hasPrefix("p05b") ? .expired : nil
+                let model = PWESenderModel(preview: phase, security: security, codeNote: note)
+                let view = PWEMainView(model: model, strings: strings)
                 write(view, to: directory.appendingPathComponent("\(stem)-\(name).png"))
             }
 

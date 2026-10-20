@@ -2116,7 +2116,13 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         let linkToClose = pweLink
         pweHelloTimeout?.cancel()
         pweHelloTimeout = nil
-        if !pweSecurity.waitsForUser, pweSecurity != .checkingCode { pweSecurity = .none }
+        // PWE: a code is typed into a live exchange only. With the connection
+        // gone, the iMac has dropped the code: start over on the next connection.
+        if case .needsCode = pweSecurity {
+            pweSecurity = .none
+        } else if !pweSecurity.waitsForUser, pweSecurity != .checkingCode {
+            pweSecurity = .none
+        }
         captureRestartGeneration &+= 1
         isRestartingCaptureAfterWake = false
         if persistArrangement {
@@ -4412,6 +4418,15 @@ extension TBDisplaySenderSession {
         }
         pweSecurity = .none
         stop()   // also holds automatic reconnect, as a Stop does
+    }
+
+    /// The code on screen has run out. Tell the iMac to drop it and end this
+    /// exchange, so the next connection gets a fresh code (PWE layer: PWEPairingRules).
+    func pweCodeExpired() {
+        guard let link = pweLink, link.mode == .negotiating, case .needsCode = pweSecurity else { return }
+        _ = link.submit(code: nil)
+        pwePendingCode = nil
+        pweClose(.codeExpired, "PWE: pairing code expired")
     }
 
     /// Try again after a refusal or a lock (the cable is back, the minute is up).

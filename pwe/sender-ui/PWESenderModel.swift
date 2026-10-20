@@ -59,6 +59,8 @@ struct PWEEngineState {
     var target: PWEReceiver?
     /// The session's pairing and encryption state.
     var security: PWESecurityState = .none
+    /// Why the code step asks for a new code (PWEPairingRules.note).
+    var codeNote: PWECodeNote?
 }
 
 /// Engine state in, phase out: no engine, no clock, so every rule has a test
@@ -98,6 +100,8 @@ enum PWEPhaseRules {
     static func phase(_ state: PWEEngineState, held: PWEReason?) -> PWEPhase {
         guard state.hasPermission else { return .needsPermission }
         let target = state.target
+        // Asking the iMac for a new code after a wrong or expired one.
+        if let held = PWEPairingRules.holdsCodeStep(state.codeNote, state) { return .security(target, held) }
         // The engine closes the connection to ask, so its status reads as a failure;
         // the security state says what really happened.
         if asksPerson(state.security) { return .security(target, state.security) }
@@ -281,6 +285,16 @@ final class PWESenderModel: ObservableObject {
     private var previewSecurity: PWESecurityState = .none
     /// The iMacs this Mac has paired with (keychain), read when Settings asks.
     @Published private(set) var pairedIMacs: [PWEPairedReceiver] = []
+    /// Why the code step asks for a new code (PWEPairingRules).
+    @Published private(set) var codeNote: PWECodeNote?
+    /// When the iMac's pairing lock ends, while it is locked.
+    @Published private(set) var lockEnd: Date?
+    /// The session's security state at the last look, to act on its changes.
+    private var lastSecurity: PWESecurityState = .none
+    /// Codes that ran out unanswered, in a row (PWEPairingRules.renewals).
+    private var expiredInARow = 0
+    private var codeTimer: Task<Void, Never>?
+    private var lockTimer: Task<Void, Never>?
 
     enum Keys {
         static let autoConnect = "pwe.autoConnect"
@@ -354,9 +368,12 @@ final class PWESenderModel: ObservableObject {
 
     /// A fixed phase for snapshots: no engine, nothing changes.
     init(preview phase: PWEPhase, firstConnection: Bool = false, inputRole: PWEInputRole = .off,
-         security: PWESecurityState = .none, paired: [PWEPairedReceiver] = []) {
+         security: PWESecurityState = .none, paired: [PWEPairedReceiver] = [],
+         codeNote: PWECodeNote? = nil, lockEnd: Date? = nil) {
         self.previewSecurity = security
         self.pairedIMacs = paired
+        self.codeNote = codeNote
+        self.lockEnd = lockEnd
         self.service = nil
         self.defaults = UserDefaults(suiteName: "pwe.preview") ?? .standard
         self.autoConnect = true
@@ -383,10 +400,14 @@ final class PWESenderModel: ObservableObject {
         }
         wasRetrying = retrying
 
-        let state = engineState(service, retrying: retrying)
+        var state = engineState(service, retrying: retrying)
+        let note = PWEPairingRules.note(after: codeNote, state.security)
+        if note != codeNote { codeNote = note }
+        state.codeNote = note
         heldFailure = PWEPhaseRules.heldFailure(after: heldFailure, state)
         let next = PWEPhaseRules.phase(state, held: heldFailure)
         if next != phase { phase = next }
+        followPairing(state.security)
         updateFirstConnection()
         rememberShowingPicture()
         localMute?.update(mute: soundOnlyOnIMac && isRelayingSound)
@@ -805,6 +826,73 @@ final class PWESenderModel: ObservableObject {
         pausedUntilReplug = false
         session?.pweSubmitPairingCode(code)
         refresh()
+    }
+
+    /// Acts on the engine's pairing steps that need no answer from the person
+    /// (PWEPairingRules): a new code after a wrong or expired one, the code's
+    /// own minute, and the end of a lock.
+    private func followPairing(_ security: PWESecurityState) {
+        guard security != lastSecurity else { return }
+        lastSecurity = security
+        codeTimer?.cancel()
+        codeTimer = nil
+        lockTimer?.cancel()
+        lockTimer = nil
+        if case .locked = security {} else if lockEnd != nil { lockEnd = nil }
+
+        switch security {
+        case .needsCode(let secondsLeft, _):
+            let deadline = PWEPairingRules.codeDeadline(secondsLeft: secondsLeft, shownAt: Date())
+            codeTimer = at(deadline) { model in
+                guard let session = model.session, case .needsCode = session.pweSecurity else { return }
+                NSLog("[pwe] the pairing code ran out; asking the iMac for a new one")
+                session.pweCodeExpired()
+            }
+        case .wrongCode:
+            expiredInARow = 0
+            askForNewCode(because: "the code did not match")
+        case .codeExpired:
+            expiredInARow += 1
+            if PWEPairingRules.renewsExpiredCode(expiredInARow: expiredInARow) {
+                askForNewCode(because: "the code expired")
+            } else {
+                NSLog("[pwe] \(expiredInARow) pairing codes ran out unanswered; stopped asking")
+                expiredInARow = 0
+                DispatchQueue.main.async { [weak self] in self?.disconnect() }
+            }
+        case .locked(let seconds):
+            let end = PWEPairingRules.lockEnd(seconds: seconds, lockedAt: Date())
+            lockEnd = end
+            NSLog("[pwe] pairing locked on the iMac for \(seconds) s")
+            lockTimer = at(end.addingTimeInterval(PWEPairingRules.lockGrace)) { model in
+                guard case .locked = model.session?.pweSecurity else { return }
+                NSLog("[pwe] the pairing lock is over; asking the iMac for a code")
+                model.retrySecurely()
+            }
+        case .negotiating:
+            break
+        case .none, .checkingCode, .refused, .legacyReceiver, .encrypted, .unencrypted:
+            expiredInARow = 0
+        }
+    }
+
+    /// Ends the exchange the person cannot finish and asks the iMac for a new code.
+    private func askForNewCode(because reason: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let session = self.session,
+                  PWEPairingRules.asksForNewCode(session.pweSecurity) else { return }
+            NSLog("[pwe] \(reason); asking the iMac for a new code")
+            self.retrySecurely()
+        }
+    }
+
+    /// Runs `work` at `date` unless cancelled first.
+    private func at(_ date: Date, _ work: @escaping @MainActor (PWESenderModel) -> Void) -> Task<Void, Never> {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(max(date.timeIntervalSinceNow, 0)))
+            guard !Task.isCancelled, let self else { return }
+            work(self)
+        }
     }
 
     func retrySecurely() {

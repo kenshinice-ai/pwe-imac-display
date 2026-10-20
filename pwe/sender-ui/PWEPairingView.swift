@@ -2,7 +2,8 @@ import SwiftUI
 
 /// The window's pairing step: the code the iMac shows, and the questions and
 /// refusals of the engine's secure connection (PWESecureLink). Shown whenever
-/// the engine waits for the person (`PWESecurityState.waitsForUser`).
+/// the engine waits for the person (`PWESecurityState.waitsForUser`). The code
+/// field shows only while the iMac waits for a code (PWEPairingRules).
 struct PWEPairingView: View {
     @ObservedObject var model: PWESenderModel
     let strings: PWEStrings
@@ -15,11 +16,16 @@ struct PWEPairingView: View {
     var body: some View {
         switch security {
         case .needsCode(_, let identityChanged):
-            codeEntry(message: identityChanged ? strings.codeIdentityChanged : strings.codeBody, isError: identityChanged)
+            switch model.codeNote {
+            case .wrong?: codeEntry(message: strings.codeWrong, isError: true)
+            case .expired?: codeEntry(message: strings.codeExpired, isError: true)
+            case nil: codeEntry(message: identityChanged ? strings.codeIdentityChanged : strings.codeBody,
+                                isError: identityChanged)
+            }
         case .wrongCode:
-            codeEntry(message: strings.codeWrong, isError: true)
+            requestingCode(after: strings.codeWrongShort)
         case .codeExpired:
-            codeEntry(message: strings.codeExpired, isError: true)
+            requestingCode(after: strings.codeExpiredShort)
         case .checkingCode:
             VStack(alignment: .leading, spacing: 14) {
                 symbol("lock.shield")
@@ -32,11 +38,8 @@ struct PWEPairingView: View {
                     .controlSize(.large)
                     .keyboardShortcut(.cancelAction)
             }
-        case .locked:
-            notice(symbol: "lock.fill", title: strings.codeTitle, message: strings.codeLocked) {
-                Button(strings.tryAgain) { model.retrySecurely() }
-                    .buttonStyle(.borderedProminent)
-            }
+        case .locked(let seconds):
+            locked(seconds: seconds)
         case .legacyReceiver(let previouslyPaired):
             legacy(previouslyPaired: previouslyPaired)
         case .refused(let reason):
@@ -87,6 +90,48 @@ struct PWEPairingView: View {
         .onAppear {
             code = ""
             codeFocused = true
+        }
+    }
+
+    /// A wrong or expired code: the Mac is already asking the iMac for a new one.
+    private func requestingCode(after reason: String) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            symbol("lock.shield")
+            Text(strings.codeTitle).font(.title3.weight(.semibold))
+            Text(reason).foregroundStyle(.orange)
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(strings.codeRequesting).foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .combine)
+            Button(strings.cancel) { model.disconnect() }
+                .controlSize(.large)
+                .keyboardShortcut(.cancelAction)
+        }
+    }
+
+    /// The iMac locked pairing for a minute: count down; the model asks again at the end.
+    private func locked(seconds: Int) -> some View {
+        let end = model.lockEnd ?? Date().addingTimeInterval(TimeInterval(seconds))
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Image(systemName: "lock.fill")
+                    .font(.title2)
+                    .foregroundStyle(.orange)
+                    .accessibilityHidden(true)
+                Text(strings.codeTitle).font(.title3.weight(.semibold))
+            }
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(strings.codeLocked(seconds: max(PWEPairingRules.secondsLeft(until: end, now: context.date), 1)))
+                    .monospacedDigit()
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text(strings.codeLockedNext)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(strings.cancel) { model.disconnect() }
+                .controlSize(.large)
+                .keyboardShortcut(.cancelAction)
         }
     }
 
