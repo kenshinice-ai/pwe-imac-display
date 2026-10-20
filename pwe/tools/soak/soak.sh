@@ -45,7 +45,6 @@ while (( $# )); do
 done
 [[ -n "$video" && ! -f "$video" ]] && { echo "✗ no video at $video"; exit 2; }
 [[ -n "$out" ]] || out="$repo/docs/pwe/test-mac-$(date +%Y-%m-%d)/soak-$(date +%H%M%S)"
-mkdir -p "$out/work"
 
 sender_pid() { pgrep -x "PWE Screen Encore" | head -1; }
 imac_present() {
@@ -62,6 +61,8 @@ read present nscreens <<<"$(imac_present)"
 if [[ -n "$imac" ]] && ! ssh -o BatchMode=yes -o ConnectTimeout=5 "$imac" true 2>/dev/null; then
   echo "✗ cannot SSH to $imac without a password (set up a key, or leave out --imac)"; exit 1
 fi
+# Only now: a failed preflight leaves no empty run folder behind.
+mkdir -p "$out/work"
 echo "▸ Recording into $out"
 echo "  sender pid $pid, $nscreens screens, iMac display present"
 {
