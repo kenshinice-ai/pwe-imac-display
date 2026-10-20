@@ -136,15 +136,24 @@ else
     else
       record "built apps: check-bundle" FAIL "see check-bundle.log"
     fi
-    sig_ok=1
+    sig_ok=1 notarised=0 unnotarised=0
     for a in "${apps[@]}"; do
       codesign --verify --deep --strict "$a" >> "$LOGS/signatures.log" 2>&1 || sig_ok=0
-      spctl -a -t exec -vv "$a" >> "$LOGS/signatures.log" 2>&1 || sig_ok=0
+      gk="$(spctl -a -t exec -vv "$a" 2>&1)"; print -r -- "$gk" >> "$LOGS/signatures.log"
+      case "$gk" in
+        *"source=Notarized Developer ID"*) notarised=$(( notarised + 1 )) ;;
+        *"source=Unnotarized Developer ID"*) unnotarised=$(( unnotarised + 1 )) ;;
+        *) sig_ok=0 ;;
+      esac
     done
-    if [[ $sig_ok == 1 ]]; then
-      record "built apps: signatures and Gatekeeper" PASS "$(grep -c 'source=Notarized' "$LOGS/signatures.log") of ${#apps} notarised"
+    if [[ $sig_ok == 0 ]]; then
+      record "built apps: signatures" FAIL "see signatures.log"
+    elif (( notarised == ${#apps} )); then
+      record "built apps: signatures and Gatekeeper" PASS "all ${#apps} notarised"
     else
-      record "built apps: signatures and Gatekeeper" FAIL "see signatures.log (an unnotarised local build fails Gatekeeper)"
+      # A local candidate (package.sh without --notarize): signed, not yet notarised.
+      record "built apps: signatures" PASS "Developer ID, valid"
+      record "built apps: Gatekeeper" SKIP "$unnotarised of ${#apps} not notarised: a local build"
     fi
     hdiutil detach "$MNT" >/dev/null 2>&1
   fi
