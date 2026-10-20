@@ -17,7 +17,8 @@
 # sender running on the same Mac cannot find or redial it and take its single
 # client slot.
 # Needs a GUI session (SDL window) and the receiver build deps
-# (brew install ffmpeg sdl2 pkgconf). Exits non-zero on any failed phase.
+# (brew install ffmpeg sdl2 pkgconf libsodium, or PKG_CONFIG_LIBDIR pointing at
+# pwe/receiver-deps.sh's <root>/<arch>/lib/pkgconfig). Exits non-zero on any failed phase.
 
 set -uo pipefail
 
@@ -59,6 +60,11 @@ phase "Build receiver"
 # keychain service, deleted when it exits: a rebuilt ad-hoc binary would
 # otherwise stop at the keychain's access prompt for the previous build's item.
 SMOKE_KEYCHAIN="com.pwegroup.pweimacdisplay.test.smoke.$$"
+# Say what is missing up front, not as a compile error deep in pwe_secure.c.
+pkg-config --exists libsodium || {
+    print "libsodium not found: brew install libsodium, or set PKG_CONFIG_LIBDIR to"
+    print "<pwe/receiver-deps.sh root>/<arch>/lib/pkgconfig"; exit 1
+}
 make -C "$SRC" clean >/dev/null   # the hook switch is a compile flag
 if ! make -C "$SRC" TEST_HOOKS=1 >/dev/null; then
     print "receiver build failed"; exit 1
