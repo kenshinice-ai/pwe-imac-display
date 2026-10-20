@@ -66,6 +66,18 @@ expect_log() {
     return 1
 }
 
+# Until the receiver logs that its port is open (up to 15 s): a freshly built
+# x86_64 binary's first launch under Rosetta can take longer than 2 s.
+wait_listening() {
+    local tries=0
+    while (( tries < 30 )); do
+        grep -qF "[net] listening on port" "$LOG" && return 0
+        kill -0 "$RECEIVER_PID" 2>/dev/null || return 1
+        sleep 0.5; tries=$((tries + 1))
+    done
+    return 1
+}
+
 cleanup() {
     [[ -n "$RECEIVER_PID" ]] && kill "$RECEIVER_PID" 2>/dev/null
     wait 2>/dev/null
@@ -93,7 +105,7 @@ TB_LANG=en TB_RECEIVER_NO_BONJOUR=1 TB_RECEIVER_TEST_PORT=$PORT \
     TB_RECEIVER_TEST_KEYCHAIN_SERVICE="$SMOKE_KEYCHAIN" TB_RECEIVER_TEST_CLEAN_ON_EXIT=1 \
     "$SRC/tbreceiver" --windowed 2>"$LOG" &
 RECEIVER_PID=$!
-sleep 2
+wait_listening
 if ! kill -0 "$RECEIVER_PID" 2>/dev/null; then
     print "receiver exited early:"; tail -5 "$LOG"; exit 1
 fi
@@ -145,7 +157,7 @@ relaunch() {
         TB_RECEIVER_TEST_KEYCHAIN_SERVICE="$SMOKE_KEYCHAIN" TB_RECEIVER_TEST_CLEAN_ON_EXIT=1 \
         "$@" "$SRC/tbreceiver" --windowed 2>"$LOG" &
     RECEIVER_PID=$!
-    sleep 2
+    wait_listening
 }
 
 if (( ! NO_STREAM )) && command -v ffmpeg >/dev/null; then
