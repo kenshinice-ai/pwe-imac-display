@@ -1,4 +1,4 @@
-# PWE iMac Display — 交接
+# PWE Screen Encore（原名 PWE iMac Display）— 交接
 
 > 状态（2026-10-16）：1.0.0 已发布（GitHub 标签 `pwe-1.0.0`，Homebrew `kenshinice-ai/tap/pwe-imac-display`）；2026-10-16 给它的 release 补上了 FFmpeg 源码包。
 > 1.0.1（接收端加固）在本地分支 `security-1.0.1` 上，已合入 `main` 的打包和许可修正，计划 2026-10-22 发布。

@@ -1,4 +1,6 @@
-# PWE iMac Display — 品牌规范与落地清单
+# PWE Screen Encore — 品牌规范与落地清单
+
+> 产品 1.1 起叫 **PWE Screen Encore**（Lee 2026-10-20 定，见第六节）。本文件名和下文的历史记录保留旧名 PWE iMac Display。
 
 > 2026-10-20，分支 `pwe-1.1-brand`（从 `pwe-1.1-simplify` 5686aa2 开出）。
 > 上位标准：`00 PLANNING 2026/08-品牌识别标准.md` v2.6（下称「08」）。本文件只记录**这个产品**的决定和它与 08 的每一处偏离；冲突时以 08 为准。
@@ -10,7 +12,7 @@
 2. **菜单栏图标在两个状态之间换了一个物体**（未连接是 `display` 显示器，连接后是 `desktopcomputer` iMac），而且未连接时和系统「显示器」菜单、PWE Lumen Bar 的字形都撞。已做好一套自己的模板字形：同一台 iMac，连上时屏幕亮起（R4）。
 3. **两个 App 用同一个图标**，DMG 里并排放着，用户要靠名字分辨哪个装在哪台电脑上——这是装错的最大来源。DMG 窗口已经改好（两台电脑的示意 + 一根线）；图标已改成一对：琥珀框发送端、纸色框接收端（R6，Lee 2026-10-20 同意，已做）。
 4. **图标里的屏幕是一块 3:2 的通用显示器，没有 iMac 的下巴**，代码注释写着 "screen, chin and stand"，画出来却没有下巴。而且这个外框是 08 §4.6 名单之外的「第二图形」，没有登记。已改成 16:9 屏 + 下巴 + 底座（R6，已做）；登记进 08 §4.6 的措辞见 2.4，等 Lee 写进 08。
-5. **产品名里有「iMac」。** Apple 的商标指南明文不许第三方在产品名里使用 iMac（见第六节）。这不是视觉问题，但会决定发布时的一切物料，所以排在等 Lee 的第一条。
+5. **产品名里有「iMac」。** Apple 的商标指南明文不许第三方在产品名里使用 iMac（见第六节）。**已定（2026-10-20）：改名 PWE Screen Encore**，「for iMac」「用于 iMac」只作指代说法。
 
 ## 一、审计：用户看得见的每一处
 
@@ -34,11 +36,11 @@
 | 亮度提示框（HUD） | 仿系统 HUD，系统材质、`sun.max.fill` | 这是系统级控件，本来就该像系统 | 不改 | — |
 | 警告色 | 主窗口和设置里 `.orange`，部分 `exclamationmark.triangle` 用 `.yellow` | 同一种警告两种颜色 | R9 | 低 |
 | 通知 | 没有 | — | — | — |
-| 虚拟显示器名字 | 「PWE iMac Display」（1.1 已改，1.0.x 是「TB Extend - iMac」） | 1.1 没问题 | 不改 | — |
+| 虚拟显示器名字 | 「PWE Screen Encore」（1.0.x 是「TB Extend - iMac」，1.1 改名前的测试版是「PWE iMac Display」） | 没问题 | 不改 | — |
 | Info.plist 版权 | `PWE Group. Based on TargetBridge (MIT).` | 和 Lumen Bar 的 `© 2026 PWE Group Pty Ltd` 写法不一致 | R7 | 低 |
 | DMG 窗口 | 没有 `.DS_Store`：Finder 默认排列，没有背景，卷图标是默认磁盘 | 两个 App 并排、看不出哪个去哪台电脑 | **已做**：背景、位置、卷图标（第四节） | 高：第一印象 |
 | DMG 读我 | 中英文步骤 | 缺「不是 TargetBridge 官方版本」和署名行 | **已做** | 低 |
-| Finder 里的名字 | `PWE iMac Display.app` / `PWE iMac Display Receiver.app` | 名字本身见第六节 | 等 Lee | — |
+| Finder 里的名字 | `PWE Screen Encore.app` / `PWE Screen Encore Receiver.app` | 已按第六节改名 | **已做** | — |
 | 工具站字标方案 | `SITE-PLAN.md` 推荐 `IMAC DISPLAY` 全大写 | Apple 要求按原样大小写书写其商标 | R10 | 低（页面还冻结） |
 | 上游痕迹 | Sponsors 链接、TargetBridge 字样 | 已查：界面、语言包、接收端里都没有 Sponsors 链接；致谢只在关于和完整控制台说明里 | 不改 | — |
 
@@ -46,8 +48,11 @@
 
 ### 2.1 名字、中文、署名
 
-- 产品名：**PWE iMac Display**（暂定，见第六节）。接收端：**PWE iMac Display Receiver**，中文界面里叫「PWE iMac Display 接收端」。
-- **不起中文名。** 08 §2、§8：产品名不译，像 iPhone 一样。中文文案第一次出现时带一个说明语，不是名字：「PWE iMac Display，把 2014–2017 年的 5K iMac 变回一块外接屏」。不写「天域 iMac 屏」之类——「天域」是房子的名字，不进产品名。
+- 产品名：**PWE Screen Encore**（第六节，2026-10-20 定）。接收端：**PWE Screen Encore Receiver**，中文界面里也这么叫（产品名不译）；界面泛指时仍说「接收端」。
+- 指代说法（不是名字的一部分）：「for iMac」/「用于 iMac」，只在帮得上忙的地方用：关于窗口的副标、README 第一行、DMG 读我。
+- 标语：「让 5K iMac 返场。」/ "Your 5K iMac, back on stage."
+- 旧名 PWE iMac Display 只出现在历史记录和「装过旧版」的提示里。为了已装的用户，这些标识不改：bundle id `com.pwegroup.pweimacdisplay(.receiver)`、URL scheme `pweimacdisplay://`、Application Support 下的设置目录、Bonjour 服务类型、握手协议常量。
+- **不起中文名。** 08 §2、§8：产品名不译，像 iPhone 一样。中文文案第一次出现时带一个说明语，不是名字：「PWE Screen Encore，把 2014–2017 年的 5K iMac 变回一块外接屏」。不写「天域 iMac 屏」之类——「天域」是房子的名字，不进产品名。
 - 署名行：`PWE · 天域出品`，两种语言都印整行（与 Lumen Bar 一致）。版权行写法律主体：`© 2026 PWE Group Pty Ltd`。
 - 致谢（固定说法，所有对外物料同一句）：「基于开源项目 TargetBridge（Marco Caciotti 与社区，MIT）。由 PWE 构建并签名，不是 TargetBridge 的官方版本。」英文："Based on TargetBridge by Marco Caciotti and its community (MIT). Built and signed by PWE; not an official TargetBridge release."
 - 不放上游的 Sponsors 链接。支持入口只有「关于」里的「支持 PWE…」（07 TOOLS HANDOFF §0.9）。
@@ -125,7 +130,7 @@
 - 640 × 400 pt，纸色地。上方两个示意：左边一台笔记本，右边一台 iMac，中间一根虚线——两台电脑、一根线。下方：发送端 → 「应用程序」（箭头），竖线右边是接收端；最下一排是读我和许可。
 - **背景里没有文字。** Finder 自己会在图标下写名字；示意图不分语言；也就不涉及把哪种字体栅格化进安装包。
 - 背景按浅色设计：带背景图的窗口，Finder 一律用浅色样式画图标名字（C-Command 论坛的多份报告，本机未验证，见第五节）。
-- 卷图标用发送端的 App 图标。卷名不变：`PWE iMac Display <版本>`。
+- 卷图标用发送端的 App 图标。卷名：`PWE Screen Encore <版本>`；映像文件 `PWE-Screen-Encore-<版本>.dmg`。
 - 预览（示意，不是 Finder 截图）：`preview/dmg-window-concept.png`，用的是提案的一对图标。
 
 ### 2.8 语气和用词
@@ -221,4 +226,6 @@ Apple《Guidelines for Using Apple Trademarks and Copyrights》（2026-10-20 查
 | B 改名（推荐方向） | 1.1 起换一个不含 Apple 商标的名字，副标用指代说法：「PWE ___ for iMac」→ 例如 **PWE Display Bridge**（「雷雳网桥」上的显示器，也和 TargetBridge 的来历呼应） | App 名、DMG、卷名、cask（新 token + 旧的 `deprecate!`）、仓库名（GitHub 会转发）、文档、虚拟显示器名、接收端标题；bundle id 和设置目录可以不动，权限不受影响 |
 | C 延后 | 1.1 先用现名发，宣传只做中文渠道，英文渠道等名字定了再上 | 两次物料 |
 
-名字由 Lee 定。定了以后，本文件 2.1 和第三节里的字串一起换。
+**决定（Lee，2026-10-20）：方案 B，改名 PWE Screen Encore。** 发送端 PWE Screen Encore，接收端 PWE Screen Encore Receiver（可执行文件 `PWEScreenEncoreReceiver`）。分支 `pwe-1.1-rename` 已实施：界面、语言包、Info.plist、DMG、读我、NOTICE、README、安装指南；`rebrand.py` 和 `check-bundle.py` 会在用户看得见的地方发现「iMac Display」时让构建失败。
+
+不改的（用户看不见，改了会丢数据或断兼容）：bundle id、`pweimacdisplay://`、设置目录、Bonjour 服务类型、握手协议常量、仓库名和 `$TMPDIR` 里的缓存目录名。cask token 和工具站页面路径（`/imacdisplay/`）在别的仓库，跟发布一起定。第三节的字串是实施记录，保留当时的写法。

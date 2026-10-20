@@ -1,4 +1,6 @@
-# PWE iMac Display — 发布与推广方案
+# PWE Screen Encore — 发布与推广方案
+
+> 产品 1.1 起叫 **PWE Screen Encore**（Lee 2026-10-20 定，BRAND 第六节）。旧名 PWE iMac Display 只留在历史记录里；文件名不改。
 
 > 2026-10-20，只出方案：没有发布、没有发帖、没有联系任何人。品牌部分见 `BRAND-iMac-Display-2026-10-20.md`（下称 BRAND）。
 > 事实依据：`docs/pwe/BASELINE-iMac18,3.md`、`docs/pwe/ISSUES-test-mac-2026-10-20.md`（两份都不入库）、HANDOFF「八」。每条对外说法都要能回到这几份文件里的一行。
@@ -6,7 +8,7 @@
 ## 结论
 
 - **真正的发布是 1.1，不是 1.0.1。** 1.0.1 安静地发（GitHub release + Homebrew），不做推广：它的主界面还是上游仪表盘，5K 60 只能用命令打开，拔线后要 20 多秒才回来。
-- **1.1 的发布有四道门**：真机复测 1.1 的 P1 问题已修；名字定了（BRAND 第六节）；pwestudio.site 解冻；对外怎么讲 1.1 先和 Marco 对一遍。四道都过才推。
+- **1.1 的发布有四道门**：真机复测 1.1 的 P1 问题已修；名字已定（PWE Screen Encore，2026-10-20）；pwestudio.site 解冻；对外怎么讲 1.1 先和 Marco 对一遍。四道都过才推。
 - **中文先，英文后。** 中文渠道：少数派、V2EX、B 站、小红书。英文渠道：GitHub、r/mac 与 r/iMac、MacRumors 论坛、YouTube。Hacker News 等英文渠道稳定后再考虑；不上 Product Hunt。
 - **配对与加密在 1.1 正式发布前不对外提**；发布后怎么讲，先和 Marco 对一遍。演示片里也不出现配对画面，直到那时。
 
@@ -55,7 +57,10 @@ One Thunderbolt cable, two apps. No firmware hacks, no teardown, no Linux. Free 
 
 ## 四、名字与说法（分语言）
 
-- 名字：等 BRAND 第六节的决定。下面的文案用「PWE iMac Display」占位；改名就整体替换。
+- 名字：**PWE Screen Encore**（BRAND 第六节，2026-10-20 定）。接收端 PWE Screen Encore Receiver。两种语言都不译。
+- 指代说法：「for iMac」/「用于 iMac」，不是名字的一部分，也不能比名字醒目。
+- 标语：「让 5K iMac 返场。」/ "Your 5K iMac, back on stage."
+- 旧名：面向已装用户的地方说一次「原名 PWE iMac Display」（README、release 说明、安装指南），宣传物料里不提。
 - 中文：产品名不译；第一次出现带说明语「把 2014–2017 年的 5K iMac 变回一块外接屏」。用词按 BRAND 2.8（Mac 不写 MacBook，雷雳线，扩展 / 镜像）。
 - 英文：iMac 按原样大小写；兼容说法用 "for 2014–2017 5K iMac"。
 - 两种语言都带同一句致谢（BRAND 2.1）和同一组限定（第一节）。
@@ -72,7 +77,7 @@ One Thunderbolt cable, two apps. No firmware hacks, no teardown, no Linux. Free 
 
 | 渠道 | 语言 | 用不用 | 理由 | 形式 |
 |---|---|---|---|---|
-| pwestudio.site `/imacdisplay/` | 中英 | 用（解冻后） | 下载、安装指南、PWE Assist 的知识都从这一页来 | 按 `SITE-PLAN.md`，加第一节的限定 |
+| pwestudio.site `/screenencore/` | 中英 | 用（解冻后） | 下载、安装指南、PWE Assist 的知识都从这一页来 | 按 `SITE-PLAN.md`，加第一节的限定 |
 | GitHub README + release | 中英 | 用 | 开源用户的第一站；release 说明就是更新日志 | README 换成 1.1 的截图和 BRAND 的致谢句 |
 | Homebrew（`kenshinice-ai/tap`） | — | 用 | 已有 | 每次发版改 cask |
 | 少数派（Matrix 投稿） | 中 | 用 | Mac 重度用户最集中；长文能讲清型号、线材、限定 | 一篇实测长文：Lee 署名，配真机照片 |
@@ -94,7 +99,7 @@ One Thunderbolt cable, two apps. No firmware hacks, no teardown, no Linux. Free 
 |---|---|---|---|
 | 2026-10-22 起 | 1.0.1 | 按 HANDOFF「1.0.1 发布步骤」发；release 说明写清 1.0.0 没有声音、1.0.1 修了；写清从测试包或 TargetBridge 换过来要重置权限（ISSUES T1）。**不推广** | 测试顺序第 1–3 步通过 |
 | 1.0.1 之后，1.1 之前 | — | Lee 定名字；实施 BRAND R1–R9；修 ISSUES 的 P1（T9、T10、T11、T20）；拍真机素材；写少数派长文初稿；站点页按 SITE-PLAN 备好但不上线 | — |
-| 1.1 发布当天（日期未定） | 1.1 | 站点页上线；GitHub release；cask；README 换新图 | 四道门：P1 修完并在真机复测；名字定了；站点解冻；对外说法和 Marco 对过 |
+| 1.1 发布当天（日期未定） | 1.1 | 站点页上线；GitHub release；cask；README 换新图 | 四道门：P1 修完并在真机复测；名字已定；站点解冻；对外说法和 Marco 对过 |
 | 发布后 1–3 天 | 1.1 | 中文：少数派（投稿要提前几天）、V2EX、B 站、小红书；PWE 公众号 | 片子剪好、Lee 看过 |
 | 发布后 4–10 天 | 1.1 | 英文：r/mac、r/iMac、MacRumors、YouTube；AlternativeTo | 第一周的 issue 已分类回复 |
 | 发布后 2–4 周 | 1.1.x | 视情况 Show HN | 第五节的三个条件 |
@@ -147,7 +152,7 @@ One Thunderbolt cable, two apps. No firmware hacks, no teardown, no Linux. Free 
 | 只测过一台 iMac | 2014、2015 款出问题，口碑先坏在第一周 | 所有对外说法带第一节的限定；发布前找一台 2014 或 2015 款验证；找不到就在页面上写「未测」 |
 | 拔线后要等 20 多秒（T10） | 用户以为坏了 | 1.1 发布前修；修不好就在安装指南写明，并让界面显示「正在等 iMac 回来」 |
 | 和上游的关系 | 被看成「拿了别人的代码换个名字推广」；或让 Marco 难做 | 每份物料带同一句致谢；修复先交上游；不在上游 issue 区拉人；1.1 的对外说法先给 Marco 看；版本说明里列出给上游的 PR |
-| 名字 | 「iMac」在产品名里，宣传越响风险越大 | BRAND 第六节，先定名字再上英文渠道 |
+| 名字 | 「iMac」在产品名里，宣传越响风险越大 | 已改名 PWE Screen Encore（2026-10-20）；物料只用「for iMac」指代 |
 | 说多了 | 一句「零延迟」就会被测出来 | 第一节「不说的话」；每条说法回到 BASELINE 的一行 |
 | 配对与加密说早了 | 打乱和上游约好的节奏 | 1.1 正式发布前不提；之后的说法先和 Marco 对 |
 | 声音两边都响、键鼠共享的边缘问题（T30） | 被当成主要功能来试 | 宣传只讲画面、亮度、声音在 iMac 播放；键鼠共享标「实验性」，不进片子 |
@@ -156,13 +161,13 @@ One Thunderbolt cable, two apps. No firmware hacks, no teardown, no Linux. Free 
 
 | 物料 | 状态 | 谁做 |
 |---|---|---|
-| 名字决定 | 等 Lee | Lee |
+| 名字决定 | 已定：PWE Screen Encore（2026-10-20），代码和文档已改（分支 `pwe-1.1-rename`） | — |
 | 1.1 的界面和接收端品牌化（BRAND R1–R9） | 规格已写 | Claude |
 | 图标一对（BRAND R6） | 提案已出，等 Lee | Lee 定，Claude 做 |
 | DMG 窗口、读我 | 已做（`pwe/brand/dmg/`） | — |
 | 真机照片：iMac 当屏用的桌面，正面、侧面、线 | 没有 | Lee 拍（不能用别人的照片，不用 AI 图冒充实拍） |
 | 演示片（竖版 + 横版，中英） | 没有；第七节是分镜 | Claude 搭工程，Lee 拍相机镜头 |
-| 站点页 `/imacdisplay/` | 方案在 `SITE-PLAN.md`，冻结中 | 解冻后 Claude |
+| 站点页 `/screenencore/` | 方案在 `SITE-PLAN.md`，冻结中 | 解冻后 Claude |
 | GitHub 社交预览图（1280 × 640） | 没有 | Claude（用品牌资产，无实拍时不放「效果图」） |
 | README 中英新截图 | 没有 | Claude（`--pwe-snapshot`） |
 | 安装指南排错一节、型号与线材表 | 部分有（`安装指南.md`） | Claude |
@@ -173,6 +178,5 @@ One Thunderbolt cable, two apps. No firmware hacks, no teardown, no Linux. Free 
 
 ## 等 Lee 定
 
-- **[决定] 产品名要不要去掉「iMac」** — 推荐：1.1 起改名，英文渠道等名字定了再上（BRAND 第六节）· 不定则所有宣传物料做不了终稿 · 自 2026-10-20
 - **[决定] 1.1 的推广按本方案的四道门和时间线走吗** — 推荐：走；1.0.1 不推广 · 不定则不影响 1.0.1 发布 · 自 2026-10-20
 - **[给料] 真机照片和相机镜头** — 推荐：R1 实施后一次拍完（第七节 1、2、3、5、7 镜和桌面照片） · 不给则片子和小红书都做不了 · 自 2026-10-20

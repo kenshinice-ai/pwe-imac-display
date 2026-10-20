@@ -1,7 +1,9 @@
-# PWE iMac Display
+# PWE Screen Encore for iMac
 
-Turn a 2014–2017 5K iMac into a display for a newer Mac. No firmware hacks, no
-teardown, one Thunderbolt cable. [中文](../../.github/README.md)
+**Your 5K iMac, back on stage.** Turn a 2014–2017 5K iMac into a display for a
+newer Mac. No firmware hacks, no teardown, one Thunderbolt cable. [中文](../../.github/README.md)
+
+Formerly PWE iMac Display; renamed with 1.1.
 
 > **Get the latest version**: [download the disk image](https://github.com/kenshinice-ai/pwe-imac-display/releases/latest),
 > or `brew install --cask kenshinice-ai/tap/pwe-imac-display`. As of 2026-10-16 it has not
@@ -12,13 +14,13 @@ teardown, one Thunderbolt cable. [中文](../../.github/README.md)
 Apple dropped Target Display Mode with the 5K iMac in late 2014, and Apple silicon
 Macs cannot use it at all. Those iMacs still have excellent screens.
 
-- **PWE iMac Display** on the newer Mac creates a virtual display, encodes it and
+- **PWE Screen Encore** on the newer Mac creates a virtual display, encodes it and
   sends it over Thunderbolt Bridge.
-- **PWE iMac Display Receiver** on the iMac decodes it and shows it full screen.
+- **PWE Screen Encore Receiver** on the iMac decodes it and shows it full screen.
 
 ## How it relates to TargetBridge
 
-PWE iMac Display is a build of the open-source project
+PWE Screen Encore is a build of the open-source project
 [TargetBridge](https://github.com/swellweb/targetBridge) by Marco Caciotti
 (swellweb) and the TargetBridge community. Its core code is TargetBridge's, used
 under the MIT License. On top of it, PWE adds:
