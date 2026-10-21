@@ -54,7 +54,7 @@
     3. 把首页卡片（`site/public/index.html` 的「Coming late October」）和 `/help` 的 Screen Encore 卡片改成已发布。
     4. 运行 `python3 site/chrome.py`，看 `git status`，再运行 `./site/deploy.sh`。成功判据：它核对每个 sitemap 页面和下载校验值，全部通过；`curl 'https://pwestudio.site/app/check?product=screenencore&version=1.0.0'` 返回 1.1.0。
     5. 把新的 pwe-tools 知识提交号发给 PWE Assist 会话（「PWE Assist 项目总规划」）。号码看 `deploy.sh` 的输出，或 `https://pwestudio.site/_pwe/status.json`。成功判据：那边回复已按新的 Screen Encore 事实重跑问题集。
-7b. 给 YouTube 会话（「YouTube 频道管理」）交正式版素材，供 Blender 产品片用：用正式构建跑 `--pwe-snapshot`（发送端 01、02、04、05、07，浅色和深色，中文）；接收端等待画面（中文，5120 × 2880，`TB_RECEIVER_SNAPSHOT`）；菜单栏图标（浅色、深色栏）；一张合成的「扩展桌面」图（PWE 壁纸加一个 PWE 窗口，不出现 Apple 标志和别家 App）。再用正式版实测插线到出画面 3–5 次，把秒数和日期发过去。成功判据：那边回复已收到，片子里没有测试版号。
+7b. 给「Screen Encore 全 3D 产品片制作」会话交正式版素材（10-30 前），放进 `docs/pwe/film-assets-2026-10-28/`，按它 README 的状态表填，每批交完发消息给那个会话。发送端截图用 `PWE_SNAPSHOT_SCALE=3`（`pwe-1.1` c9f5398 起）。内容：用正式构建跑 `--pwe-snapshot`（发送端 01、02、04、05、07，浅色和深色，中文）；接收端等待画面（中文，5120 × 2880，`TB_RECEIVER_SNAPSHOT`）；菜单栏图标（浅色、深色栏）；一张合成的「扩展桌面」图（PWE 壁纸加一个 PWE 窗口，不出现 Apple 标志和别家 App）。再用正式版实测插线到出画面 3–5 次，把秒数和日期发过去。成功判据：那边回复已收到，片子里没有测试版号。
 8. 回信告诉 Marco 已发布（10-14 那封的线程）。
 9. 删除本地分支 `security-1.0.1`（已全部并进 1.1）。
 
