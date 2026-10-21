@@ -26,7 +26,9 @@
 #   10. a redial for a silent session -> off the cable it never takes the slot;
 #                       over the cable it replaces a session silent for 2.5 s,
 #                       never a live one (PWE, T45; loopback stands in for the
-#                       cable through a test hook)
+#                       cable through a test hook). Off the cable, a connection
+#                       during a live session is closed at once, not left in the
+#                       listen queue (PWE, T47)
 #   11. clipboard    -> an encrypted test sender switches to receiverMaster:
 #                       the Mac's text reaches the iMac's clipboard and is not
 #                       sent back, a copy on the iMac reaches the Mac, reads
@@ -270,6 +272,11 @@ else
     fail "a connection off the cable took a silent session's slot"
 fi
 expect_log "only a cable connection replaces a silent one" "receiver closed it and kept the session"
+if mock --mode displace --expect closed --live; then
+    pass "a connection off the cable during a live session was closed at once (T47)"
+else
+    fail "a connection off the cable waited in the queue during a live session (T47)"
+fi
 relaunch TB_RECEIVER_TEST_LOOPBACK_IS_CABLE=1
 if mock --mode displace --expect taken --max-change-s 3.5; then
     pass "a cable redial replaced the silent session within 3.5 s (the idle timeout takes 10 s)"

@@ -81,6 +81,12 @@ struct app {
     int      server_fd;
     int      server6_fd;   /* PWE: IPv6 listener (T34); -1 without IPv6 */
     int      client_fd;
+    /* PWE (T47): a cable connection that came while a session was in place,
+     * waiting to take over (tb_pwe_screen_new_connections); -1 when none. */
+    int      held_fd;
+    int      held_ipv6;
+    char     held_ifname[IFNAMSIZ];
+    struct tb_accept_policy held_policy;
 
     uint64_t frames;
     uint64_t last_fps_tick_ms;
@@ -2118,44 +2124,99 @@ static void tb_pwe_adopt_client(struct app *a, int c, const char *ifname, int is
      * accepted unencrypted): tb_pwe_on_conn_event, TB_CONN_EV_READY. */
 }
 
-/* PWE (T45): the Mac dials again over the cable while this session has been
- * silent (the cable was pulled and plugged back before the 10 s idle timeout).
- * Take the new connection now instead of letting its handshake time out.
- * Rules in net.h (tb_net_may_replace_session): only an idle session that is
- * not pairing, and only for a connection that came over the cable. */
-static void tb_pwe_take_cable_redial(struct app *a) {
+/* PWE (T47): give up the held connection, if any. */
+static void tb_pwe_drop_held(struct app *a, const char *why) {
+    if (a->held_fd < 0) return;
+    fprintf(stderr, "[main] cable connection on %s%s given up: %s\n",
+            a->held_ifname[0] ? a->held_ifname : "?", a->held_ipv6 ? " (IPv6)" : "", why);
+    close(a->held_fd);
+    a->held_fd = -1;
+}
+
+/* PWE (T47): a held cable connection becomes the session. */
+static void tb_pwe_adopt_held(struct app *a) {
+    const int c = a->held_fd;
+    a->held_fd = -1;
+    tb_pwe_adopt_client(a, c, a->held_ifname, a->held_ipv6, a->held_policy, now_ms());
+}
+
+/* PWE (T47): connections closed because a session is in place. Rate-limited
+ * like tb_pwe_log_refused: anyone on the network can send them. */
+static void tb_pwe_log_busy(const char *ifname, int ipv6) {
+    static uint64_t last_ms;
+    static unsigned long quiet;
+    const uint64_t t = now_ms();
+    if (last_ms && t - last_ms < 10000) { quiet++; return; }
+    fprintf(stderr, "[main] new connection on %s%s closed: a session is in place, "
+                    "and only a cable connection replaces a silent one",
+            ifname && *ifname ? ifname : "?", ipv6 ? " (IPv6)" : "");
+    if (quiet) fprintf(stderr, "; %lu more since the last report", quiet);
+    fputc('\n', stderr);
+    last_ms = t;
+    quiet = 0;
+}
+
+/* PWE (T45, T47): new connections while a session is in place. Every waiting
+ * one is accepted and decided from its link at once (net.h,
+ * tb_net_offer_during_session): off the cable it is closed; over the cable it
+ * replaces a silent session (the cable was pulled and plugged back before the
+ * 10 s idle timeout), or waits, held, until the session may be replaced. */
+static void tb_pwe_screen_new_connections(struct app *a) {
     const uint64_t now = now_ms();
     const uint64_t silent = now > a->last_recv_ms ? now - a->last_recv_ms : 0;
     const int pairing = a->gate.code[0] && tb_conn_is_pairing(&a->conn);
-    if (!tb_net_session_replaceable(silent, pairing)) return;
+
+    if (a->held_fd >= 0) {
+        if (tb_net_session_replaceable(silent, pairing)) {
+            fprintf(stderr, "[main] the Mac dialled again over the cable (%s%s) after %llu ms of silence "
+                            "from this session; closing the stale session\n",
+                    a->held_ifname[0] ? a->held_ifname : "?", a->held_ipv6 ? ", IPv6" : "",
+                    (unsigned long long)silent);
+            close_client(a);
+            tb_pwe_adopt_held(a);
+            return;
+        }
+    }
 
     const int listeners[2] = { a->server_fd, a->server6_fd };
     for (int which = 0; which < 2; which++) {
         if (listeners[which] < 0) continue;
-        /* Only accept() when a connection is waiting: a look costs nothing. */
-        struct pollfd pfd = { listeners[which], POLLIN, 0 };
-        if (poll(&pfd, 1, 0) <= 0 || !(pfd.revents & POLLIN)) continue;
         const int is_ipv6 = which == 1;
-        char ifname[IFNAMSIZ] = "";
-        struct tb_accept_policy policy;
-        enum tb_link_kind link;
-        int c = tb_pwe_accept_checked(a, listeners[which], is_ipv6, ifname, sizeof(ifname), &policy, &link);
-        if (c < 0) continue;
-        if (!tb_net_may_replace_session(silent, pairing, link, policy.accept)) {
-            /* Its sender retries; before, it would have waited out its
-             * handshake in the queue. */
-            fprintf(stderr, "[main] new connection on %s%s closed: a session is in place, "
-                            "and only a cable connection replaces a silent one\n",
-                    ifname[0] ? ifname : "?", is_ipv6 ? " (IPv6)" : "");
-            close(c);
-            continue;
+        /* A few per pass: a burst is cleared quickly, a flood cannot hold the loop. */
+        for (int n = 0; n < 8; n++) {
+            /* Only accept() when a connection is waiting: a look costs nothing. */
+            struct pollfd pfd = { listeners[which], POLLIN, 0 };
+            if (poll(&pfd, 1, 0) <= 0 || !(pfd.revents & POLLIN)) break;
+            char ifname[IFNAMSIZ] = "";
+            struct tb_accept_policy policy;
+            enum tb_link_kind link;
+            int c = tb_pwe_accept_checked(a, listeners[which], is_ipv6, ifname, sizeof(ifname), &policy, &link);
+            if (c < 0) continue;   /* refused by its link, and closed */
+            switch (tb_net_offer_during_session(silent, pairing, link, policy.accept)) {
+            case TB_OFFER_REPLACE:
+                fprintf(stderr, "[main] the Mac dialled again over the cable (%s%s) after %llu ms of silence "
+                                "from this session; closing the stale session\n",
+                        ifname[0] ? ifname : "?", is_ipv6 ? ", IPv6" : "", (unsigned long long)silent);
+                tb_pwe_drop_held(a, "a newer cable connection");
+                close_client(a);
+                tb_pwe_adopt_client(a, c, ifname, is_ipv6, policy, now_ms());
+                return;
+            case TB_OFFER_HOLD:
+                tb_pwe_drop_held(a, "a newer cable connection");
+                a->held_fd = c;
+                a->held_ipv6 = is_ipv6;
+                snprintf(a->held_ifname, sizeof(a->held_ifname), "%s", ifname);
+                a->held_policy = policy;
+                fprintf(stderr, "[main] cable connection on %s%s held: the session in place is %s\n",
+                        ifname[0] ? ifname : "?", is_ipv6 ? " (IPv6)" : "", pairing ? "pairing" : "live");
+                break;
+            case TB_OFFER_CLOSE:
+            default:
+                tb_pwe_log_busy(ifname, is_ipv6);
+                close(c);
+                break;
+            }
         }
-        fprintf(stderr, "[main] the Mac dialled again over the cable (%s%s) after %llu ms of silence "
-                        "from this session; closing the stale session\n",
-                ifname[0] ? ifname : "?", is_ipv6 ? ", IPv6" : "", (unsigned long long)silent);
-        close_client(a);
-        tb_pwe_adopt_client(a, c, ifname, is_ipv6, policy, now_ms());
-        return;
     }
 }
 
@@ -2328,6 +2389,7 @@ int main(int argc, char **argv) {
     a.server_fd = -1;
     a.server6_fd = -1;
     a.client_fd = -1;
+    a.held_fd = -1;
     a.app_id = CFSTR("com.targetbridge.receiver");
     fprintf(stderr, "[net] senders accepted over %s\n",
             tb_pwe_network_allowed(&a)
@@ -2541,6 +2603,8 @@ int main(int argc, char **argv) {
         }
 
         /* Accept new client */
+        /* PWE (T47): the session ended while a cable connection waited. */
+        if (a.client_fd < 0 && a.held_fd >= 0) tb_pwe_adopt_held(&a);
         if (a.client_fd < 0) {
             TB_LOOP_PHASE("accept a sender");
             /* PWE: both listeners on every pass, starting with a different one
@@ -2595,8 +2659,8 @@ int main(int argc, char **argv) {
                                 (unsigned long long)idle_ms);
                         close_client(&a);
                     } else {
-                        TB_LOOP_PHASE("a cable redial for a silent session");
-                        tb_pwe_take_cable_redial(&a);   /* PWE (T45) */
+                        TB_LOOP_PHASE("new connections during a session");
+                        tb_pwe_screen_new_connections(&a);   /* PWE (T45, T47) */
                     }
                 }
             }

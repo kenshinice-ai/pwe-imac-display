@@ -159,6 +159,21 @@ int tb_net_session_replaceable(uint64_t silent_ms, int pairing);
 /* Whether this new connection replaces it. `accepted`: its accept policy. */
 int tb_net_may_replace_session(uint64_t silent_ms, int pairing, enum tb_link_kind link, int accepted);
 
+/* PWE (T47): what becomes of a connection that arrives while a session is in
+ * place. Every waiting connection is accepted and decided at once, so nothing
+ * off the cable sits in the listen queue for the length of a session (and
+ * fills it, so the Mac's own redial cannot get in):
+ *   - REPLACE: tb_net_may_replace_session holds; it becomes the session;
+ *   - HOLD: a cable connection the accept policy let in, while the session is
+ *     still live or pairing. It waits, unread, as it used to wait in the
+ *     queue, and takes over once the session may be replaced (T45) or ends.
+ *     One is held at most: a newer one replaces it;
+ *   - CLOSE: anything else, at once. */
+enum tb_session_offer { TB_OFFER_CLOSE, TB_OFFER_HOLD, TB_OFFER_REPLACE };
+
+enum tb_session_offer tb_net_offer_during_session(uint64_t silent_ms, int pairing,
+                                                  enum tb_link_kind link, int accepted);
+
 /* ---- PWE: secure connection (tb_conn.c) ----------------------------------
  * One client connection: bytes in -> packets -> handshake or decryption ->
  * the usual packet callback. A connection whose first packet is SEC_HELLO is

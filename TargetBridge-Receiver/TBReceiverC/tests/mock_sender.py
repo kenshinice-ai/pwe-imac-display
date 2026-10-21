@@ -37,6 +37,8 @@ Modes (--mode):
                 B its display profile. --expect taken: within --max-change-s,
                 and A closed. --expect kept: B is not taken while A is there
                 (4 s); with --live, B is then taken once A says TEARDOWN.
+                --expect closed: the receiver closes B within 1 s and A keeps
+                the slot (PWE, T47: off the cable, during a live session).
 
 --audio adds silent 48 kHz stereo PCM (AUDIO_FRAME) to stream, pointer and
 cycles, so the receiver opens and closes its sound device as with "sound on
@@ -373,6 +375,21 @@ def run_displace(args) -> int:
     start = time.monotonic()
     b = socket.create_connection((args.host, args.port), timeout=5)
     b.sendall(hello_packet(args.name + " B"))
+    if args.expect == "closed":
+        rc = 0
+        if closed_by_receiver(b, 1.0):
+            print(f"[mock] the receiver closed B after {time.monotonic() - start:.2f} s")
+        else:
+            print("[mock] ERROR: B was left open (queued) for 1 s while A was there")
+            rc = 1
+        stop.set()
+        for sock in (a, b):
+            try:
+                sock.sendall(json_packet(PKT_TEARDOWN, {"reason": "mock done"}))
+            except OSError:
+                pass
+            sock.close()
+        return rc
     window = args.max_change_s if args.expect == "taken" else 4.0
     profile = read_profile(b, window)
     took = time.monotonic() - start
@@ -510,7 +527,7 @@ def main() -> int:
     ap.add_argument("--cycles", type=int, default=6, help="cycles: how many preset changes")
     ap.add_argument("--sizes", default="1280x720,1920x1080,2560x1440", help="cycles: sizes in turn")
     ap.add_argument("--max-change-s", type=float, default=5.0, help="cycles: slowest change allowed")
-    ap.add_argument("--expect", choices=["taken", "kept"], default="taken",
+    ap.add_argument("--expect", choices=["taken", "kept", "closed"], default="taken",
                     help="displace: whether the second connection should take the slot")
     ap.add_argument("--live", action="store_true", help="displace: the first session keeps heartbeating")
     ap.add_argument("--name", default="MockSender")

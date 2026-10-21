@@ -630,6 +630,13 @@ int tb_net_may_replace_session(uint64_t silent_ms, int pairing, enum tb_link_kin
     return accepted && link == TB_LINK_CABLE && tb_net_session_replaceable(silent_ms, pairing);
 }
 
+enum tb_session_offer tb_net_offer_during_session(uint64_t silent_ms, int pairing,
+                                                  enum tb_link_kind link, int accepted) {
+    if (tb_net_may_replace_session(silent_ms, pairing, link, accepted)) return TB_OFFER_REPLACE;
+    if (accepted && link == TB_LINK_CABLE) return TB_OFFER_HOLD;
+    return TB_OFFER_CLOSE;
+}
+
 int tb_net_get_tb_ip(char *buf, size_t bufsz) {
     struct ifaddrs *ifap = NULL;
     if (getifaddrs(&ifap) != 0) return -1;

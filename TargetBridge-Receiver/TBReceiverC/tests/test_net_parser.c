@@ -251,6 +251,26 @@ static void test_replace_silent_session(void) {
     CHECK(!tb_net_may_replace_session(1000, 0, TB_LINK_CABLE, 1), "a live session is not replaced, even by the cable");
     CHECK(!tb_net_may_replace_session(9000, 1, TB_LINK_CABLE, 1), "nor one that is pairing");
 
+    /* T47: every connection that arrives during a session is decided at once. */
+    CHECK(tb_net_offer_during_session(stale, 0, TB_LINK_CABLE, 1) == TB_OFFER_REPLACE,
+          "cable, silent session: replaces it");
+    CHECK(tb_net_offer_during_session(1000, 0, TB_LINK_CABLE, 1) == TB_OFFER_HOLD,
+          "cable, live session: held, not left in the queue");
+    CHECK(tb_net_offer_during_session(9000, 1, TB_LINK_CABLE, 1) == TB_OFFER_HOLD,
+          "cable, pairing session: held");
+    CHECK(tb_net_offer_during_session(stale, 0, TB_LINK_CABLE, 0) == TB_OFFER_CLOSE,
+          "a refused cable connection is closed");
+    for (uint64_t silent = 0; silent <= 9000; silent += 4500) {
+        for (int pairing = 0; pairing <= 1; pairing++) {
+            CHECK(tb_net_offer_during_session(silent, pairing, TB_LINK_NETWORK, 1) == TB_OFFER_CLOSE,
+                  "a LAN peer is closed at once, live session or silent");
+            CHECK(tb_net_offer_during_session(silent, pairing, TB_LINK_NETWORK, 0) == TB_OFFER_CLOSE,
+                  "a refused LAN peer is closed");
+            CHECK(tb_net_offer_during_session(silent, pairing, TB_LINK_LOOPBACK, 1) == TB_OFFER_CLOSE,
+                  "loopback is closed during a session");
+        }
+    }
+
     /* With the accept policy in front: whatever the settings, only the cable. */
     for (int network = 0; network <= 1; network++) {
         for (int compat = 0; compat <= 1; compat++) {
