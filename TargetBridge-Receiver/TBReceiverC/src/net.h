@@ -136,6 +136,29 @@ struct tb_accept_policy tb_net_accept_policy(enum tb_link_kind link,
 struct tb_accept_policy tb_net_accept_policy_family(enum tb_link_kind link, int ipv6,
                                                     int network_allowed, int compat_mode);
 
+/* ---- PWE (T45): a sender that dials again over the cable -------------------
+ * The receiver has one client slot. When the cable is pulled and plugged back
+ * within the 10 s idle timeout, the Mac dials again while the receiver still
+ * holds the dead session, and the Mac's handshake gives up after 3 s. So a new
+ * connection may replace the current session when all of these hold:
+ *   - the session has been silent for TB_NET_STALE_SESSION_MS. A live sender
+ *     sends a heartbeat every 2 s; 2.5 s leaves room for jitter, and is still
+ *     inside the Mac's 3 s handshake wait, so a dial that finds a silent
+ *     session is answered in time;
+ *   - no pairing code is being typed on it;
+ *   - the new connection came over the cable (never a network, never
+ *     loopback) and passed the accept policy, which is decided from the link
+ *     before any byte of it is read.
+ * A live session is never replaced, and nothing off the cable replaces one. */
+#define TB_NET_STALE_SESSION_MS 2500u
+
+/* Whether the current session may be replaced at all (worth looking at the
+ * listeners): silent long enough, and not pairing. */
+int tb_net_session_replaceable(uint64_t silent_ms, int pairing);
+
+/* Whether this new connection replaces it. `accepted`: its accept policy. */
+int tb_net_may_replace_session(uint64_t silent_ms, int pairing, enum tb_link_kind link, int accepted);
+
 /* ---- PWE: secure connection (tb_conn.c) ----------------------------------
  * One client connection: bytes in -> packets -> handshake or decryption ->
  * the usual packet callback. A connection whose first packet is SEC_HELLO is

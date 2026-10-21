@@ -37,6 +37,7 @@
 #include <net/if.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <poll.h>
 #ifndef TB_RECEIVER_TEST_HOOKS
 #define TB_RECEIVER_TEST_HOOKS 0   /* 1 only in test builds: make TEST_HOOKS=1 */
 #endif
@@ -2066,6 +2067,97 @@ static void tb_pwe_on_conn_event(struct tb_conn *c, int ev, void *ud) {
     tb_pwe_refresh_notice(a, now_ms());
 }
 
+/* PWE: accept one waiting connection and decide from its link alone, before
+ * any byte reaches the parser. Pairing only over the cable, and loopback is
+ * not the cable. -1 when nothing was waiting or the link is refused (closed). */
+static int tb_pwe_accept_checked(struct app *a, int listener, int is_ipv6, char *ifname, size_t ifname_size,
+                                 struct tb_accept_policy *policy, enum tb_link_kind *link_out) {
+    struct tb_accept_policy none = { 0, 0, 0 };
+    *policy = none;
+    *link_out = TB_LINK_NETWORK;
+    if (ifname_size) ifname[0] = '\0';
+    int c = tb_net_accept(listener);
+    if (c < 0) return -1;
+    int direct = tb_net_client_is_direct_link(c, ifname, ifname_size);
+    enum tb_link_kind link = tb_net_link_kind(ifname, direct);
+#if TB_RECEIVER_TEST_HOOKS
+    if (getenv("TB_RECEIVER_TEST_LOOPBACK_IS_CABLE") && link == TB_LINK_LOOPBACK) link = TB_LINK_CABLE;
+#endif
+    *policy = tb_net_accept_policy_family(link, is_ipv6, tb_pwe_network_allowed(a), a->allow_plaintext);
+    *link_out = link;
+    if (!policy->accept) {
+        tb_pwe_log_refused(ifname, is_ipv6);
+        close(c);
+        return -1;
+    }
+    return c;
+}
+
+/* PWE: make an accepted connection the session. */
+static void tb_pwe_adopt_client(struct app *a, int c, const char *ifname, int is_ipv6,
+                                struct tb_accept_policy policy, uint64_t t) {
+    a->client_fd = c;
+    a->have_video_frame = 0;
+    a->session_active = 0;
+    a->reported_night_shift = -1;   /* force one report per session */
+    a->reported_true_tone = -1;
+    a->last_recv_ms = t;
+    SDL_DisableScreenSaver();
+    struct tb_conn_config conn_cfg = {
+        a->have_keys ? &a->identity : NULL, &a->store, &a->gate, policy.pairing, policy.plaintext
+    };
+    tb_conn_init(&a->conn, c, &conn_cfg, on_packet, tb_pwe_on_conn_event, a);
+    a->session_plaintext = 0;
+    a->pwe_test_frames_at_connect = a->frames;
+    fprintf(stderr, "[main] client connected (%s%s%s)\n", ifname[0] ? ifname : "?",
+            is_ipv6 ? ", IPv6" : "",
+            policy.pairing ? ", cable" : (policy.plaintext ? "" : ", encrypted only"));
+    tb_receiver_refresh_input_capture(a);
+    /* The display profile goes out once the connection is secure (or
+     * accepted unencrypted): tb_pwe_on_conn_event, TB_CONN_EV_READY. */
+}
+
+/* PWE (T45): the Mac dials again over the cable while this session has been
+ * silent (the cable was pulled and plugged back before the 10 s idle timeout).
+ * Take the new connection now instead of letting its handshake time out.
+ * Rules in net.h (tb_net_may_replace_session): only an idle session that is
+ * not pairing, and only for a connection that came over the cable. */
+static void tb_pwe_take_cable_redial(struct app *a) {
+    const uint64_t now = now_ms();
+    const uint64_t silent = now > a->last_recv_ms ? now - a->last_recv_ms : 0;
+    const int pairing = a->gate.code[0] && tb_conn_is_pairing(&a->conn);
+    if (!tb_net_session_replaceable(silent, pairing)) return;
+
+    const int listeners[2] = { a->server_fd, a->server6_fd };
+    for (int which = 0; which < 2; which++) {
+        if (listeners[which] < 0) continue;
+        /* Only accept() when a connection is waiting: a look costs nothing. */
+        struct pollfd pfd = { listeners[which], POLLIN, 0 };
+        if (poll(&pfd, 1, 0) <= 0 || !(pfd.revents & POLLIN)) continue;
+        const int is_ipv6 = which == 1;
+        char ifname[IFNAMSIZ] = "";
+        struct tb_accept_policy policy;
+        enum tb_link_kind link;
+        int c = tb_pwe_accept_checked(a, listeners[which], is_ipv6, ifname, sizeof(ifname), &policy, &link);
+        if (c < 0) continue;
+        if (!tb_net_may_replace_session(silent, pairing, link, policy.accept)) {
+            /* Its sender retries; before, it would have waited out its
+             * handshake in the queue. */
+            fprintf(stderr, "[main] new connection on %s%s closed: a session is in place, "
+                            "and only a cable connection replaces a silent one\n",
+                    ifname[0] ? ifname : "?", is_ipv6 ? " (IPv6)" : "");
+            close(c);
+            continue;
+        }
+        fprintf(stderr, "[main] the Mac dialled again over the cable (%s%s) after %llu ms of silence "
+                        "from this session; closing the stale session\n",
+                ifname[0] ? ifname : "?", is_ipv6 ? ", IPv6" : "", (unsigned long long)silent);
+        close_client(a);
+        tb_pwe_adopt_client(a, c, ifname, is_ipv6, policy, now_ms());
+        return;
+    }
+}
+
 static void tb_pwe_refresh_menu(struct app *a) {
     tb_pairing_menu_update(tb_i18n_get("receiver.menu.allow_unencrypted"), a->allow_plaintext,
                            tb_i18n_get("receiver.menu.forget_all"));
@@ -2453,46 +2545,11 @@ int main(int argc, char **argv) {
                 const int which = (a.accept_turn + k) & 1;
                 if (listeners[which] < 0) continue;
                 const int c_is_ipv6 = which == 1;
-                int c = tb_net_accept(listeners[which]);
-                /* PWE: decide from the link alone, before any byte reaches the
-                 * parser. Pairing only over the cable, and loopback is not the cable. */
                 char ifname[IFNAMSIZ] = "";
                 struct tb_accept_policy policy = { 0, 0, 0 };
-                if (c >= 0) {
-                    int direct = tb_net_client_is_direct_link(c, ifname, sizeof(ifname));
-                    enum tb_link_kind link = tb_net_link_kind(ifname, direct);
-#if TB_RECEIVER_TEST_HOOKS
-                    if (getenv("TB_RECEIVER_TEST_LOOPBACK_IS_CABLE") && link == TB_LINK_LOOPBACK) link = TB_LINK_CABLE;
-#endif
-                    policy = tb_net_accept_policy_family(link, c_is_ipv6,
-                                                         tb_pwe_network_allowed(&a), a.allow_plaintext);
-                    if (!policy.accept) {
-                        tb_pwe_log_refused(ifname, c_is_ipv6);
-                        close(c);
-                        c = -1;
-                    }
-                }
-                if (c >= 0) {
-                    a.client_fd = c;
-                    a.have_video_frame = 0;
-                    a.session_active = 0;
-                    a.reported_night_shift = -1;   /* force one report per session */
-                    a.reported_true_tone = -1;
-                    a.last_recv_ms = t;
-                    SDL_DisableScreenSaver();
-                    struct tb_conn_config conn_cfg = {
-                        a.have_keys ? &a.identity : NULL, &a.store, &a.gate, policy.pairing, policy.plaintext
-                    };
-                    tb_conn_init(&a.conn, c, &conn_cfg, on_packet, tb_pwe_on_conn_event, &a);
-                    a.session_plaintext = 0;
-                    a.pwe_test_frames_at_connect = a.frames;
-                    fprintf(stderr, "[main] client connected (%s%s%s)\n", ifname[0] ? ifname : "?",
-                            c_is_ipv6 ? ", IPv6" : "",
-                            policy.pairing ? ", cable" : (policy.plaintext ? "" : ", encrypted only"));
-                    tb_receiver_refresh_input_capture(&a);
-                    /* The display profile goes out once the connection is secure (or
-                     * accepted unencrypted): tb_pwe_on_conn_event, TB_CONN_EV_READY. */
-                }
+                enum tb_link_kind link = TB_LINK_NETWORK;
+                int c = tb_pwe_accept_checked(&a, listeners[which], c_is_ipv6, ifname, sizeof(ifname), &policy, &link);
+                if (c >= 0) tb_pwe_adopt_client(&a, c, ifname, c_is_ipv6, policy, t);
             }
         } else {
             TB_LOOP_PHASE("connection tick");
@@ -2531,6 +2588,9 @@ int main(int argc, char **argv) {
                                 "[main] no data from sender for %llu ms; closing stale session\n",
                                 (unsigned long long)idle_ms);
                         close_client(&a);
+                    } else {
+                        TB_LOOP_PHASE("a cable redial for a silent session");
+                        tb_pwe_take_cable_redial(&a);   /* PWE (T45) */
                     }
                 }
             }

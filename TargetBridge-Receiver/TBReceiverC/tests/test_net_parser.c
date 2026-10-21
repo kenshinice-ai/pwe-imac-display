@@ -230,6 +230,42 @@ static void test_accept_policy_by_family(void) {
     CHECK(!tb_net_accept_policy_family((enum tb_link_kind)99, 1, 1, 1).accept, "IPv6 unknown link refused");
 }
 
+/* PWE (T45): who may take the single client slot from a silent session. */
+static void test_replace_silent_session(void) {
+    const uint64_t stale = TB_NET_STALE_SESSION_MS;
+    CHECK(stale > 2000 && stale < 3000,
+          "the threshold is above the 2 s heartbeat and inside the Mac's 3 s handshake wait");
+
+    CHECK(!tb_net_session_replaceable(0, 0), "a session that just spoke is not replaceable");
+    CHECK(!tb_net_session_replaceable(2000, 0), "one heartbeat interval of silence is not enough");
+    CHECK(!tb_net_session_replaceable(stale - 1, 0), "just under the threshold: kept");
+    CHECK(tb_net_session_replaceable(stale, 0), "at the threshold: replaceable");
+    CHECK(tb_net_session_replaceable(9000, 0), "nearly at the idle timeout: replaceable");
+    CHECK(!tb_net_session_replaceable(9000, 1), "a session showing a pairing code is never replaced");
+
+    /* Only a new cable connection that its accept policy let in. */
+    CHECK(tb_net_may_replace_session(stale, 0, TB_LINK_CABLE, 1), "cable redial replaces a silent session");
+    CHECK(!tb_net_may_replace_session(stale, 0, TB_LINK_CABLE, 0), "a refused cable connection replaces nothing");
+    CHECK(!tb_net_may_replace_session(9000, 0, TB_LINK_NETWORK, 1), "a LAN peer never replaces a session");
+    CHECK(!tb_net_may_replace_session(9000, 0, TB_LINK_LOOPBACK, 1), "loopback never replaces a session");
+    CHECK(!tb_net_may_replace_session(1000, 0, TB_LINK_CABLE, 1), "a live session is not replaced, even by the cable");
+    CHECK(!tb_net_may_replace_session(9000, 1, TB_LINK_CABLE, 1), "nor one that is pairing");
+
+    /* With the accept policy in front: whatever the settings, only the cable. */
+    for (int network = 0; network <= 1; network++) {
+        for (int compat = 0; compat <= 1; compat++) {
+            for (int v6 = 0; v6 <= 1; v6++) {
+                const enum tb_link_kind links[3] = { TB_LINK_NETWORK, TB_LINK_LOOPBACK, TB_LINK_CABLE };
+                for (int i = 0; i < 3; i++) {
+                    struct tb_accept_policy p = tb_net_accept_policy_family(links[i], v6, network, compat);
+                    CHECK(tb_net_may_replace_session(9000, 0, links[i], p.accept) == (links[i] == TB_LINK_CABLE),
+                          "only a cable connection replaces, AllowLocalNetwork or not");
+                }
+            }
+        }
+    }
+}
+
 static void test_cable_bridges_cached(void) {
     char list[128];
     (void)tb_net_cable_bridges(list, sizeof(list));
@@ -508,6 +544,7 @@ int main(void) {
     test_direct_link_real_sockets();
     test_accept_policy_by_family();
     test_cable_bridges_cached();
+    test_replace_silent_session();
     test_single_packet_whole_feed();
     test_byte_by_byte_feed();
     test_two_contiguous_packets();
