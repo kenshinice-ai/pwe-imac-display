@@ -77,6 +77,7 @@ struct PWEApp: App {
 
         Window(strings.aboutApp, id: "about") {
             PWEAboutView(updates: updates, strings: strings)
+                .background(PWEUntitledWindow())
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
@@ -138,6 +139,7 @@ private struct PWEWindowContent: View {
     var body: some View {
         PWEMainView(model: model, strings: PWEStrings(language: service.language),
                     openAbout: { openWindow(id: "about") })
+            .background(PWEUntitledWindow())
             .onAppear {
                 PWEWindows.shared.openWindow = openWindow
                 PWEWindows.shared.openSettings = openSettings
@@ -149,6 +151,24 @@ private struct PWEWindowContent: View {
             .onOpenURL { TBSenderAutomation.handle(url: $0) }
             // A pweimacdisplay:// URL goes to the open window instead of opening another.
             .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
+    }
+}
+
+/// A window whose content opens with the app's name (the main window's header,
+/// About) does not also draw it in the title bar. The title stays set, for the
+/// Window menu, Mission Control and VoiceOver; the bar keeps its height and the
+/// window's colour, so the traffic lights sit on the same plain ground.
+struct PWEUntitledWindow: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { Probe() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class Probe: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window else { return }
+            window.titleVisibility = .hidden
+            window.titlebarAppearsTransparent = true
+        }
     }
 }
 
@@ -210,16 +230,16 @@ enum PWESnapshot {
             for (name, phase, firstConnection) in phases {
                 let view = PWEMainView(model: PWESenderModel(preview: phase, firstConnection: firstConnection),
                                        strings: strings)
-                write(view, to: directory.appendingPathComponent("\(stem)-\(name).png"))
+                writeWindow(view, title: strings.appName, to: directory.appendingPathComponent("\(stem)-\(name).png"))
             }
-            write(PWEAboutView(updates: UpdateCheck(), strings: strings),
-                  to: directory.appendingPathComponent("\(stem)-9-about.png"))
+            writeWindow(PWEAboutView(updates: UpdateCheck(), strings: strings),
+                        title: strings.aboutApp, to: directory.appendingPathComponent("\(stem)-9-about.png"))
             for (name, phase, security) in pairing {
                 // The code step after a wrong or expired code says why it asks again.
                 let note: PWECodeNote? = name.hasPrefix("p04b") ? .wrong : name.hasPrefix("p05b") ? .expired : nil
                 let model = PWESenderModel(preview: phase, security: security, codeNote: note)
                 let view = PWEMainView(model: model, strings: strings)
-                write(view, to: directory.appendingPathComponent("\(stem)-\(name).png"))
+                writeWindow(view, title: strings.appName, to: directory.appendingPathComponent("\(stem)-\(name).png"))
             }
 
             let connected = PWESenderModel(preview: .connected(imac))
@@ -288,6 +308,25 @@ enum PWESnapshot {
         host.appearance = appearance
         host.frame = NSRect(origin: .zero, size: host.fittingSize)
         write(host, to: url)
+    }
+
+    /// The view in a titled window, drawn with its title bar as the person sees it:
+    /// traffic lights, and no title where the content already names the app
+    /// (PWEUntitledWindow).
+    @MainActor
+    private static func writeWindow<V: View>(_ view: V, title: String, to url: URL) {
+        let host = NSHostingView(rootView: view.fixedSize().background(PWEUntitledWindow()))
+        host.frame = NSRect(origin: .zero, size: host.fittingSize)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.titled, .closable, .miniaturizable],
+                              backing: .buffered, defer: false)
+        window.appearance = appearance
+        window.title = title
+        window.contentView = host
+        guard let frame = host.superview else { return }
+        frame.layoutSubtreeIfNeeded()
+        guard let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds) else { return }
+        frame.cacheDisplay(in: frame.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?.write(to: url)
     }
 
     @MainActor

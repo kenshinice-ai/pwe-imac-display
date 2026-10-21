@@ -70,16 +70,17 @@ struct PWEReconnectNotice: View {
     }
 }
 
-/// A small capsule next to a setting's name.
+/// A small capsule next to a setting's name. Grey, not orange: orange is this
+/// app's one warning colour, and an experimental option is not a warning.
 private struct ExperimentalBadge: View {
     let text: String
     var body: some View {
         Text(text)
             .font(.caption2.weight(.semibold))
-            .foregroundStyle(.orange)
+            .foregroundStyle(.secondary)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(.orange.opacity(0.12), in: Capsule())
+            .background(.quaternary, in: Capsule())
     }
 }
 
@@ -240,8 +241,7 @@ struct PWEAdvancedSettings: View {
                     }
                 }
                 if let name = model.forgetFailure {
-                    Label(strings.forgetFailed(name), systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                    PWENote(strings.forgetFailed(name), symbol: "exclamationmark.triangle.fill")
                 }
             }
             Section {

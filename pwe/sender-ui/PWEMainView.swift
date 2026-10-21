@@ -17,25 +17,34 @@ struct PWEMainView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // The title bar above is empty (PWEUntitledWindow) and the traffic
+            // lights end about 16 pt above the header: 8 here makes the gap above
+            // the icon match the 16 below it.
             header
                 .padding(.horizontal, 24)
-                .padding(.top, 20)
+                .padding(.top, 8)
                 .padding(.bottom, 16)
 
             Divider()
 
-            ZStack(alignment: .leading) {
+            ZStack(alignment: .topLeading) {
                 phaseView
                     .id(phaseKey)
                     .transition(reduceMotion ? .identity : Self.phaseChange)
             }
-            // One height for every phase, content centred in it: the window never
-            // jumps when the connection changes state.
-            .frame(maxWidth: .infinity, minHeight: 250, alignment: .leading)
+            // One height for every phase, content from the top: the window never
+            // jumps, and the symbol and title (PWEPhaseLayout) stay in one place
+            // when the connection changes state.
+            .frame(maxWidth: .infinity, minHeight: 250, alignment: .topLeading)
             .padding(24)
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: phaseKey)
         }
         .frame(width: 440)
+        // The window changes by itself as the connection moves on; VoiceOver
+        // hears the new state instead of finding it by moving around.
+        .onChange(of: phaseKey) {
+            AccessibilityNotification.Announcement(strings.status(model.phase)).post()
+        }
     }
 
     /// One phase on screen at a time (T28): the old one fades out in 0.08 s,
@@ -100,26 +109,30 @@ struct PWEMainView: View {
     }
 
     private var permissionView: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            symbol("rectangle.dashed.badge.record")
-            Text(strings.permissionTitle).font(.title3.weight(.semibold))
-            Text(strings.permissionBody).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Button(strings.permissionOpen) { model.requestScreenRecording() }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(strings.permissionRestartHint)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button(strings.permissionRestart) { model.restartForPermission() }
-                    .buttonStyle(.link)
+        PWEPhaseLayout(title: strings.permissionTitle) {
+            PWESymbol(name: "rectangle.dashed.badge.record")
+        } detail: {
+            PWEPhaseText(strings.permissionBody)
+        } actions: {
+            VStack(alignment: .leading, spacing: 12) {
+                Button(strings.permissionOpen) { model.requestScreenRecording() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .keyboardShortcut(.defaultAction)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(strings.permissionRestartHint)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button(strings.permissionRestart) { model.restartForPermission() }
+                        .buttonStyle(.link)
+                }
+                .font(.callout)
             }
-            .font(.callout)
         }
     }
 
     private var searchingView: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        PWEPhaseLayout(title: strings.searchingTitle, busy: true) {
             HStack(spacing: 10) {
                 Image(systemName: "laptopcomputer")
                 Image(systemName: "cable.connector.horizontal")
@@ -127,41 +140,53 @@ struct PWEMainView: View {
             }
             .font(.system(size: 30, weight: .light))
             .foregroundStyle(.secondary)
-            .accessibilityHidden(true)
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text(strings.searchingTitle).font(.title3.weight(.semibold))
+        } detail: {
+            VStack(alignment: .leading, spacing: 8) {
+                step(1, strings.searchingStep1)
+                step(2, strings.searchingStep2)
+                Text(strings.searchingHint)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            step(1, strings.searchingStep1)
-            step(2, strings.searchingStep2)
-            Text(strings.searchingHint)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            .padding(.top, 4)
+        } actions: {
+            EmptyView()
         }
     }
 
     private func chooseView(_ receivers: [PWEReceiver]) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(strings.chooseTitle).font(.title3.weight(.semibold))
-            ForEach(receivers) { receiver in
-                HStack(spacing: 12) {
-                    Image(systemName: "desktopcomputer").font(.title2).foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
-                    receiverLabel(receiver)
-                    Spacer()
-                    Button(strings.useAsDisplay) { model.connect(to: receiver) }
+        PWEPhaseLayout(title: strings.chooseTitle) {
+            PWESymbol(name: "desktopcomputer")
+        } detail: {
+            EmptyView()
+        } actions: {
+            VStack(spacing: 8) {
+                ForEach(receivers) { receiver in
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(receiver.name).font(.headline)
+                            if !receiver.detail.isEmpty {
+                                Text(receiver.detail).font(.callout).foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer()
+                        Button(strings.useAsDisplay) { model.connect(to: receiver) }
+                    }
+                    .padding(12)
+                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+                    .accessibilityElement(children: .contain)
                 }
-                .padding(12)
-                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
             }
         }
     }
 
     private func readyView(_ receiver: PWEReceiver) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            symbol("desktopcomputer")
-            receiverLabel(receiver, large: true)
+        PWEPhaseLayout(title: receiver.name) {
+            PWESymbol(name: "desktopcomputer")
+        } detail: {
+            if !receiver.detail.isEmpty { PWEPhaseText(receiver.detail) }
+        } actions: {
             Button(strings.useAsDisplay) { model.connect(to: receiver) }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
@@ -170,14 +195,11 @@ struct PWEMainView: View {
     }
 
     private func connectingView(_ receiver: PWEReceiver?, _ stage: PWEStage) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            symbol("desktopcomputer")
-            Text(strings.connectingTitle(receiver?.name)).font(.title3.weight(.semibold))
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text(strings.stage(stage)).foregroundStyle(.secondary)
-            }
-            .accessibilityElement(children: .combine)
+        PWEPhaseLayout(title: strings.connectingTitle(receiver?.name)) {
+            PWESymbol(name: "desktopcomputer")
+        } detail: {
+            PWEProgressLine(strings.stage(stage))
+        } actions: {
             Button(strings.cancel) { model.disconnect() }
                 .controlSize(.large)
                 .keyboardShortcut(.cancelAction)
@@ -185,16 +207,20 @@ struct PWEMainView: View {
     }
 
     private func connectedView(_ receiver: PWEReceiver?) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            connectedHeader(receiver)
-            if model.isUnencrypted { unencryptedWarning }
-            HStack(spacing: 10) {
-                Button(strings.arrange) { model.openDisplaySettings() }
-                    .controlSize(.large)
-                Button(strings.disconnect) { model.disconnect() }
-                    .controlSize(.large)
+        PWEPhaseLayout(title: strings.connectedTitle(receiver?.name)) {
+            PWESymbol(name: "checkmark.circle", tint: .green)
+        } detail: {
+            EmptyView()
+        } actions: {
+            VStack(alignment: .leading, spacing: 16) {
+                if model.isUnencrypted { unencryptedWarning }
+                HStack(spacing: 10) {
+                    Button(strings.arrange) { model.openDisplaySettings() }
+                    Button(strings.disconnect) { model.disconnect() }
+                }
+                .controlSize(.large)
+                if model.firstConnection { firstConnectionTips }
             }
-            if model.firstConnection { firstConnectionTips }
         }
     }
 
@@ -221,22 +247,11 @@ struct PWEMainView: View {
         }
     }
 
-    private func connectedHeader(_ receiver: PWEReceiver?) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.title2)
-                .foregroundStyle(.green)
-                .accessibilityHidden(true)
-            Text(strings.connectedTitle(receiver?.name)).font(.title3.weight(.semibold))
-        }
-    }
-
     /// D1: an unencrypted session is allowed, and always says so, with the way out.
+    /// The colour is in the icon and the tint; the words keep the text colour.
     private var unencryptedWarning: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label(strings.unencryptedBanner, systemImage: "lock.open.fill")
-                .foregroundStyle(.orange)
-                .fixedSize(horizontal: false, vertical: true)
+            PWENote(strings.unencryptedBanner, symbol: "lock.open.fill")
             Button(strings.turnOffUnencrypted) { model.turnOffUnencrypted() }
         }
         .padding(12)
@@ -245,40 +260,27 @@ struct PWEMainView: View {
     }
 
     private func interruptedView(_ receiver: PWEReceiver?, _ reason: PWEReason, _ retrying: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.title2)
-                    .foregroundStyle(.orange)
-                    .accessibilityHidden(true)
-                Text(strings.interruptedTitle(reason)).font(.title3.weight(.semibold))
-            }
-            Text(strings.interruptedHint(reason, retrying: retrying, overNetwork: model.connectsOverNetwork))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+        PWEPhaseLayout(title: strings.interruptedTitle(reason)) {
+            PWESymbol(name: "exclamationmark.triangle", tint: .orange)
+        } detail: {
+            PWEPhaseText(strings.interruptedHint(reason, retrying: retrying, overNetwork: model.connectsOverNetwork))
+            if retrying { PWEProgressLine(strings.retrying) }
+        } actions: {
+            // Like Connecting: what is happening above, the way to stop it below.
             if retrying {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text(strings.retrying).foregroundStyle(.secondary)
-                    Spacer()
-                    Button(strings.stopRetrying) { model.stopRetrying() }
-                }
+                Button(strings.stopRetrying) { model.stopRetrying() }
+                    .controlSize(.large)
+                    .keyboardShortcut(.cancelAction)
             } else if let receiver {
                 Button(strings.tryAgain) { model.connect(to: receiver) }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
+                    .keyboardShortcut(.defaultAction)
             }
         }
     }
 
     // MARK: - Pieces
-
-    private func symbol(_ name: String) -> some View {
-        Image(systemName: name)
-            .font(.system(size: 34, weight: .light))
-            .foregroundStyle(.secondary)
-            .accessibilityHidden(true)
-    }
 
     private func step(_ number: Int, _ text: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -286,17 +288,112 @@ struct PWEMainView: View {
                 .font(.callout.monospacedDigit().weight(.semibold))
                 .frame(width: 20, height: 20)
                 .background(.quaternary, in: Circle())
+                .accessibilityHidden(true)
             Text(text).fixedSize(horizontal: false, vertical: true)
         }
     }
+}
 
-    private func receiverLabel(_ receiver: PWEReceiver, large: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(receiver.name).font(large ? .title3.weight(.semibold) : .headline)
-            if !receiver.detail.isEmpty {
-                Text(receiver.detail).font(.callout).foregroundStyle(.secondary)
+// MARK: - One phase's layout
+
+/// One phase of the window, laid out the same way every time: a symbol, the title
+/// with what to know under it, then what to do. Every phase and every pairing step
+/// uses it, so the symbol and the title sit in the same place on each and only the
+/// words change as the connection moves on (the receiver's screen works the same
+/// way: BRAND-iMac-Display §2.6).
+///
+/// Spacing, top to bottom: a 40 pt symbol slot, 12 to the title, 6 to the detail
+/// (it belongs to the title), 16 to the actions (a separate group).
+struct PWEPhaseLayout<Symbol: View, Detail: View, Actions: View>: View {
+    let title: String
+    /// A small spinner before the title, for a phase that is itself the wait.
+    var busy = false
+    @ViewBuilder var symbol: () -> Symbol
+    @ViewBuilder var detail: () -> Detail
+    @ViewBuilder var actions: () -> Actions
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                symbol()
+                    .frame(height: 40, alignment: .bottomLeading)
+                    .padding(.bottom, 6)
+                    .accessibilityHidden(true)
+                HStack(spacing: 8) {
+                    if busy { ProgressView().controlSize(.small) }
+                    Text(title)
+                        .font(.title3.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isHeader)
+                detail()
             }
+            actions()
         }
+    }
+}
+
+/// The phase's symbol: grey for a step, green or orange for an outcome. Outline
+/// symbols only, in one light weight: an outcome differs by colour, not by a
+/// heavier, filled shape that would shout over the title.
+struct PWESymbol: View {
+    let name: String
+    var tint: Color?
+
+    var body: some View {
+        Image(systemName: name)
+            .font(.system(size: 34, weight: .light))
+            .foregroundStyle(tint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.secondary))
+    }
+}
+
+/// A phase's explanation, in the secondary colour.
+struct PWEPhaseText: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// Something under way: a small spinner and what it is doing.
+struct PWEProgressLine: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text(text).foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// A warning or an error in a line of text. The orange is in the icon; the words
+/// keep the text colour, because system orange on a light window is about 2:1,
+/// too faint to read as text.
+struct PWENote: View {
+    let text: String
+    var symbol = "exclamationmark.circle.fill"
+
+    init(_ text: String, symbol: String = "exclamationmark.circle.fill") {
+        self.text = text
+        self.symbol = symbol
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: symbol)
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+            Text(text).fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -370,7 +467,10 @@ struct PWEAboutView: View {
                 }
             }
         }
-        .padding(24)
+        // Top 8: the empty title bar above already gives the space (PWEUntitledWindow).
+        .padding(.horizontal, 24)
+        .padding(.top, 8)
+        .padding(.bottom, 24)
         .frame(width: 400)
     }
 }
