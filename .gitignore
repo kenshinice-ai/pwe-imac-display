@@ -34,4 +34,5 @@ test_metal_video
 test_cursor_image
 test_log
 test_loopwatch
+test_audio_out
 *.dSYM/

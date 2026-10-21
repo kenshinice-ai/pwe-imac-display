@@ -74,6 +74,8 @@ C_SRC += src/tb_cursor_image.c
 C_SRC += src/tb_log.c
 # The main loop's watchdog: names a call that blocks the loop (PWE 1.1, T40).
 C_SRC += src/tb_loopwatch.c
+# Sound output and volume on their own thread, off the main loop (PWE 1.1, T40).
+C_SRC += src/audio_out.c
 OBJC_SRC_PWE_RENDER = src/tb_metal_video.m
 LDFLAGS += -framework Metal -framework QuartzCore
 OBJC_SRC = src/tb_gesture_bridge.m src/tb_display_tweaks.m src/tb_login_item.m
@@ -97,7 +99,7 @@ src/pwe_%.o: $(SEC_DIR)/pwe_%.c $(SEC_DIR)/pwe_secure.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
-	rm -f $(OBJ) $(BIN) $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEIVER_PROFILE_BIN) $(TEST_AUDIO_RING_BIN) test_monitor_shield
+	rm -f $(OBJ) $(BIN) $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEIVER_PROFILE_BIN) $(TEST_AUDIO_RING_BIN) $(TEST_AUDIO_OUT_BIN) test_monitor_shield
 	rm -f $(PWE_RENDER_TEST_BINS)
 	rm -f $(TEST_SECURE_BIN) bench_secure secure_receiver secure_peer
 	rm -rf *.dSYM
@@ -114,6 +116,8 @@ TEST_INPUT_QUEUE_BIN = test_input_queue
 TEST_IDLE_WATCHDOG_BIN = test_idle_watchdog
 TEST_RECEIVER_PROFILE_BIN = test_receiver_profile
 TEST_AUDIO_RING_BIN = test_audio_ring
+# PWE (T40): the sound output thread; SDL's dummy audio driver, no device.
+TEST_AUDIO_OUT_BIN = test_audio_out
 
 test_net_parser: tests/test_net_parser.c src/net.c src/net.h src/proto.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_net_parser.c src/net.c $(TEST_LDFLAGS) -o $@
@@ -126,6 +130,10 @@ $(TEST_IDLE_WATCHDOG_BIN): tests/test_idle_watchdog.c src/idle_watchdog.c src/id
 
 $(TEST_AUDIO_RING_BIN): tests/test_audio_ring.c src/audio_ring.c src/audio_ring.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_audio_ring.c src/audio_ring.c -o $@
+
+$(TEST_AUDIO_OUT_BIN): tests/test_audio_out.c src/audio_out.c src/audio_out.h src/audio_ring.c src/audio_ring.h
+	$(CC) $(TEST_CFLAGS) -Isrc $(shell $(PKG) --cflags sdl2) tests/test_audio_out.c src/audio_out.c src/audio_ring.c \
+	    $(shell $(PKG) --libs sdl2) -o $@
 
 $(TEST_RECEIVER_PROFILE_BIN): tests/test_receiver_profile.c src/receiver_profile.c src/receiver_profile.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_receiver_profile.c src/receiver_profile.c -o $@
@@ -164,12 +172,13 @@ bench-secure: bench_secure
 	./bench_secure --bench
 # ---- end PWE ---------------------------------------------------------------
 
-test: $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEIVER_PROFILE_BIN) $(TEST_AUDIO_RING_BIN) $(PWE_RENDER_TEST_BINS) $(TEST_SECURE_BIN)
+test: $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEIVER_PROFILE_BIN) $(TEST_AUDIO_RING_BIN) $(TEST_AUDIO_OUT_BIN) $(PWE_RENDER_TEST_BINS) $(TEST_SECURE_BIN)
 	./$(TEST_BIN)
 	./$(TEST_INPUT_QUEUE_BIN)
 	./$(TEST_IDLE_WATCHDOG_BIN)
 	./$(TEST_RECEIVER_PROFILE_BIN)
 	./$(TEST_AUDIO_RING_BIN)
+	./$(TEST_AUDIO_OUT_BIN)
 	for t in $(PWE_RENDER_TEST_BINS); do ./$$t || exit 1; done
 	./$(TEST_SECURE_BIN)
 

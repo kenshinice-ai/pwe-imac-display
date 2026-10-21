@@ -20,6 +20,19 @@ Modes (--mode):
                 receiver's display profile says "cursorImage": true, sends one
                 CURSOR_IMAGE picture and CURSOR positions on a circle at 240 Hz
                 between the video frames.
+    stall       test builds only (TEST_HOOKS=1): handshake, then ask the
+                receiver to hold up its main loop for --stall-ms, so its
+                watchdog has a stall to report (PWE, T40).
+    cycles      a picture-preset change, --cycles times: stream for
+                --duration (with --audio, silent PCM too), end the session the
+                way a sender does, dial again at once with the next size from
+                --sizes, and time how long the receiver takes to take the new
+                session. Fails if one change takes longer than --max-change-s
+                (PWE, T40).
+
+--audio adds silent 48 kHz stereo PCM (AUDIO_FRAME) to stream, pointer and
+cycles, so the receiver opens and closes its sound device as with "sound on
+the iMac".
 
 Stdlib only. Example:
     python3 tests/mock_sender.py --mode handshake --duration 3
@@ -38,6 +51,8 @@ import time
 PKT_HELLO_RECEIVER = 0x10
 PKT_PARAM_SETS = 0x20
 PKT_FRAME = 0x21
+PKT_AUDIO_FRAME = 0x23
+PKT_TEST_DATA = 0x40
 PKT_HEARTBEAT = 0x30
 PKT_TEARDOWN = 0x31
 PKT_CURSOR = 0x32
@@ -90,19 +105,26 @@ def drain_receiver(sock: socket.socket, quiet: bool = False) -> None:
 
 # ---- H.264 generation & AVCC conversion (stream mode) ----------------------
 
+_H264_CACHE = {}
+
+
 def generate_h264(duration_s: int, fps: int = 30, size: str = "1280x720") -> bytes:
     """Render a test pattern to Annex-B H.264 using the ffmpeg CLI."""
+    key = (duration_s, fps, size)
+    if key in _H264_CACHE:
+        return _H264_CACHE[key]
     with tempfile.NamedTemporaryFile(suffix=".h264", delete=False) as tmp:
         path = tmp.name
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
         "-f", "lavfi", "-i", f"testsrc2=size={size}:rate={fps}:duration={duration_s}",
-        "-c:v", "libx264", "-profile:v", "baseline", "-pix_fmt", "yuv420p",
+        "-c:v", "libx264", "-preset", "ultrafast", "-profile:v", "baseline", "-pix_fmt", "yuv420p",
         "-g", str(fps), "-f", "h264", path,
     ]
     subprocess.run(cmd, check=True)
     with open(path, "rb") as f:
-        return f.read()
+        _H264_CACHE[key] = f.read()
+    return _H264_CACHE[key]
 
 
 def split_annexb(data: bytes):
@@ -172,8 +194,14 @@ def cursor_position_packet(t: float, width: int, height: int, image_id: int) -> 
                                     "visible": True, "type": 0, "large": False, "image": image_id})
 
 
+def audio_packet(seconds: float) -> bytes:
+    """Silent 48 kHz stereo 16-bit PCM, as the sender's AUDIO_FRAME carries it."""
+    frames = max(1, int(48000 * seconds))
+    return packet(PKT_AUDIO_FRAME, bytes(frames * 4))
+
+
 def stream_video(sock: socket.socket, duration_s: int, fps: int = 30, size: str = "1280x720",
-                 pointer: bool = False) -> None:
+                 pointer: bool = False, audio: bool = False) -> None:
     nals = split_annexb(generate_h264(duration_s, fps, size))
     width, height = (int(v) for v in size.split("x"))
 
@@ -206,6 +234,8 @@ def stream_video(sock: socket.socket, duration_s: int, fps: int = 30, size: str 
         # FRAME payload: AVCC — 4-byte BE length-prefixed NAL units.
         sock.sendall(packet(PKT_FRAME, struct.pack(">I", len(nal)) + nal))
         frames_sent += 1
+        if audio:
+            sock.sendall(audio_packet(frame_interval))
         now = time.monotonic()
         if now >= heartbeat_due:
             sock.sendall(json_packet(PKT_HEARTBEAT, {"sequence": seq}))
@@ -228,7 +258,73 @@ def stream_video(sock: socket.socket, duration_s: int, fps: int = 30, size: str 
 
 # ---- modes ------------------------------------------------------------------
 
+def connect_for_session(args, deadline_s: float):
+    """Dial until the receiver takes the session (sends its display profile),
+    as the sender does after a preset change. Returns (socket, seconds) or
+    (None, seconds)."""
+    start = time.monotonic()
+    while time.monotonic() - start < deadline_s:
+        try:
+            sock = socket.create_connection((args.host, args.port), timeout=3)
+        except OSError:
+            time.sleep(0.2)
+            continue
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        if read_profile(sock):   # 3 s, like the sender's handshake timeout
+            return sock, time.monotonic() - start
+        sock.close()
+    return None, time.monotonic() - start
+
+
+def end_session(sock: socket.socket, style: str) -> None:
+    """End a session the ways a sender does: TEARDOWN and a clean close, or
+    TEARDOWN then a reset, or a reset with nothing said (the sender's
+    connection cancelled with data still queued)."""
+    if style in ("teardown", "teardown-reset"):
+        try:
+            sock.sendall(json_packet(PKT_TEARDOWN, {"reason": "sender_internal_stop"}))
+        except OSError:
+            pass
+    if style in ("reset", "teardown-reset"):
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+    sock.close()
+
+
+def run_cycles(args) -> int:
+    sizes = [s for s in args.sizes.split(",") if s]
+    styles = ["teardown", "teardown-reset", "reset"]
+    for size in sizes:
+        generate_h264(args.duration, args.fps, size)
+    sock, took = connect_for_session(args, 10)
+    if not sock:
+        print("[mock] ERROR: the receiver did not take the first session")
+        return 1
+    worst = 0.0
+    for i in range(args.cycles):
+        size = sizes[i % len(sizes)]
+        sock.sendall(hello_packet(args.name, args.renderer))
+        stream_video(sock, args.duration, args.fps, size, audio=args.audio)
+        style = styles[i % len(styles)]
+        end_session(sock, style)
+        sock, took = connect_for_session(args, args.max_change_s + 60)
+        worst = max(worst, took)
+        print(f"[mock] cycle {i + 1}/{args.cycles}: {size}, ended with {style}, "
+              f"next session taken after {took:.2f} s", flush=True)
+        if not sock:
+            print("[mock] ERROR: the receiver did not take the next session")
+            return 1
+    sock.sendall(hello_packet(args.name, args.renderer))
+    end_session(sock, "teardown")
+    print(f"[mock] {args.cycles} changes, slowest {worst:.2f} s")
+    if worst > args.max_change_s:
+        print(f"[mock] ERROR: a change took {worst:.2f} s (limit {args.max_change_s} s)")
+        return 1
+    return 0
+
+
 def run(args) -> int:
+    if args.mode == "cycles":
+        return run_cycles(args)
     sock = socket.create_connection((args.host, args.port), timeout=5)
     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     print(f"[mock] connected to {args.host}:{args.port}")
@@ -259,8 +355,16 @@ def run(args) -> int:
             print("[mock] sent TEARDOWN")
 
         elif args.mode in ("stream", "pointer"):
-            stream_video(sock, args.duration, args.fps, args.size, pointer=args.mode == "pointer")
+            stream_video(sock, args.duration, args.fps, args.size, pointer=args.mode == "pointer",
+                         audio=args.audio)
             sock.sendall(json_packet(PKT_TEARDOWN, {"reason": "mock stream done"}))
+
+        elif args.mode == "stall":
+            sock.sendall(packet(PKT_TEST_DATA, f"stall {args.stall_ms}".encode()))
+            print(f"[mock] asked the receiver to stall {args.stall_ms} ms")
+            time.sleep(args.stall_ms / 1000.0 + 1.0)
+            sock.sendall(json_packet(PKT_HEARTBEAT, {"sequence": 0}))
+            sock.sendall(json_packet(PKT_TEARDOWN, {"reason": "mock done"}))
 
         elif args.mode == "hang":
             print(f"[mock] going silent for {args.duration}s (socket stays open, no heartbeats)")
@@ -301,10 +405,16 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=54321)
-    ap.add_argument("--mode", choices=["handshake", "stream", "hang", "badlen", "drop", "pointer"], default="handshake")
+    ap.add_argument("--mode", choices=["handshake", "stream", "hang", "badlen", "drop", "pointer", "stall", "cycles"],
+                    default="handshake")
     ap.add_argument("--duration", type=int, default=5, help="seconds (mode-specific)")
     ap.add_argument("--fps", type=int, default=30, help="stream/pointer: frame rate")
     ap.add_argument("--size", default="1280x720", help="stream/pointer: frame size, WxH")
+    ap.add_argument("--audio", action="store_true", help="stream/pointer/cycles: silent PCM audio too")
+    ap.add_argument("--stall-ms", type=int, default=3000, help="stall: how long the receiver's loop stalls")
+    ap.add_argument("--cycles", type=int, default=6, help="cycles: how many preset changes")
+    ap.add_argument("--sizes", default="1280x720,1920x1080,2560x1440", help="cycles: sizes in turn")
+    ap.add_argument("--max-change-s", type=float, default=5.0, help="cycles: slowest change allowed")
     ap.add_argument("--name", default="MockSender")
     ap.add_argument("--renderer", choices=["", "opengl", "metal"], default="",
                     help="PWE: receiverRenderer in the HELLO (absent by default, as from upstream)")

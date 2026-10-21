@@ -14,7 +14,7 @@
  */
 
 #include "net.h"
-#include "audio_ring.h"
+#include "audio_out.h"
 #include "decoder.h"
 #include "display.h"
 #include "idle_watchdog.h"
@@ -53,13 +53,6 @@
 #include <dns_sd.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreGraphics/CoreGraphics.h>
-#include <CoreAudio/CoreAudio.h>
-
-/* kAudioObjectPropertyElementMain is the macOS 12+ SDK spelling; older SDKs
- * only define kAudioObjectPropertyElementMaster (both are numerically 0). */
-#ifndef kAudioObjectPropertyElementMain
-#define kAudioObjectPropertyElementMain kAudioObjectPropertyElementMaster
-#endif
 
 #include <errno.h>
 #include <limits.h>
@@ -72,8 +65,6 @@
 #include <stdarg.h>
 #include <time.h>
 #include <unistd.h>
-
-#define AUDIO_BUF_CAP (192000) // 1 second buffer of 48000Hz stereo 16-bit PCM
 
 /* Reap a connected sender that has gone completely silent. The sender
  * heartbeats every 2s and streams frames continuously, so 10s of silence
@@ -136,11 +127,8 @@ struct app {
     CFRunLoopSourceRef input_tap_source;
     int      input_tap_consumes_events;
 
-    SDL_AudioDeviceID audio_device;
-    uint64_t audio_retry_after_ms;
-
-    uint8_t audio_buf[AUDIO_BUF_CAP];
-    struct tb_audio_ring audio_ring;
+    /* PWE (T40): sound output and volume, on their own thread (audio_out.h). */
+    struct tb_audio_out *audio;
 
     uint64_t input_events_sent;
     uint64_t input_events_received;
@@ -1162,113 +1150,6 @@ static void handle_raw_frame(struct app *a, const uint8_t *p, size_t len) {
     a->frames++;
 }
 
-static void audio_callback(void *userdata, Uint8 *stream, int len) {
-    struct app *a = (struct app *)userdata;
-    int copied = tb_audio_ring_pop(&a->audio_ring, stream, len);
-    if (copied < len) memset(stream + copied, 0, (size_t)(len - copied));
-}
-
-/* Keep the output device closed while Receiver is waiting for a Sender.  On
- * macOS an open SDL output device is enough for coreaudiod to assert
- * PreventUserIdleSystemSleep, even when the callback only produces silence.
- * Opening lazily also means sessions with audio disabled never touch the
- * system output device. */
-static int tb_audio_open_for_frame(struct app *a) {
-    if (!a) return 0;
-    if (a->audio_device != 0) return 1;
-
-    uint64_t now = now_ms();
-    if (now < a->audio_retry_after_ms) return 0;
-
-    SDL_AudioSpec spec;
-    SDL_zero(spec);
-    spec.freq = 48000;
-    spec.format = AUDIO_S16LSB;
-    spec.channels = 2;
-    spec.samples = 1024;
-    spec.callback = audio_callback;
-    spec.userdata = a;
-
-    SDL_AudioSpec obtained;
-    SDL_zero(obtained);
-    a->audio_device = SDL_OpenAudioDevice(NULL, 0, &spec, &obtained, 0);
-    if (a->audio_device == 0) {
-        /* Audio packets arrive frequently.  Avoid retrying (and logging) for
-         * every packet if the output device is temporarily unavailable. */
-        a->audio_retry_after_ms = now + 5000;
-        fprintf(stderr, "[main] warning: SDL_OpenAudioDevice failed: %s; retrying in 5s\n",
-                SDL_GetError());
-        return 0;
-    }
-
-    a->audio_retry_after_ms = 0;
-    fprintf(stderr,
-            "[main] SDL audio device opened on first audio frame: "
-            "48000Hz stereo 16-bit PCM (obtained %d samples)\n",
-            obtained.samples);
-    return 1;
-}
-
-static void tb_audio_close_for_idle(struct app *a) {
-    if (!a) return;
-
-    if (a->audio_device != 0) {
-        SDL_CloseAudioDevice(a->audio_device);
-        a->audio_device = 0;
-        fprintf(stderr, "[main] SDL audio device closed for idle Receiver\n");
-    }
-
-    tb_audio_ring_reset(&a->audio_ring);
-    a->audio_retry_after_ms = 0;
-}
-
-/* Drive the receiver's master output volume knob (with the system volume HUD).
- * level is clamped to 0.0..1.0. Sets the default output device's scalar volume,
- * preferring the master element and falling back to per-channel when a device
- * has no master volume control. Safe to call from the network/parser thread. */
-static void tb_set_system_volume(double level) {
-    if (level < 0.0) level = 0.0;
-    if (level > 1.0) level = 1.0;
-    Float32 vol = (Float32)level;
-
-    AudioObjectPropertyAddress dev_addr = {
-        kAudioHardwarePropertyDefaultOutputDevice,
-        kAudioObjectPropertyScopeGlobal,
-        kAudioObjectPropertyElementMain
-    };
-    AudioDeviceID device = kAudioObjectUnknown;
-    UInt32 size = sizeof(device);
-    if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &dev_addr, 0, NULL,
-                                   &size, &device) != noErr ||
-        device == kAudioObjectUnknown) {
-        return;
-    }
-
-    AudioObjectPropertyAddress vol_addr = {
-        kAudioDevicePropertyVolumeScalar,
-        kAudioDevicePropertyScopeOutput,
-        kAudioObjectPropertyElementMain   /* element 0 = master */
-    };
-    Boolean settable = false;
-    if (AudioObjectHasProperty(device, &vol_addr) &&
-        AudioObjectIsPropertySettable(device, &vol_addr, &settable) == noErr &&
-        settable) {
-        AudioObjectSetPropertyData(device, &vol_addr, 0, NULL, sizeof(vol), &vol);
-        return;
-    }
-
-    /* No master element — set the left/right channels individually. */
-    for (UInt32 ch = 1; ch <= 2; ch++) {
-        vol_addr.mElement = ch;
-        settable = false;
-        if (AudioObjectHasProperty(device, &vol_addr) &&
-            AudioObjectIsPropertySettable(device, &vol_addr, &settable) == noErr &&
-            settable) {
-            AudioObjectSetPropertyData(device, &vol_addr, 0, NULL, sizeof(vol), &vol);
-        }
-    }
-}
-
 /* ---- Callbacks: parser → decoder ------------------------------------- */
 
 static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud) {
@@ -1425,36 +1306,18 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
         }
         break;
     case TB_PKT_VOLUME:
-        TB_LOOP_PHASE("packet: volume (CoreAudio)");
+        TB_LOOP_PHASE("packet: volume");
         {
             double level = 1.0;
             (void)extract_json_double_field(payload, len, "\"level\"", &level);
-            tb_set_system_volume(level);
+            tb_audio_out_set_volume(a->audio, level);   /* PWE (T40): CoreAudio on the audio thread */
         }
         break;
     case TB_PKT_AUDIO_FRAME:
-        {
-            int opened_for_frame = a->audio_device == 0;
-            TB_LOOP_PHASE("packet: audio (SDL_OpenAudioDevice)");
-            if (!tb_audio_open_for_frame(a)) break;
-
-            TB_LOOP_PHASE("packet: audio (SDL_LockAudioDevice)");
-            SDL_LockAudioDevice(a->audio_device);
-
-            // Limit audio backlog to 150ms (150 * 192 = 28800 bytes) to cushion
-            // against network / scheduling jitter while still keeping playout tight.
-            // The ring keeps its size within bounds whatever the packet length.
-            tb_audio_ring_push(&a->audio_ring, payload, len, 28800);
-
-            SDL_UnlockAudioDevice(a->audio_device);
-
-            /* SDL opens devices paused.  Queue the first packet before
-             * starting playback so the callback does not begin with silence. */
-            if (opened_for_frame) {
-                TB_LOOP_PHASE("packet: audio (SDL_PauseAudioDevice)");
-                SDL_PauseAudioDevice(a->audio_device, 0);
-            }
-        }
+        /* PWE (T40): queued for the audio thread, which opens the device. The
+         * loop never takes SDL's device lock or calls CoreAudio. */
+        TB_LOOP_PHASE("packet: audio");
+        tb_audio_out_push(a->audio, payload, len);
         break;
     case TB_PKT_INPUT_EVENT:
         TB_LOOP_PHASE("packet: input event");
@@ -2103,8 +1966,8 @@ static void close_client(struct app *a) {
     a->last_clipboard_text[0] = '\0';
     TB_LOOP_PHASE("session end: decoder reset");
     tb_dec_reset(a->dec);   /* fresh decoder for next session */
-    TB_LOOP_PHASE("session end: audio device close");
-    tb_audio_close_for_idle(a);
+    TB_LOOP_PHASE("session end: sound idle");
+    tb_audio_out_idle(a->audio);   /* the audio thread closes the device later */
     TB_LOOP_PHASE("session end: idle notice");
     tb_pwe_refresh_notice(a, now_ms());
     fprintf(stderr, "[main] client disconnected\n");
@@ -2385,7 +2248,6 @@ int main(int argc, char **argv) {
     a.server6_fd = -1;
     a.client_fd = -1;
     a.app_id = CFSTR("com.targetbridge.receiver");
-    tb_audio_ring_init(&a.audio_ring, a.audio_buf, AUDIO_BUF_CAP);
     fprintf(stderr, "[net] senders accepted over %s\n",
             tb_pwe_network_allowed(&a)
                 ? "every interface (off the cable: paired, encrypted sessions only)"
@@ -2456,6 +2318,9 @@ int main(int argc, char **argv) {
     } else {
         tb_copy_i18n(a.panel_text, sizeof(a.panel_text), "receiver.panel.default");
     }
+    /* After SDL_Init (tb_disp_create): the audio thread opens SDL devices. */
+    a.audio = tb_audio_out_create();
+    if (!a.audio) fprintf(stderr, "[audio] warning: no audio thread; the session's sound is dropped\n");
     a.dec = tb_dec_create(on_frame, &a);
     if (!a.dec) { fprintf(stderr, "tb_dec_create failed\n"); tb_disp_destroy(a.disp); return 1; }
 
@@ -2807,7 +2672,7 @@ int main(int argc, char **argv) {
     if (a.server6_fd >= 0) close(a.server6_fd);
     bonjour_deinit(&a);
     tb_dec_destroy(a.dec);
-    tb_audio_close_for_idle(&a);
+    tb_audio_out_destroy(a.audio, 1000);
     tb_disp_destroy(a.disp);
     fprintf(stderr, "[main] bye\n");
     return 0;
