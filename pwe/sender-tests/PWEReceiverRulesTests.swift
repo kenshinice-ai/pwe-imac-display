@@ -48,12 +48,26 @@ final class PWEReceiverRulesTests: XCTestCase {
         // 2014/2015 5K: no HEVC decode reported.
         XCTAssertEqual(PWEPictureRules.defaultPicture(supportsHEVC: false, panelWidth: 5120, engineDefault: .standard1440p),
                        .standard1440p)
-        // 21.5-inch 4K: HEVC, but not a 5K panel.
-        XCTAssertEqual(PWEPictureRules.defaultPicture(supportsHEVC: true, panelWidth: 4096, engineDefault: .standard1440p),
-                       .standard1440p)
         // Panel size unknown: do not guess.
         XCTAssertEqual(PWEPictureRules.defaultPicture(supportsHEVC: true, panelWidth: nil, engineDefault: .standard1440p),
                        .standard1440p)
+    }
+
+    func testA215InchRetina4KStartsAtItsOwnResolution() {
+        for hevc in [true, false] {
+            XCTAssertEqual(PWEPictureRules.defaultPicture(supportsHEVC: hevc, panelWidth: 4096, engineDefault: .standard1440p),
+                           .retina4k60)
+        }
+        XCTAssertEqual(PWEPictureRules.choices(panelWidth: 4096), [.retina4k60, .standard1440p])
+        XCTAssertFalse(PWEPictureRules.choices(panelWidth: 4096).contains(.native5k))
+    }
+
+    func testFiveKAndUnknownPanelsKeepTheFiveKMenu() {
+        let fiveK: [TBDisplayCapturePreset] = [.native5k60Experimental, .native5k, .standard1440p]
+        XCTAssertEqual(PWEPictureRules.choices(panelWidth: 5120), fiveK)
+        XCTAssertEqual(PWEPictureRules.choices(panelWidth: nil), fiveK)
+        XCTAssertFalse(PWEPictureRules.isRetina4K(5120))
+        XCTAssertFalse(PWEPictureRules.isRetina4K(1920))
     }
 
     func testPWEOrUpstreamReceiver() {

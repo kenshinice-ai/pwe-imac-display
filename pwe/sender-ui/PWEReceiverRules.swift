@@ -60,8 +60,27 @@ enum PWEPictureRules {
     /// clearly smoother than 48 to Lee's eye). The 2014 and 2015 5K iMacs report
     /// no HEVC decode; their default stays what the engine already uses until
     /// they are measured, as do iMacs whose panel is not 5K.
+    ///
+    /// A 21.5-inch Retina 4K iMac (late 2015 iMac16,2, 2017 iMac18,2, 2019
+    /// iMac19,2) starts at its own 4096 × 2304: the receiver reports its real
+    /// panel, so the Mac's virtual display already matches it, and anything else
+    /// is either scaled down on the iMac (5K) or stretched up (1440p). The engine
+    /// picks HEVC or H.264 for it as for any preset. Not measured on such an iMac.
     static func defaultPicture(supportsHEVC: Bool, panelWidth: Int?, engineDefault: TBDisplayCapturePreset) -> TBDisplayCapturePreset {
+        if isRetina4K(panelWidth) { return .retina4k60 }
         guard supportsHEVC, let panelWidth, panelWidth >= 5120 else { return engineDefault }
         return .native5k60Experimental
+    }
+
+    /// What the Picture menu offers for this iMac, best first. 5K choices on a
+    /// 4K panel only cost encoding work the iMac then throws away.
+    static func choices(panelWidth: Int?) -> [TBDisplayCapturePreset] {
+        isRetina4K(panelWidth) ? [.retina4k60, .standard1440p] : [.native5k60Experimental, .native5k, .standard1440p]
+    }
+
+    /// 4096 wide, with room for a scaled or rounded report; never a 5K panel.
+    static func isRetina4K(_ panelWidth: Int?) -> Bool {
+        guard let panelWidth else { return false }
+        return (3840...4608).contains(panelWidth)
     }
 }

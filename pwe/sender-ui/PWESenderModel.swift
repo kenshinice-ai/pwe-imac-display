@@ -840,7 +840,9 @@ final class PWESenderModel: ObservableObject {
     }
 
     var pictureChoices: [TBDisplayCapturePreset] {
-        Self.pictureChoices.contains(picture) ? Self.pictureChoices : Self.pictureChoices + [picture]
+        let choices = service.flatMap { current($0) }.map { PWEPictureRules.choices(panelWidth: $0.panelWidth) }
+            ?? Self.pictureChoices
+        return choices.contains(picture) ? choices : choices + [picture]
     }
 
     // MARK: - iMac rendering
