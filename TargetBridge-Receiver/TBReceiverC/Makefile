@@ -195,9 +195,9 @@ test_cursor_image: tests/test_cursor_image.c src/tb_cursor_image.c src/tb_cursor
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_cursor_image.c src/tb_cursor_image.c -o $@
 
 # Needs a Metal device (any Mac), not a window; prints SKIP without one.
-test_metal_video: tests/test_metal_video.m src/tb_metal_video.m src/tb_metal_video.h src/tb_trace.c src/tb_trace.h
+test_metal_video: tests/test_metal_video.m src/tb_metal_video.m src/tb_metal_video.h src/tb_trace.c src/tb_trace.h src/tb_loopwatch.c
 	$(CC) -O2 -g -Wall -Wextra -Wno-unused-parameter -fobjc-arc -Isrc tests/test_metal_video.m src/tb_metal_video.m \
-	    src/tb_trace.c -framework Foundation -framework AppKit -framework Metal -framework QuartzCore \
+	    src/tb_trace.c src/tb_loopwatch.c -framework Foundation -framework AppKit -framework Metal -framework QuartzCore \
 	    -framework CoreVideo -framework IOSurface -o $@
 
 # AppKit lifecycle coverage requires a logged-in macOS GUI session.
