@@ -534,3 +534,76 @@ final class PWESecureOneShot: @unchecked Sendable {
         connection.cancel()
     }
 }
+
+/// PWE (T39): a session's 2 s heartbeat, sent from its own queue.
+///
+/// The receiver closes a session after 10 s without data, and on an idle
+/// desktop the heartbeat can be the only packet. Upstream sent it from a
+/// main-run-loop Timer, which stops firing while the main thread is blocked and
+/// also while the run loop is out of its default mode (a menu open, a modal
+/// panel, a live resize). On the test Mac (2026-10-21) the sender sent nothing
+/// for 10 s and the iMac closed the session.
+///
+/// Sending from this queue is safe: PWESecureLink seals a packet and hands it to
+/// the connection under one lock, as it already does for video frames from the
+/// encoder's queue and for the pointer from its own thread.
+final class PWEHeartbeat: @unchecked Sendable {
+    static let interval: TimeInterval = 2
+
+    private let queue = DispatchQueue(label: "pwe.heartbeat", qos: .userInteractive)
+    private let interval: TimeInterval
+    private let send: @Sendable (Data) -> Void
+    private let lock = NSLock()
+    private var timer: DispatchSourceTimer?
+    private var stopped = false
+    /// Read and written on `queue` only.
+    private var sequence: UInt64 = 0
+
+    /// `send` gets one whole heartbeat packet per beat, on the heartbeat's queue.
+    init(interval: TimeInterval = PWEHeartbeat.interval, send: @escaping @Sendable (Data) -> Void) {
+        self.interval = interval
+        self.send = send
+    }
+
+    convenience init(link: PWESecureLink, interval: TimeInterval = PWEHeartbeat.interval) {
+        self.init(interval: interval) { packet in
+            link.send(content: packet, completion: .contentProcessed({ _ in }))
+        }
+    }
+
+    deinit { timer?.cancel() }
+
+    /// The first beat goes out one interval from now, as upstream's did.
+    func start() {
+        lock.lock(); defer { lock.unlock() }
+        guard timer == nil, !stopped else { return }
+        // Strict: App Nap must not stretch the interval toward the receiver's 10 s.
+        let timer = DispatchSource.makeTimerSource(flags: .strict, queue: queue)
+        timer.schedule(deadline: .now() + interval, repeating: interval, leeway: .milliseconds(50))
+        timer.setEventHandler { [weak self] in self?.beat() }
+        self.timer = timer
+        timer.resume()
+    }
+
+    /// No beat starts after this returns. One already sealing may still go out;
+    /// after the teardown it is harmless (the receiver has closed the session).
+    func stop() {
+        lock.lock(); defer { lock.unlock() }
+        stopped = true
+        timer?.cancel()
+        timer = nil
+    }
+
+    private func beat() {
+        lock.lock()
+        let live = !stopped
+        lock.unlock()
+        guard live else { return }
+        sequence &+= 1
+        guard let packet = TBMonitorProtocol.makeJSONPacket(
+            type: .heartbeat,
+            value: TBMonitorHeartbeat(sequence: sequence)
+        ) else { return }
+        send(packet)
+    }
+}

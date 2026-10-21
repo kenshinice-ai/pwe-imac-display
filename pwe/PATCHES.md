@@ -54,6 +54,7 @@
 | `89bf80e`、`efdfba1`（`pwe-1.1-t40`） | 接收端主循环看门狗：新文件 `src/tb_loopwatch.{h,c}`，后台线程每 200 ms 看一次，一轮超过 2 秒就记 `[watchdog] main loop stuck … in <阶段>` 和主线程调用栈，之后每 10 秒一行，恢复时再记一行。`main.c`、`decoder.c`、`display.c`、`tb_metal_video.m` 在可能阻塞的调用前写下阶段名（`TB_LOOP_PHASE`）；测试构建可按请求停住主循环（`TEST_DATA` 包 `stall <ms>`，只在 `TEST_HOOKS=1`）。`Makefile` 加源文件和 `test_loopwatch` | 真机 T40：换画面时主循环停了 46–47 秒，日志一行没有，原因无从查起 | 待提（与上游无关的诊断，也适用于上游） | 本地提交，未推；等真机复测 |
 | `692c9ee`（`pwe-1.1-t40`） | 接收端声音输出移出主循环：新文件 `src/audio_out.{h,c}`，工作线程负责打开、关闭 SDL 输出设备和设系统音量；主循环只在自己的锁下把 PCM 拷进环形缓冲，不再取 SDL 的设备锁。设备在会话第一个声音包时打开，会话结束 5 秒后才关，换画面时保持打开。`main.c` 去掉 `audio_callback`、`tb_audio_open_for_frame`、`tb_audio_close_for_idle`、`tb_set_system_volume`。`mock_sender.py` 加 `--audio`、`stall`、`cycles`；`Makefile` 加 `test_audio_out`（SDL dummy 驱动） | T40 两次停住时声音都在 iMac。SDL 2.32.10 的 CoreAudio 回调在交还缓冲（`AudioQueueEnqueueBuffer`）时持有设备锁，主循环每个声音包都要取这把锁；打开、关闭设备也在主循环上（本机实测打开 24–452 ms、关闭约 90 ms）。是否就是 T40 的原因未证实 | 待提 | 本地提交，未推；等真机复测 |
 | `2b31425`（`pwe-1.1-t40`） | `loopback_smoke.sh` 加第 3b 段（看门狗报出停住的阶段、调用栈和恢复）和第 8b 段（带声音的 Metal 会话连换 6 次，每次 5 秒内接上、声音设备只开一次、没有主循环停顿） | T40 的回归测试 | 随上两条一起提 | 本地提交，未推 |
+| （T39，`pwe-1.1-tx5`） | 发送端 `TBDisplaySenderService.swift`：心跳不再用主循环的 `Timer`，改由 `PWEHeartbeat`（加在 PWE 新文件 `TBDisplayShared/PWESecureLink.swift` 里）在自己的队列上经 `PWESecureLink` 发出；开始、停止的位置不变 | 真机 RC2 T39（2026-10-21）：发送端 10 秒一个包都没发，iMac 判定会话失效并断开。主循环的 `Timer` 在主线程卡住、或主循环不在默认模式（菜单打开、模态面板、拖动改尺寸）时都不触发 | 待提（上游有同样的问题） | 本地提交，未推；等真机复测 |
 
 打包时的改名（`pwe/rebrand.py`）不改仓库里的文件，所以不在这张表里。它的锚点由脚本自己检查：上游改了对应的文字，脚本就会停下。
 
