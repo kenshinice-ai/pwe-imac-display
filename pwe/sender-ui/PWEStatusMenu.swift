@@ -366,11 +366,20 @@ final class PWEWindows {
     var openWindow: OpenWindowAction?
     var openSettings: OpenSettingsAction?
 
+    /// The main window is on screen (not closed, not in the Dock).
+    var isMainShown: Bool {
+        NSApp.windows.contains { Self.isMain($0) && $0.isVisible && !$0.isMiniaturized }
+    }
+
+    private static func isMain(_ window: NSWindow) -> Bool {
+        window.identifier?.rawValue.hasPrefix("main") == true
+    }
+
     func showMain() {
         NSApp.activate(ignoringOtherApps: true)
         // WindowGroup's openWindow always makes another window: reuse a shown one.
         if let window = NSApp.windows.first(where: {
-            $0.identifier?.rawValue.hasPrefix("main") == true && ($0.isVisible || $0.isMiniaturized)
+            Self.isMain($0) && ($0.isVisible || $0.isMiniaturized)
         }) {
             window.deminiaturize(nil)
             window.makeKeyAndOrderFront(nil)

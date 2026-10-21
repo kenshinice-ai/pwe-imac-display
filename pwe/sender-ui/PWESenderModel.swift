@@ -367,6 +367,8 @@ final class PWESenderModel: ObservableObject {
     private var previewSecurity: PWESecurityState = .none
     /// The iMacs this Mac has paired with (keychain), read when Settings asks.
     @Published private(set) var pairedIMacs: [PWEPairedReceiver] = []
+    /// pairedIMacs has been read from the keychain at least once.
+    private var pairedIMacsLoaded = false
     /// The name of the iMac the last Forget could not forget; nil after a success.
     @Published private(set) var forgetFailure: String?
     /// Why the code step asks for a new code (PWEPairingRules).
@@ -1044,7 +1046,15 @@ final class PWESenderModel: ObservableObject {
             }
         case .negotiating:
             break
-        case .none, .checkingCode, .refused, .legacyReceiver, .encrypted, .unencrypted:
+        case .encrypted:
+            expiredInARow = 0
+            // A pairing that just finished shows in Settings › Advanced while it is open.
+            if let session, PWEPairingRules.pairedListIsStale(
+                security, sessionID: PWEPairingStore.shared.expectedReceiverID(forHint: session.pweReceiverHint),
+                listLoaded: pairedIMacsLoaded, listed: pairedIMacs) {
+                refreshPairedIMacs()
+            }
+        case .none, .checkingCode, .refused, .legacyReceiver, .unencrypted:
             expiredInARow = 0
         }
     }
@@ -1111,6 +1121,7 @@ final class PWESenderModel: ObservableObject {
     func refreshPairedIMacs() {
         guard service != nil else { return }
         pairedIMacs = PWEPairingStore.shared.pairedReceivers().sorted { $0.pairedAt > $1.pairedAt }
+        pairedIMacsLoaded = true
     }
 
     /// Settings › Advanced › Forget. Deletes the iMac's key and hints; an

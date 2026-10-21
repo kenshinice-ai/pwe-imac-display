@@ -1623,7 +1623,8 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     private var sessionAckSent = false
     private var captureBlockedByScreenRecordingPermission = false
     private var fpsTimer: Timer?
-    private var heartbeatTimer: Timer?
+    /// PWE (T39): off the main thread; see PWEHeartbeat.
+    private var heartbeat: PWEHeartbeat?
     private var firstFrameTimer: Timer?
     private var cursorTimer: Timer?
     private var connectTimeoutWorkItem: DispatchWorkItem?
@@ -1635,7 +1636,6 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     /// "waiting(No route to host)") — surfaced when a connect fails or times
     /// out so the real reason is not lost.
     private var lastConnectionStateDetail: String?
-    private var heartbeatSequence: UInt64 = 0
     private var statusState: TBDisplaySenderStatusState = .ready
     private var streamingActivity: NSObjectProtocol?
     private var displayWakeAssertionID = IOPMAssertionID(0)
@@ -2266,8 +2266,8 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         connectTimeoutWorkItem = nil
         routeLossWorkItem?.cancel()
         routeLossWorkItem = nil
-        heartbeatTimer?.invalidate()
-        heartbeatTimer = nil
+        heartbeat?.stop()
+        heartbeat = nil
         firstFrameTimer?.invalidate()
         firstFrameTimer = nil
         stopCursorUpdates()
@@ -2509,15 +2509,6 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         guard let packet = TBMonitorProtocol.makeJSONPacket(
             type: .clipboard,
             value: TBMonitorClipboard(text: text)
-        ) else { return }
-        send(packet)
-    }
-
-    private func sendHeartbeat() {
-        heartbeatSequence += 1
-        guard let packet = TBMonitorProtocol.makeJSONPacket(
-            type: .heartbeat,
-            value: TBMonitorHeartbeat(sequence: heartbeatSequence)
         ) else { return }
         send(packet)
     }
@@ -4332,12 +4323,14 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     }
 
     private func startHeartbeat() {
-        heartbeatTimer?.invalidate()
-        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.sendHeartbeat()
-            }
-        }
+        heartbeat?.stop()
+        heartbeat = nil
+        guard let link = pweLink else { return }
+        // PWE (T39): from its own queue, so a blocked or busy main thread
+        // cannot let the receiver's 10 s stale-session check fire.
+        let heartbeat = PWEHeartbeat(link: link)
+        heartbeat.start()
+        self.heartbeat = heartbeat
     }
 
     private func startFirstFrameWatchdog() {

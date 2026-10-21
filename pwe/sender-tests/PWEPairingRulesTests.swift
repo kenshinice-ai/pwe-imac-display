@@ -154,6 +154,29 @@ final class PWEPairingRulesTests: XCTestCase {
         XCTAssertEqual(PWEPairingRules.lockEnd(seconds: 0, lockedAt: now), now.addingTimeInterval(1))
     }
 
+    // MARK: - Settings › Advanced
+
+    func testAPairingThatFinishesShowsInTheOpenList() {
+        let id = Data(repeating: 0xab, count: Int(PWE_SEC_ID_BYTES))
+        let other = PWEPairedReceiver(id: String(repeating: "cd", count: Int(PWE_SEC_ID_BYTES)),
+                                      name: "Office iMac", pairedAt: Date())
+        let this = PWEPairedReceiver(id: PWEPairingStore.hex(id), name: "Studio iMac", pairedAt: Date())
+        let encrypted = PWESecurityState.encrypted(receiverName: "Studio iMac")
+        // Just paired, not listed yet: read the list again.
+        XCTAssertTrue(PWEPairingRules.pairedListIsStale(encrypted, sessionID: id, listLoaded: true, listed: []))
+        XCTAssertTrue(PWEPairingRules.pairedListIsStale(encrypted, sessionID: id, listLoaded: true, listed: [other]))
+        // Already listed (a reconnect): no keychain read.
+        XCTAssertFalse(PWEPairingRules.pairedListIsStale(encrypted, sessionID: id, listLoaded: true, listed: [other, this]))
+        // Settings never opened this launch: nothing to update.
+        XCTAssertFalse(PWEPairingRules.pairedListIsStale(encrypted, sessionID: id, listLoaded: false, listed: []))
+        // Not encrypted: nothing was paired.
+        XCTAssertFalse(PWEPairingRules.pairedListIsStale(.unencrypted, sessionID: id, listLoaded: true, listed: []))
+        XCTAssertFalse(PWEPairingRules.pairedListIsStale(.checkingCode, sessionID: id, listLoaded: true, listed: []))
+        // No Bonjour hint: go by the iMac's name.
+        XCTAssertTrue(PWEPairingRules.pairedListIsStale(encrypted, sessionID: nil, listLoaded: true, listed: [other]))
+        XCTAssertFalse(PWEPairingRules.pairedListIsStale(encrypted, sessionID: nil, listLoaded: true, listed: [this]))
+    }
+
     func testUnansweredCodesAreRenewedTwice() {
         XCTAssertTrue(PWEPairingRules.renewsExpiredCode(expiredInARow: 1))
         XCTAssertTrue(PWEPairingRules.renewsExpiredCode(expiredInARow: 2))
