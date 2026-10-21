@@ -359,18 +359,23 @@ struct PWEStrings {
         t("A text file with versions, settings and the last 30 minutes of this app's log, for support.",
           "一个文本文件，含版本、设置和本 App 最近 30 分钟的日志，用于求助。")
     }
+    /// Says why the console looks different without naming the engine: the UI names
+    /// TargetBridge only in About's credit and for receivers installed from it.
     var openConsoleHint: String {
-        t("TargetBridge's own console: every engine setting, in the upstream interface.",
-          "TargetBridge 引擎自带的控制台：全部设置都在这里，界面保持上游原样。")
+        t("The engine's own console: every setting, in its original design.",
+          "引擎自带的控制台：全部设置都在这里，保持它原来的样子。")
     }
 
     // About
     var version: String { t("Version", "版本") }
     /// Under the name in About: what the app is for. "for iMac" is a reference, not part of the name.
     var forIMac: String { t("For iMac", "用于 iMac") }
+    /// The fixed credit, word for word the same on every PWE surface
+    /// (docs/pwe/BRAND-iMac-Display-2026-10-20.md §2.1). The one place the UI names TargetBridge
+    /// apart from the receivers a person installed from it.
     var credits: String {
-        t("Based on TargetBridge by Marco Caciotti (swellweb) and its open-source community, MIT License. Built and signed by PWE Group.",
-          "基于 TargetBridge（作者 Marco Caciotti，swellweb，及其开源社区，MIT 许可）。由 PWE Group 构建并签名。")
+        t("Based on TargetBridge by Marco Caciotti and its community (MIT). Built and signed by PWE; not an official TargetBridge release.",
+          "基于开源项目 TargetBridge（Marco Caciotti 与社区，MIT）。由 PWE 构建并签名，不是 TargetBridge 的官方版本。")
     }
     var source: String { t("Source Code", "源代码") }
     var support: String { t("Support PWE…", "支持 PWE…") }
