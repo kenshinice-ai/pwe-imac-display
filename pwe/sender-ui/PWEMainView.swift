@@ -419,7 +419,7 @@ struct PWEAboutView: View {
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(strings.appName).font(.title3.weight(.semibold))
-                    Text("\(strings.forIMac) · \(strings.version) \(UpdateCheck.currentVersion)")
+                    Text("\(strings.forIMac) · \(strings.version) \(UpdateCheck.currentVersion) (\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"))")
                         .font(.callout).foregroundStyle(.secondary)
                 }
             }

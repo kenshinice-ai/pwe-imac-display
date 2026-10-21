@@ -1274,6 +1274,11 @@ final class PWESenderModel: ObservableObject {
     /// last half hour of this app's own log. Nothing leaves the Mac unless the
     /// person sends the file.
     func diagnosticReport() -> String {
+        diagnosticReportHeader() + "\n" + PWELogExport.recentLines(minutes: 30).joined(separator: "\n")
+    }
+
+    /// Everything in the report except the log: cheap, read on the main actor.
+    func diagnosticReportHeader() -> String {
         var lines: [String] = []
         let info = Bundle.main.infoDictionary ?? [:]
         lines.append("PWE Screen Encore \(info["CFBundleShortVersionString"] as? String ?? "?") (\(info["CFBundleVersion"] as? String ?? "?"))")
@@ -1296,7 +1301,6 @@ final class PWESenderModel: ObservableObject {
         lines.append("PWE: picture=\(picture.rawValue) sound=\(sound.rawValue) mode=\(displayMode.rawValue) autoConnect=\(autoConnect) login=\(launchAtLogin) input=\(inputRole.rawValue) rendering=\(rendering.rawValue)")
         lines.append("")
         lines.append("Log (last 30 minutes):")
-        lines.append(contentsOf: PWELogExport.recentLines(minutes: 30))
         return lines.joined(separator: "\n")
     }
 }

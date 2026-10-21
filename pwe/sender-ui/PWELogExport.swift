@@ -27,13 +27,24 @@ enum PWELogExport {
         return subsystem.isEmpty && sender == "Foundation"   // NSLog
     }
 
+    /// The store filters by subsystem itself, so the frameworks' thousands of
+    /// lines are never materialised; reading them all kept the main thread busy
+    /// for about 15 s before the save panel appeared (T46, test Mac 2026-10-21).
+    /// Call it off the main thread.
+    static var ownPredicate: NSPredicate {
+        NSPredicate(format:
+            "subsystem BEGINSWITH 'com.targetbridge' OR subsystem BEGINSWITH 'com.pwegroup' OR (subsystem == '' AND sender == 'Foundation')")
+    }
+
     static func recentLines(minutes: Int) -> [String] {
         do {
             let store = try OSLogStore(scope: .currentProcessIdentifier)
             let since = store.position(date: Date().addingTimeInterval(TimeInterval(-60 * minutes)))
             let formatter = DateFormatter()
             formatter.dateFormat = "HH:mm:ss.SSS"
-            return try store.getEntries(at: since)
+            // A store that refuses the predicate is read in full and filtered here.
+            let entries = try (try? store.getEntries(at: since, matching: ownPredicate)) ?? store.getEntries(at: since)
+            return entries
                 .compactMap { $0 as? OSLogEntryLog }
                 .filter { isOwn(subsystem: $0.subsystem, sender: $0.sender) }
                 .suffix(3000)
@@ -43,19 +54,23 @@ enum PWELogExport {
         }
     }
 
-    /// Asks where to save, then writes the report there.
+    /// Asks where to save at once, then reads the log off the main thread and
+    /// writes the report there; the file shows in the Finder when it is written.
     @MainActor
-    static func save(_ report: String, suggestedName: String) {
+    static func save(header: String, suggestedName: String) {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = suggestedName
         panel.allowedContentTypes = [.plainText]
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            try report.write(to: url, atomically: true, encoding: .utf8)
-            NSWorkspace.shared.activateFileViewerSelecting([url])
-        } catch {
-            PWELog.note("[pwe] could not save the report: \(error.localizedDescription)")
+        Task.detached(priority: .userInitiated) {
+            let report = header + "\n" + recentLines(minutes: 30).joined(separator: "\n")
+            do {
+                try report.write(to: url, atomically: true, encoding: .utf8)
+                await MainActor.run { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            } catch {
+                PWELog.note("[pwe] could not save the report: \(error.localizedDescription)")
+            }
         }
     }
 }

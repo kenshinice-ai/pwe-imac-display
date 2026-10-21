@@ -14,4 +14,16 @@ final class PWELogExportTests: XCTestCase {
         XCTAssertFalse(PWELogExport.isOwn(subsystem: "com.apple.spotlight", sender: "CoreSpotlight"))
         XCTAssertFalse(PWELogExport.isOwn(subsystem: "", sender: "AppKit"))
     }
+
+    /// The report's log comes back filtered by the store itself, with our own
+    /// line in it, and quickly (T46: the unfiltered read took about 15 s).
+    func testRecentLinesFindsOurOwnLineQuickly() {
+        let marker = "[pwe] report test \(UUID().uuidString)"
+        PWELog.note(marker)
+        let started = Date()
+        let lines = PWELogExport.recentLines(minutes: 5)
+        XCTAssertTrue(lines.contains { $0.hasSuffix(marker) }, "the line just logged is in the report")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5)
+    }
+
 }

@@ -298,7 +298,7 @@ struct PWEAdvancedSettings: View {
                 }
                 LabeledContent {
                     Button(strings.exportReport) {
-                        PWELogExport.save(model.diagnosticReport(), suggestedName: "PWE Screen Encore report.txt")
+                        PWELogExport.save(header: model.diagnosticReportHeader(), suggestedName: "PWE Screen Encore report.txt")
                     }
                 } label: {
                     Text(strings.reportLabel)
