@@ -318,11 +318,11 @@ def rebrand_sender(root: Path, version: str, build: str) -> None:
     # The URL action runs behind the scheme check above, like connect and disconnect.
     edit(swift / "TBDisplaySenderAutomation.swift",
          "        default:\n"
-         "            NSLog(\"[automation] unknown action '\\(action)' (expected connect|disconnect)\")\n",
+         "            NSLog(\"[automation] unknown action '\\(action)' (expected connect|disconnect)\", level: .notice)\n",
          "        case \"brightness\":\n"
          "            PWEBrightness.shared.handleURL(params)\n"
          "        default:\n"
-         "            NSLog(\"[automation] unknown action '\\(action)' (expected connect|disconnect|brightness)\")\n")
+         "            NSLog(\"[automation] unknown action '\\(action)' (expected connect|disconnect|brightness)\", level: .notice)\n")
     # The keys act only while the pointer is on one of this app's own virtual
     # displays; the session keeps that display's ID private.
     edit(swift / "TBDisplaySenderService.swift",

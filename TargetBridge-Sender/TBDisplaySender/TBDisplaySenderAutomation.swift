@@ -3,14 +3,26 @@ import Foundation
 import OSLog
 import SystemConfiguration
 
-/// PWE: this file's `[automation]` lines go to the unified log (notice level,
-/// kept on disk, public text). Foundation's NSLog from the shipped app reached
-/// only stderr, so a wake or replug on the test Mac left no trace of the retry
-/// loop's steps (T38, RC4 Q3). This shadows Foundation's NSLog in this file only.
+/// PWE: this file's `[automation]` lines go to the unified log (public text).
+/// Foundation's NSLog from the shipped app reached only stderr, so a wake or
+/// replug on the test Mac left no trace of the retry loop's steps (T38, RC4 Q3).
+/// This shadows Foundation's NSLog in this file only.
+///
+/// Level: info by default, which the system keeps in memory only (`log stream
+/// --level info` and a sysdiagnose still see it). The retry loop runs every
+/// 2 s while the iMac is absent; persisting each of its lines would keep
+/// 30–60k lines a day. Call sites that record a state change pass `.notice`,
+/// which is kept on disk: the sleep gate, a command, a dial (connecting,
+/// redialing), and how a dial ended.
 private let automationLog = Logger(subsystem: "com.targetbridge.sender", category: "automation")
 
-private func NSLog(_ message: String) {
-    automationLog.notice("\(message, privacy: .public)")
+private enum AutomationLogLevel { case info, notice }
+
+private func NSLog(_ message: String, level: AutomationLogLevel = .info) {
+    switch level {
+    case .info: automationLog.info("\(message, privacy: .public)")
+    case .notice: automationLog.notice("\(message, privacy: .public)")
+    }
 }
 
 // Sender-side automation entry points.
@@ -84,9 +96,9 @@ enum TBSenderAutomation {
             if fileManager.fileExists(atPath: marker.path) {
                 try fileManager.removeItem(at: marker)
             }
-            NSLog("[automation] \(logReason); automatic reconnect suspended")
+            NSLog("[automation] \(logReason); automatic reconnect suspended", level: .notice)
         } catch {
-            NSLog("[automation] unable to clear automatic reconnect marker: \(error.localizedDescription)")
+            NSLog("[automation] unable to clear automatic reconnect marker: \(error.localizedDescription)", level: .notice)
         }
     }
 
@@ -152,7 +164,7 @@ enum TBSenderAutomation {
             continuousConnectTask = nil
             disconnect(params)
         default:
-            NSLog("[automation] unknown action '\(action)' (expected connect|disconnect)")
+            NSLog("[automation] unknown action '\(action)' (expected connect|disconnect)", level: .notice)
         }
     }
 
@@ -186,14 +198,14 @@ enum TBSenderAutomation {
 
             if let session = connected {
                 if await waitForConnection(session) {
-                    NSLog("[automation] automatic connection active; monitoring link")
+                    NSLog("[automation] automatic connection active; monitoring link", level: .notice)
                     while !Task.isCancelled && (session.isConnected || session.isStreaming) {
                         try? await Task.sleep(nanoseconds: 1_000_000_000)
                     }
                     guard !Task.isCancelled else { return }
-                    NSLog("[automation] connection lost; retrying")
+                    NSLog("[automation] connection lost; retrying", level: .notice)
                 } else {
-                    NSLog("[automation] connection attempt did not become active; retrying")
+                    NSLog("[automation] connection attempt did not become active; retrying", level: .notice)
                 }
 
                 if !session.isConnected && !session.isStreaming {
@@ -263,7 +275,7 @@ enum TBSenderAutomation {
         // An IPv6 redial binds no local address; keep the IPv4 one for Bonjour's path.
         if !localIP.isEmpty { session.localInterfaceIP = localIP }
         TBBridgeRedial.lastDialAt = ProcessInfo.processInfo.systemUptime
-        NSLog("[automation] redialing \(receiverIP) over the Thunderbolt Bridge (\(TBBridgeRedial.triggerReason))")
+        NSLog("[automation] redialing \(receiverIP) over the Thunderbolt Bridge (\(TBBridgeRedial.triggerReason))", level: .notice)
         session.pweSpeculativeDial = true
         session.connect()
 
@@ -274,7 +286,7 @@ enum TBSenderAutomation {
         }
         if session.isConnected || session.isStreaming {
             TBBridgeRedial.leftSessionConnecting = false
-            NSLog("[automation] redial connected to \(receiverIP)")
+            NSLog("[automation] redial connected to \(receiverIP)", level: .notice)
             return .connected(session)
         }
         session.pweAbandonSpeculativeDial()
@@ -401,7 +413,7 @@ enum TBSenderAutomation {
             NSLog("[automation] the system is going to sleep; not connecting")
             return nil
         }
-        NSLog("[automation] connecting to \(session.receiverIP) from \(bridgeIPv6 ? "IPv6 link-local" : session.localInterfaceIP) via \(session.transportKind.rawValue) — \(session.captureSource.rawValue)/\(session.capturePreset.rawValue)")
+        NSLog("[automation] connecting to \(session.receiverIP) from \(bridgeIPv6 ? "IPv6 link-local" : session.localInterfaceIP) via \(session.transportKind.rawValue) — \(session.captureSource.rawValue)/\(session.capturePreset.rawValue)", level: .notice)
         session.connect()
         return session
     }
@@ -421,9 +433,9 @@ enum TBSenderAutomation {
         let service = TBDisplaySenderService.shared
         guard let target = resolveSessionIndex(params["session"], sessionCount: service.sessions.count, createDefaultIfNeeded: false) else {
             if params["session"] != nil {
-                NSLog("[automation] invalid session '\(params["session"] ?? "")'; refusing to disconnect")
+                NSLog("[automation] invalid session '\(params["session"] ?? "")'; refusing to disconnect", level: .notice)
             } else {
-                NSLog("[automation] no sessions available to disconnect")
+                NSLog("[automation] no sessions available to disconnect", level: .notice)
             }
             return
         }
@@ -731,7 +743,7 @@ enum TBSystemSleepGate {
     static var isSleeping: Bool {
         guard let since = sleepingSince else { return false }
         guard ProcessInfo.processInfo.systemUptime - since < refusedSleepTimeout else {
-            NSLog("[automation] still awake \(Int(refusedSleepTimeout)) s after willSleep; the sleep was refused")
+            NSLog("[automation] still awake \(Int(refusedSleepTimeout)) s after willSleep; the sleep was refused", level: .notice)
             sleepingSince = nil
             return false
         }
@@ -746,7 +758,7 @@ enum TBSystemSleepGate {
         ) { _ in
             MainActor.assumeIsolated {
                 sleepingSince = ProcessInfo.processInfo.systemUptime
-                NSLog("[automation] the system is going to sleep; no reconnects until it wakes")
+                NSLog("[automation] the system is going to sleep; no reconnects until it wakes", level: .notice)
             }
         })
         for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification] {
@@ -756,7 +768,7 @@ enum TBSystemSleepGate {
                     TBBridgeRedial.noteTrigger("wake")
                     guard sleepingSince != nil else { return }
                     sleepingSince = nil
-                    NSLog("[automation] the system is awake; reconnects allowed")
+                    NSLog("[automation] the system is awake; reconnects allowed", level: .notice)
                 }
             })
         }
@@ -940,14 +952,14 @@ enum TBBridgeRedial {
                     .joined(separator: ", "))
             }
         }, &context) else {
-            NSLog("[automation] cannot watch network links; redial only after a wake")
+            NSLog("[automation] cannot watch network links; redial only after a wake", level: .notice)
             return
         }
         let patterns = ["State:/Network/Interface/[^/]+/Link", "State:/Network/Interface/[^/]+/IPv4",
                         "State:/Network/Interface/[^/]+/IPv6"] as CFArray
         guard SCDynamicStoreSetNotificationKeys(store, nil, patterns),
               SCDynamicStoreSetDispatchQueue(store, .main) else {
-            NSLog("[automation] cannot watch network links; redial only after a wake")
+            NSLog("[automation] cannot watch network links; redial only after a wake", level: .notice)
             return
         }
         self.store = store
