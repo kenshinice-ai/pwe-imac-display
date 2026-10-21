@@ -25,6 +25,7 @@
 #include "tb_i18n.h"
 #include "tb_login_item.h"
 #include "tb_log.h"
+#include "tb_loopwatch.h"
 #include "tb_trace.h"
 /* PWE: pairing and encrypted sessions */
 #include "pwe_secure.h"
@@ -1275,8 +1276,10 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
 #if TB_RECEIVER_TEST_HOOKS
     a->pwe_test_counts[type]++;
 #endif
+    TB_LOOP_PHASE("packet: other");
     switch (type) {
     case TB_PKT_UI_LANGUAGE:
+        TB_LOOP_PHASE("packet: UI language");
         {
             char ui_language[16];
             ui_language[0] = '\0';
@@ -1293,6 +1296,7 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
         }
         break;
     case TB_PKT_HELLO_RECEIVER:
+        TB_LOOP_PHASE("packet: hello (renderer choice)");
         extract_json_string_field(payload, len, "\"senderName\"", a->sender_text, sizeof(a->sender_text));
         {
             char ui_language[16];
@@ -1343,20 +1347,24 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
         tb_copy_i18n(a->status_text, sizeof(a->status_text), "receiver.status.session_accepted_waiting_frames");
         break;
     case TB_PKT_PARAM_SETS:
+        TB_LOOP_PHASE("packet: parameter sets (decoder open)");
         a->session_active = 1;
         /* tb_dec_set_param_sets is now a no-op if the sets are unchanged,
          * so we don't spam a log line per keyframe. */
         tb_dec_set_param_sets(a->dec, payload, len);
         break;
     case TB_PKT_FRAME:
+        TB_LOOP_PHASE("packet: video frame (decode, draw)");
         a->session_active = 1;
         tb_dec_feed_frame(a->dec, payload, len, tb_trace_frame_arrived());
         break;
     case TB_PKT_RAW_FRAME:
+        TB_LOOP_PHASE("packet: raw frame (draw)");
         a->session_active = 1;
         handle_raw_frame(a, payload, len);
         break;
     case TB_PKT_CURSOR:
+        TB_LOOP_PHASE("packet: pointer position");
         {
             int x = 0;
             int y = 0;
@@ -1376,6 +1384,7 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
         }
         break;
     case TB_PKT_CURSOR_IMAGE:
+        TB_LOOP_PHASE("packet: pointer picture");
         {
             struct tb_cursor_image image;
             if (tb_cursor_image_parse(payload, len, &image) == 0) {
@@ -1386,6 +1395,7 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
         }
         break;
     case TB_PKT_BRIGHTNESS:
+        TB_LOOP_PHASE("packet: brightness (DisplayServices)");
         {
             double level = 1.0;
             (void)extract_json_double_field(payload, len, "\"level\"", &level);
@@ -1393,6 +1403,7 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
         }
         break;
     case TB_PKT_DISPLAY_TWEAKS:
+        TB_LOOP_PHASE("packet: Night Shift / True Tone (CoreBrightness)");
         {
             /* Absent fields are left alone rather than defaulted, so the sender
              * can change one without disturbing the other. */
@@ -1406,6 +1417,7 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
         }
         break;
     case TB_PKT_CLIPBOARD:
+        TB_LOOP_PHASE("packet: clipboard (pbcopy)");
         {
             char text[4096];
             extract_json_string_field(payload, len, "\"text\"", text, sizeof(text));
@@ -1413,6 +1425,7 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
         }
         break;
     case TB_PKT_VOLUME:
+        TB_LOOP_PHASE("packet: volume (CoreAudio)");
         {
             double level = 1.0;
             (void)extract_json_double_field(payload, len, "\"level\"", &level);
@@ -1422,8 +1435,10 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
     case TB_PKT_AUDIO_FRAME:
         {
             int opened_for_frame = a->audio_device == 0;
+            TB_LOOP_PHASE("packet: audio (SDL_OpenAudioDevice)");
             if (!tb_audio_open_for_frame(a)) break;
 
+            TB_LOOP_PHASE("packet: audio (SDL_LockAudioDevice)");
             SDL_LockAudioDevice(a->audio_device);
 
             // Limit audio backlog to 150ms (150 * 192 = 28800 bytes) to cushion
@@ -1435,19 +1450,34 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
 
             /* SDL opens devices paused.  Queue the first packet before
              * starting playback so the callback does not begin with silence. */
-            if (opened_for_frame) SDL_PauseAudioDevice(a->audio_device, 0);
+            if (opened_for_frame) {
+                TB_LOOP_PHASE("packet: audio (SDL_PauseAudioDevice)");
+                SDL_PauseAudioDevice(a->audio_device, 0);
+            }
         }
         break;
     case TB_PKT_INPUT_EVENT:
+        TB_LOOP_PHASE("packet: input event");
         tb_receiver_apply_input_event(a, payload, len);
         break;
     case TB_PKT_INPUT_CONTROL:
+        TB_LOOP_PHASE("packet: input control mode (event tap)");
         tb_receiver_apply_input_control_mode(a, payload, len);
         break;
     case TB_PKT_HEARTBEAT:
         break;
     case TB_PKT_TEST_DATA:
         /* Performance test data; discard */
+#if TB_RECEIVER_TEST_HOOKS
+        /* Tests only: "stall <ms>" holds up the main loop, for the watchdog. */
+        if (len > 6 && len < 32 && memcmp(payload, "stall ", 6) == 0) {
+            char ms_text[32];
+            memcpy(ms_text, payload + 6, len - 6);
+            ms_text[len - 6] = '\0';
+            TB_LOOP_PHASE("packet: test stall");
+            usleep((useconds_t)(strtoul(ms_text, NULL, 10) * 1000u));
+        }
+#endif
         break;
     case TB_PKT_TEARDOWN:
         fprintf(stderr, "[main] teardown requested by sender\n");
@@ -1466,9 +1496,11 @@ static int drain_socket(struct app *a) {
     uint8_t buf[1024 * 1024];
     int saw_data = 0;
     for (;;) {
+        TB_LOOP_PHASE("socket read");
         ssize_t n = read(a->client_fd, buf, sizeof(buf));
         if (n > 0) {
             saw_data = 1;
+            TB_LOOP_PHASE("connection: secure layer (handshake, keychain, decrypt)");
             if (tb_conn_feed(&a->conn, buf, (size_t)n, now_ms()) < 0) return -1;
         } else if (n == 0) {
             return -1;  /* peer closed */
@@ -2051,6 +2083,7 @@ static void close_client(struct app *a) {
     }
     memset(a->pwe_test_counts, 0, sizeof(a->pwe_test_counts));
 #endif
+    TB_LOOP_PHASE("session end: close the connection");
     if (a->client_fd >= 0) tb_conn_close(&a->conn, now_ms());   /* PWE: closes the socket, wipes keys */
     a->client_fd = -1;
     a->session_plaintext = 0;
@@ -2058,15 +2091,21 @@ static void close_client(struct app *a) {
     a->close_requested = 0;
     a->have_video_frame = 0;
     snprintf(a->input_control_mode, sizeof(a->input_control_mode), "off");
+    TB_LOOP_PHASE("session end: SDL_EnableScreenSaver");
     SDL_EnableScreenSaver();
+    TB_LOOP_PHASE("session end: input capture off");
     tb_receiver_refresh_input_capture(a);
+    TB_LOOP_PHASE("session end: display back to idle");
     tb_disp_set_connection_state(a->disp, 0);
     tb_disp_set_cursor(a->disp, 0, 0, 1, 1, 0, 0, 0);
     tb_disp_set_cursor_image(a->disp, NULL);
     tb_refresh_idle_localized_strings(a);
     a->last_clipboard_text[0] = '\0';
+    TB_LOOP_PHASE("session end: decoder reset");
     tb_dec_reset(a->dec);   /* fresh decoder for next session */
+    TB_LOOP_PHASE("session end: audio device close");
     tb_audio_close_for_idle(a);
+    TB_LOOP_PHASE("session end: idle notice");
     tb_pwe_refresh_notice(a, now_ms());
     fprintf(stderr, "[main] client disconnected\n");
 }
@@ -2440,16 +2479,24 @@ int main(int argc, char **argv) {
     a.last_fps_tick_ms = now_ms();
     a.last_ip_check_ms = 0;
 
+    /* PWE (T40): name any call that holds up this loop for more than 2 s. */
+    if (tb_loopwatch_start() == 0) fprintf(stderr, "[watchdog] watching the main loop\n");
+
     while (!g_term) {
+        tb_loopwatch_iteration();
+        TB_LOOP_PHASE("window events (SDL_PollEvent)");
         unsigned int disp_actions = tb_disp_poll_actions(a.disp);
         int socket_activity = 0;
+        TB_LOOP_PHASE("run loop sources (CFRunLoopRunInMode)");
         CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.0, true);
         if (disp_actions & TB_DISP_ACTION_QUIT) break;
         if ((disp_actions & TB_DISP_ACTION_CYCLE_LANGUAGE) && a.client_fd < 0) {
+            TB_LOOP_PHASE("language change");
             tb_receiver_cycle_language_preference(&a);
         }
         if (TB_RECEIVER_OFFER_LOGIN_ITEM &&
             (disp_actions & TB_DISP_ACTION_TOGGLE_LOGIN_ITEM) && a.client_fd < 0) {
+            TB_LOOP_PHASE("login item toggle");
             tb_login_item_set_enabled(!tb_login_item_is_enabled());
             tb_receiver_refresh_login_item(&a);
         }
@@ -2465,6 +2512,7 @@ int main(int argc, char **argv) {
             char refreshed_tb_ip6[64] = {0};
             unsigned int refreshed_tb_ip6_if = 0;
             a.last_ip_check_ms = t;
+            TB_LOOP_PHASE("address check (getifaddrs, SystemConfiguration)");
             (void)tb_net_get_tb_ip6(refreshed_tb_ip6, sizeof(refreshed_tb_ip6), &refreshed_tb_ip6_if);
             (void)tb_net_get_tb_ip(refreshed_tb_ip, sizeof(refreshed_tb_ip));
             (void)tb_net_get_link_local_ip(refreshed_usb_ip, sizeof(refreshed_usb_ip));
@@ -2499,6 +2547,7 @@ int main(int argc, char **argv) {
                 snprintf(a.tb_ip6_text, sizeof(a.tb_ip6_text), "%s", refreshed_tb_ip6);
                 a.tb_ip6_if = refreshed_tb_ip6_if;
                 snprintf(a.ip_text, sizeof(a.ip_text), "%s", preferred_ip);
+                TB_LOOP_PHASE("address change (host name, Bonjour)");
                 build_display_host(a.display_host, sizeof(a.display_host), preferred_ip, have_refreshed_ip);
                 if (refreshed_tb_ip[0] != '\0') {
                     fprintf(stderr, "[main] Thunderbolt Bridge IP = %s\n", refreshed_tb_ip);
@@ -2518,12 +2567,14 @@ int main(int argc, char **argv) {
                 bonjour_update(&a, TB_PORT);
             } else if (a.bonjour_pending && a.client_fd < 0) {
                 /* The session that held back a re-registration has ended. */
+                TB_LOOP_PHASE("Bonjour re-registration");
                 bonjour_update(&a, TB_PORT);
             }
         }
 
         /* Accept new client */
         if (a.client_fd < 0) {
+            TB_LOOP_PHASE("accept a sender");
             /* PWE: both listeners on every pass, starting with a different one
              * each time, so connections refused on one cannot hold up the other. */
             const int listeners[2] = { a.server_fd, a.server6_fd };
@@ -2574,7 +2625,9 @@ int main(int argc, char **argv) {
                 }
             }
         } else {
+            TB_LOOP_PHASE("connection tick");
             tb_conn_tick(&a.conn);   /* PWE: an older sender that waits for the profile */
+            TB_LOOP_PHASE("socket read");
             int drain_result = drain_socket(&a);
             if (drain_result < 0) {
                 close_client(&a);
@@ -2615,7 +2668,9 @@ int main(int argc, char **argv) {
 
         if (t - a.last_permissions_poll_ms >= 250) {
             a.last_permissions_poll_ms = t;
+            TB_LOOP_PHASE("permissions poll (TCC)");
             tb_receiver_poll_permissions(&a);
+            TB_LOOP_PHASE("pairing notice");
             /* PWE: expire the pairing code; end short messages. */
             if (tb_conn_gate_tick(&a.gate, t) & PWE_SEC_EV_HIDE_CODE)
                 fprintf(stderr, "[sec] pairing code expired\n");
@@ -2625,6 +2680,7 @@ int main(int argc, char **argv) {
         /* Cheap enough to poll: two private-framework getters, twice a second. */
         if (t - a.last_tweak_poll_ms >= 500) {
             a.last_tweak_poll_ms = t;
+            TB_LOOP_PHASE("Night Shift / True Tone poll (CoreBrightness)");
             tb_receiver_send_display_tweaks_if_changed(&a);
         }
 
@@ -2632,22 +2688,27 @@ int main(int argc, char **argv) {
             /* No client, or a connection that hasn't started a real streaming
              * session (e.g. a transient UI-language push during discovery):
              * stay on the windowed waiting screen, don't flash fullscreen. */
+            TB_LOOP_PHASE("draw the idle screen");
             tb_disp_render_status(a.disp, a.display_host, a.status_text, a.sender_text, a.panel_text, a.mode_text, a.language_text, a.permissions_text);
             if (login_offer_pending && a.client_fd < 0) {
                 login_offer_pending = 0;
+                TB_LOOP_PHASE("login item offer (dialog)");
                 tb_login_item_migrate();
                 tb_login_item_offer_once();
                 tb_receiver_refresh_login_item(&a);
             }
         } else if (!a.have_video_frame) {
+            TB_LOOP_PHASE("draw the connecting screen");
             tb_disp_render_connecting(a.disp);
         }
 
         if (strcmp(a.input_control_mode, "receiverMaster") == 0 && a.client_fd >= 0) {
             if (t - a.last_clipboard_poll_ms >= 100) {
                 a.last_clipboard_poll_ms = t;
+                TB_LOOP_PHASE("clipboard poll (pbpaste)");
                 tb_receiver_send_clipboard_if_changed(&a);
             }
+            TB_LOOP_PHASE("forward input to the Mac");
             struct tb_input_event input_event;
             while (tb_disp_pop_input_event(a.disp, &input_event)) {
                 switch (input_event.kind) {
@@ -2713,7 +2774,9 @@ int main(int argc, char **argv) {
         }
 
         /* A frame waiting for this refresh, or a pointer that moved. */
+        TB_LOOP_PHASE("display tick (draw a waiting frame)");
         tb_disp_tick(a.disp);
+        TB_LOOP_PHASE("trace and fps lines");
         tb_trace_tick(tb_trace_now_ns());
 
         /* FPS log */
@@ -2727,10 +2790,12 @@ int main(int argc, char **argv) {
         /* Yield when idle or when a nonblocking active socket had no data,
          * otherwise the receiver can busy-spin between incoming frame packets. */
         if (a.client_fd < 0 || !a.have_video_frame || socket_activity == 0) {
+            TB_LOOP_PHASE("idle sleep");
             SDL_Delay(1);
         }
     }
 
+    tb_loopwatch_stop();
     if (a.client_fd >= 0) close_client(&a);
 #if TB_RECEIVER_TEST_HOOKS
     if (getenv("TB_RECEIVER_TEST_KEYCHAIN_SERVICE") && getenv("TB_RECEIVER_TEST_CLEAN_ON_EXIT")) {

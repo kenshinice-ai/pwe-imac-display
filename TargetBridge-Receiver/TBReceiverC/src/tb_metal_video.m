@@ -6,6 +6,7 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>
 
+#include "tb_loopwatch.h"
 #include "tb_trace.h"
 
 #include <stdio.h>
@@ -476,7 +477,12 @@ enum tb_mtl_draw_result tb_mtl_draw(struct tb_mtl *m, CVPixelBufferRef frame,
 
         /* A hidden or covered window may get no drawable for a second; never
          * block the main loop on that. */
-        id<CAMetalDrawable> drawable = tb_mtl_window_visible(m) ? [v.layer nextDrawable] : nil;
+        id<CAMetalDrawable> drawable = nil;
+        if (tb_mtl_window_visible(m)) {
+            const char *outer = TB_LOOP_ENTER("metal: nextDrawable");
+            drawable = [v.layer nextDrawable];
+            TB_LOOP_LEAVE(outer);
+        }
         if (!drawable) {
             if (ty) CFRelease(ty);
             if (tuv) CFRelease(tuv);
@@ -516,7 +522,9 @@ enum tb_mtl_draw_result tb_mtl_draw(struct tb_mtl *m, CVPixelBufferRef frame,
         }];
         tb_trace_mark_now(trace_id, TB_TRACE_SUBMITTED);
         v.inFlight = v.inFlight + 1;
+        const char *outer = TB_LOOP_ENTER("metal: commit");
         [cmd commit];
+        TB_LOOP_LEAVE(outer);
 
         if ((++v.draws % 120) == 0) CVMetalTextureCacheFlush(v.cache, 0);
         return TB_MTL_DRAWN;

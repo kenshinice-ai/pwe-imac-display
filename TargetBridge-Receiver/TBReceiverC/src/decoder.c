@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tb_loopwatch.h"
 #include "tb_trace.h"
 
 #if defined(__APPLE__)
@@ -148,7 +149,9 @@ int tb_dec_supports_hevc_hwdecode(void) {
 
 void tb_dec_reset(struct tb_decoder *d) {
     if (!d) return;
+    const char *outer = TB_LOOP_ENTER("decoder: avcodec_free_context (VideoToolbox session)");
     if (d->ctx) avcodec_free_context(&d->ctx);
+    TB_LOOP_LEAVE(outer);
     av_free(d->extradata);
     d->extradata      = NULL;
     d->extradata_size = 0;
@@ -282,7 +285,10 @@ static int open_decoder(struct tb_decoder *d) {
         d->ctx->extradata_size = d->extradata_size;
     }
 
-    if (avcodec_open2(d->ctx, d->codec, NULL) < 0) {
+    const char *outer = TB_LOOP_ENTER("decoder: avcodec_open2 (VideoToolbox session)");
+    const int opened = avcodec_open2(d->ctx, d->codec, NULL);
+    TB_LOOP_LEAVE(outer);
+    if (opened < 0) {
         fprintf(stderr, "[dec] avcodec_open2 failed\n");
         avcodec_free_context(&d->ctx);
         return -1;
@@ -370,7 +376,9 @@ int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len, uin
     d->pkt->size = (int)anb_len;
     d->pkt->pts  = trace_id ? (int64_t)trace_id : AV_NOPTS_VALUE;
 
+    const char *outer = TB_LOOP_ENTER("decoder: avcodec_send_packet (VideoToolbox decode)");
     int r = avcodec_send_packet(d->ctx, d->pkt);
+    TB_LOOP_LEAVE(outer);
     if (r < 0 && r != AVERROR(EAGAIN)) {
         fprintf(stderr, "[dec] send_packet=%d\n", r);
         return -1;

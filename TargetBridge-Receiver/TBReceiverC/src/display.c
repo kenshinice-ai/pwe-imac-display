@@ -27,6 +27,7 @@
 #endif
 #include "tb_i18n.h"
 #include "tb_gesture_bridge.h"
+#include "tb_loopwatch.h"
 #include "tb_trace.h"
 #include "tb_metal_video.h"
 #include "tb_vsync.h"
@@ -1033,6 +1034,7 @@ static void tb_disp_rebuild_status_texture(struct tb_display *d,
 
 static void tb_disp_refresh_window_mode(struct tb_display *d) {
     if (!d || !d->win) return;
+    const char *outer = TB_LOOP_ENTER("window: fullscreen, size, shield, pointer");
 
     const int monitor_shield_active =
         (d->is_connected || d->is_connecting) && d->preferred_fullscreen;
@@ -1059,6 +1061,7 @@ static void tb_disp_refresh_window_mode(struct tb_display *d) {
         CGDisplayShowCursor(CGMainDisplayID());
         d->system_cursor_hidden = 0;
     }
+    TB_LOOP_LEAVE(outer);
 }
 
 static SDL_Renderer *tb_disp_try_renderer(SDL_Window *win, const char *driver) {
@@ -1817,7 +1820,9 @@ static void tb_disp_render_current(struct tb_display *d, uint32_t trace_id) {
     SDL_RenderCopy(d->ren, d->tex, NULL, NULL);
     tb_disp_draw_cursor(d);
     tb_trace_mark_now(trace_id, TB_TRACE_SUBMITTED);
+    const char *outer = TB_LOOP_ENTER("draw: SDL_RenderPresent (video)");
     SDL_RenderPresent(d->ren);
+    TB_LOOP_LEAVE(outer);
     /* No vsync on this path: this is the hand-off to the window server. */
     tb_trace_mark_now(trace_id, TB_TRACE_PRESENTED);
     d->last_cursor_render_time = SDL_GetTicks();
@@ -1905,6 +1910,7 @@ static void tb_disp_sdl_show_frame(struct tb_display *d, const struct tb_frame *
  * context; nothing here caches it. The newest picture is kept: with a still
  * desktop no new frame may come. 0, or -1 when no renderer could be made. */
 static int tb_disp_rebuild_renderer(struct tb_display *d, const char *wish) {
+    TB_LOOP_PHASE("renderer: tear down and rebuild");
     CVPixelBufferRef keep = d->pending ? d->pending : d->current;
     if (keep) CVPixelBufferRetain(keep);
     tb_disp_metal_release_frames(d);
@@ -2491,6 +2497,7 @@ static void tb_disp_set_stream_state(struct tb_display *d, int connected, int co
     if (d->is_connected == connected && d->is_connecting == connecting) return;
     d->is_connected = connected;
     d->is_connecting = connecting;
+    const char *outer = TB_LOOP_ENTER("display link: start or stop (CVDisplayLink)");
     if (connected) {
         if (d->vsync) {
             tb_vsync_set_display(d->vsync, d->mtl ? tb_mtl_display_id(d->mtl) : 0);
@@ -2504,6 +2511,7 @@ static void tb_disp_set_stream_state(struct tb_display *d, int connected, int co
         d->last_seen_tick = 0;
         d->frame_checked = 0;
     }
+    TB_LOOP_LEAVE(outer);
     /* A session starts: the next idle screen opens on the calm view again. */
     if (connected || connecting) d->show_details = 0;
     tb_disp_refresh_window_mode(d);
@@ -2626,7 +2634,9 @@ void tb_disp_render_status(struct tb_display *d,
     if (d->mtl && !tb_mtl_window_visible(d->mtl)) return;
     SDL_RenderClear(d->ren);
     if (d->status_tex) SDL_RenderCopy(d->ren, d->status_tex, NULL, NULL);
+    const char *outer = TB_LOOP_ENTER("draw: SDL_RenderPresent (idle screen)");
     SDL_RenderPresent(d->ren);
+    TB_LOOP_LEAVE(outer);
 }
 
 void tb_disp_render_connecting(struct tb_display *d) {
@@ -2667,7 +2677,9 @@ void tb_disp_render_connecting(struct tb_display *d) {
     SDL_RenderClear(d->ren);
     if (d->status_tex) SDL_RenderCopy(d->ren, d->status_tex, NULL, NULL);
     tb_disp_draw_connecting_spinner(d, drawable_w, drawable_h);
+    const char *outer = TB_LOOP_ENTER("draw: SDL_RenderPresent (connecting screen)");
     SDL_RenderPresent(d->ren);
+    TB_LOOP_LEAVE(outer);
 }
 
 void tb_disp_set_notice(struct tb_display *d, enum tb_display_notice kind,
