@@ -78,4 +78,60 @@ final class PWEBridgeRedialTests: XCTestCase {
     func testAClockThatWentBackDoesNotDial() {
         XCTAssertEqual(replugged { $0.secondsSinceTrigger = -1 }, .wait)
     }
+
+    // MARK: - IPv6 link-local (T34 bridges, RC4 Q3 wake)
+
+    private let receiver6 = "fe80::1c5d:cde7:9ef:fc5b"
+
+    /// Woke a second ago; the last session ran over IPv6; this Mac's bridge has
+    /// its link-local address but no IPv4 one yet (DHCP).
+    private func woke6(_ change: (inout TBBridgeRedial.Inputs) -> Void = { _ in }) -> TBBridgeRedial.Decision {
+        replugged {
+            $0.rememberedAddress = receiver6
+            $0.localBridgeIP = ""
+            $0.cableBridgesIPv6 = ["bridge0"]
+            change(&$0)
+        }
+    }
+
+    func testAnIPv6SessionIsRedialedOnTheCableBridge() {
+        XCTAssertEqual(woke6(), .dial(receiverIP: "\(receiver6)%bridge0", localIP: ""))
+        // A local IPv4 address does not matter to an IPv6 dial.
+        XCTAssertEqual(woke6 { $0.localBridgeIP = "169.254.171.182" },
+                       .dial(receiverIP: "\(receiver6)%bridge0", localIP: ""))
+    }
+
+    func testIPv6NeedsExactlyOneCableBridge() {
+        // No link-local address on a listed bridge yet: wait for the next look.
+        XCTAssertEqual(woke6 { $0.cableBridgesIPv6 = [] }, .wait)
+        // Two cable bridges: which one is the iMac on? Leave it to Bonjour.
+        XCTAssertEqual(woke6 { $0.cableBridgesIPv6 = ["bridge0", "bridge1"] }, .wait)
+    }
+
+    func testIPv6KeepsEveryOtherRule() {
+        // Above all: never while this Mac still holds a session. The receiver
+        // hands its connection to a new cable dial after 2.5 s of silence.
+        XCTAssertEqual(woke6 { $0.sessionBusy = true }, .wait)
+        XCTAssertEqual(woke6 { $0.sleeping = true }, .wait)
+        XCTAssertEqual(woke6 { $0.listedWithBridgeAddress = true }, .wait)
+        XCTAssertEqual(woke6 { $0.secondsSinceTrigger = nil }, .wait)
+        XCTAssertEqual(woke6 { $0.secondsSinceTrigger = 10 }, .wait)
+        XCTAssertEqual(woke6 { $0.secondsSinceLastDial = 0.5 }, .wait)
+        XCTAssertEqual(woke6 { $0.transport = .networkLink }, .wait)
+    }
+
+    func testOnlyALinkLocalIPv6AddressIsRedialed() {
+        XCTAssertEqual(woke6 { $0.rememberedAddress = "2001:db8::1" }, .wait)
+        // Remembered without a scope; a stored scope is not trusted.
+        XCTAssertEqual(woke6 { $0.rememberedAddress = "\(self.receiver6)%en0" }, .wait)
+    }
+
+    func testWhatIsRemembered() {
+        XCTAssertEqual(TBBridgeRedial.rememberable("169.254.6.224%bridge0"), "169.254.6.224")
+        XCTAssertEqual(TBBridgeRedial.rememberable("169.254.6.224"), "169.254.6.224")
+        XCTAssertEqual(TBBridgeRedial.rememberable("\(receiver6)%bridge0"), receiver6)
+        XCTAssertEqual(TBBridgeRedial.rememberable("10.0.0.183"), "")
+        XCTAssertEqual(TBBridgeRedial.rememberable("2001:db8::1"), "")
+        XCTAssertEqual(TBBridgeRedial.rememberable(""), "")
+    }
 }
