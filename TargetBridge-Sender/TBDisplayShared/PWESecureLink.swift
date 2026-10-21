@@ -163,9 +163,10 @@ final class PWEPairingStore: @unchecked Sendable {
             return false
         }
         let rc = id.withUnsafeBytes { pwe_keystore_forget_peer(keystore, $0.bindMemory(to: UInt8.self).baseAddress!) }
+        let deleteStatus = keystore.pointee.last_delete_status
         let stillThere = pairedReceivers().contains { $0.id == hex }
         guard rc == 0, !stillThere else {
-            TBLog.connection.error("pairing: forgetting \(hex, privacy: .public) failed (keychain status \(self.keystore.pointee.last_status, privacy: .public), still listed: \(stillThere, privacy: .public))")
+            TBLog.connection.error("pairing: forgetting \(hex, privacy: .public) failed (delete status \(deleteStatus, privacy: .public), still listed: \(stillThere, privacy: .public))")
             return false
         }
         let hints = receiverHints

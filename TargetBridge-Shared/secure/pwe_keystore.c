@@ -92,11 +92,45 @@ static int item_write(struct pwe_keystore *ks, const char *account, const char *
     return 0;
 }
 
+/* Deletes every item matching q by reference. SecItemDelete refuses an item
+ * whose access list does not name this build of the app (errSecInvalidOwnerEdit):
+ * one written by an earlier build, since each build has its own code hash. The
+ * file keychain still lets the app delete it by reference, without a prompt
+ * (measured 2026-10-21 on macOS 27; T37 on the test Mac). */
+static OSStatus delete_by_reference(CFDictionaryRef q) {
+    CFMutableDictionaryRef refs = CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 0, q);
+    CFDictionarySetValue(refs, kSecReturnRef, kCFBooleanTrue);
+    CFDictionarySetValue(refs, kSecMatchLimit, kSecMatchLimitAll);
+    CFTypeRef result = NULL;
+    OSStatus st = SecItemCopyMatching(refs, &result);
+    CFRelease(refs);
+    if (st != errSecSuccess) return st;
+    CFArrayRef items = NULL;
+    if (CFGetTypeID(result) == CFArrayGetTypeID()) {
+        items = (CFArrayRef)CFRetain(result);
+    } else {
+        const void *one[] = { result };
+        items = CFArrayCreate(kCFAllocatorDefault, one, 1, &kCFTypeArrayCallBacks);
+    }
+    for (CFIndex i = 0; i < CFArrayGetCount(items); i++) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        OSStatus d = SecKeychainItemDelete((SecKeychainItemRef)CFArrayGetValueAtIndex(items, i));
+#pragma clang diagnostic pop
+        if (d != errSecSuccess) st = d;
+    }
+    CFRelease(items);
+    CFRelease(result);
+    return st;
+}
+
 static int item_delete(struct pwe_keystore *ks, const char *account) {
     CFMutableDictionaryRef q = base_query(ks, account);
     OSStatus st = SecItemDelete(q);
+    if (st == errSecInvalidOwnerEdit) st = delete_by_reference(q);
     CFRelease(q);
     ks->last_status = (int)st;
+    ks->last_delete_status = (int)st;
     return (st == errSecSuccess || st == errSecItemNotFound) ? 0 : -1;
 }
 

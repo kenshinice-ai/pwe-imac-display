@@ -23,6 +23,7 @@ struct pwe_keystore {
     char service[128];
     int  max_peers;          /* 0 = no limit; otherwise the oldest pairing makes room */
     int  last_status;        /* last OSStatus from Security, for logs */
+    int  last_delete_status; /* OSStatus of the last delete: later reads overwrite last_status */
 };
 
 struct pwe_keystore_peer {

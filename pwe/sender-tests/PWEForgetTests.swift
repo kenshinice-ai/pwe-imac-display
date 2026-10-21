@@ -1,3 +1,4 @@
+import Security
 import XCTest
 @testable import TargetBridge
 
@@ -94,4 +95,32 @@ final class PWEForgetTests: XCTestCase {
             XCTAssertFalse(PWEPairingRules.sessionUses(imac, security: security, expectedID: itsKey), "\(security)")
         }
     }
+
+    /// An item another build of the app wrote (here: the `security` tool, which
+    /// leaves this test process off the item's access list, as an earlier
+    /// build's code hash does). SecItemDelete refuses it with
+    /// errSecInvalidOwnerEdit; forgetting must still remove it (T37, RC2 on the
+    /// test Mac 2026-10-21). Only attributes are read: reading the data would
+    /// ask for keychain access.
+    func testForgetRemovesAnItemAnotherBuildWrote() throws {
+        var id = [UInt8](repeating: 0, count: Int(PWE_SEC_ID_BYTES))
+        for index in id.indices { id[index] = UInt8.random(in: 0...255) }
+        let account = "peer.\(PWEPairingStore.hex(Data(id)))"
+        let tool = Process()
+        tool.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        tool.arguments = ["add-generic-password", "-s", service, "-a", account, "-w", "written by another build"]
+        try tool.run()
+        tool.waitUntilExit()
+        guard tool.terminationStatus == 0 else { throw XCTSkip("security add-generic-password failed here") }
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                                    kSecAttrAccount as String: account, kSecReturnAttributes as String: true]
+        var found: CFTypeRef?
+        XCTAssertEqual(SecItemCopyMatching(query as CFDictionary, &found), errSecSuccess)
+
+        XCTAssertEqual(pwe_keystore_forget_peer(store.keystore, id), 0,
+                       "delete status \(store.keystore.pointee.last_delete_status)")
+
+        XCTAssertEqual(SecItemCopyMatching(query as CFDictionary, &found), errSecItemNotFound, "the item is gone")
+    }
+
 }
