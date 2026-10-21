@@ -547,21 +547,48 @@ final class PWESecureOneShot: @unchecked Sendable {
 /// Sending from this queue is safe: PWESecureLink seals a packet and hands it to
 /// the connection under one lock, as it already does for video frames from the
 /// encoder's queue and for the pointer from its own thread.
+///
+/// Dead-man: a sender whose main thread hangs for good must not hold the iMac
+/// in a frozen session (in receiverMaster mode, with its keyboard and mouse
+/// captured). Each beat also posts a cheap probe to the main queue, which GCD
+/// drains in the run loop's common modes, so an open menu or a modal panel
+/// still answers it. Once main has not answered for `mainStallLimit`, beats
+/// stop and the receiver's 10 s check ends the session; they resume when main
+/// answers again.
 final class PWEHeartbeat: @unchecked Sendable {
     static let interval: TimeInterval = 2
+    /// Far above any hang a live sender recovers from, far below "forever".
+    static let mainStallLimit: TimeInterval = 30
+
+    /// Runs `answer` on the thread whose liveness the beats stand for.
+    typealias MainProbe = @Sendable (_ answer: @escaping @Sendable () -> Void) -> Void
+    static let mainQueueProbe: MainProbe = { answer in DispatchQueue.main.async(execute: answer) }
 
     private let queue = DispatchQueue(label: "pwe.heartbeat", qos: .userInteractive)
     private let interval: TimeInterval
+    private let mainStallLimit: TimeInterval
+    private let probeMain: MainProbe
     private let send: @Sendable (Data) -> Void
     private let lock = NSLock()
     private var timer: DispatchSourceTimer?
     private var stopped = false
+    /// Under `lock`: when main last answered a probe, and whether one is queued.
+    private var mainAnsweredAt: TimeInterval = 0
+    private var probeOutstanding = false
     /// Read and written on `queue` only.
     private var sequence: UInt64 = 0
+    private var holding = false
 
     /// `send` gets one whole heartbeat packet per beat, on the heartbeat's queue.
-    init(interval: TimeInterval = PWEHeartbeat.interval, send: @escaping @Sendable (Data) -> Void) {
+    init(
+        interval: TimeInterval = PWEHeartbeat.interval,
+        mainStallLimit: TimeInterval = PWEHeartbeat.mainStallLimit,
+        probeMain: @escaping MainProbe = PWEHeartbeat.mainQueueProbe,
+        send: @escaping @Sendable (Data) -> Void
+    ) {
         self.interval = interval
+        self.mainStallLimit = mainStallLimit
+        self.probeMain = probeMain
         self.send = send
     }
 
@@ -573,10 +600,14 @@ final class PWEHeartbeat: @unchecked Sendable {
 
     deinit { timer?.cancel() }
 
+    /// Uptime: it stands still while the Mac sleeps, so a sleep is not a hang.
+    private static func now() -> TimeInterval { ProcessInfo.processInfo.systemUptime }
+
     /// The first beat goes out one interval from now, as upstream's did.
     func start() {
         lock.lock(); defer { lock.unlock() }
         guard timer == nil, !stopped else { return }
+        mainAnsweredAt = Self.now()
         // Strict: App Nap must not stretch the interval toward the receiver's 10 s.
         let timer = DispatchSource.makeTimerSource(flags: .strict, queue: queue)
         timer.schedule(deadline: .now() + interval, repeating: interval, leeway: .milliseconds(50))
@@ -594,11 +625,34 @@ final class PWEHeartbeat: @unchecked Sendable {
         timer = nil
     }
 
+    private func mainAnswered() {
+        lock.lock()
+        mainAnsweredAt = Self.now()
+        probeOutstanding = false
+        lock.unlock()
+    }
+
     private func beat() {
         lock.lock()
         let live = !stopped
+        let mainSilentFor = Self.now() - mainAnsweredAt
+        let probe = live && !probeOutstanding
+        if probe { probeOutstanding = true }
         lock.unlock()
         guard live else { return }
+        if probe { probeMain { [weak self] in self?.mainAnswered() } }
+
+        if mainSilentFor > mainStallLimit {
+            if !holding {
+                holding = true
+                TBLog.connection.notice("heartbeat: main thread silent \(Int(mainSilentFor), privacy: .public) s; holding beats")
+            }
+            return
+        }
+        if holding {
+            holding = false
+            TBLog.connection.notice("heartbeat: main thread answers again; beats resume")
+        }
         sequence &+= 1
         guard let packet = TBMonitorProtocol.makeJSONPacket(
             type: .heartbeat,

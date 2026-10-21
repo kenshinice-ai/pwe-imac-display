@@ -2,7 +2,8 @@ import Network
 import XCTest
 @testable import TargetBridge
 
-/// T39: the heartbeat goes out while the main thread is blocked.
+/// T39: the heartbeat goes out while the main thread is blocked, and stops
+/// once main has not answered for the dead-man limit.
 /// pwe/rebrand.py copies this file into the sender's test target.
 final class PWEHeartbeatTests: XCTestCase {
     /// Collects what the heartbeat sends, from its queue.
@@ -80,6 +81,80 @@ final class PWEHeartbeatTests: XCTestCase {
         heartbeat.start()   // stopped for good: a session starts a new heartbeat
         Thread.sleep(forTimeInterval: 0.3)
         XCTAssertLessThanOrEqual(sink.all.count, atStop + 1)
+    }
+
+    /// Stands in for the main queue: answers at once, or holds the probes
+    /// until `answering` is set again, as a hung main thread would.
+    private final class MainStandIn: @unchecked Sendable {
+        private let lock = NSLock()
+        private var answeringNow = true
+        private var held: [@Sendable () -> Void] = []
+        var answering: Bool {
+            get { lock.lock(); defer { lock.unlock() }; return answeringNow }
+            set {
+                lock.lock()
+                answeringNow = newValue
+                let release = newValue ? held : []
+                if newValue { held = [] }
+                lock.unlock()
+                release.forEach { $0() }
+            }
+        }
+        var probe: PWEHeartbeat.MainProbe {
+            { [self] answer in
+                lock.lock()
+                if answeringNow { lock.unlock(); answer(); return }
+                held.append(answer)
+                lock.unlock()
+            }
+        }
+    }
+
+    func testBeatsStopWhenMainStopsAnswering() throws {
+        let sink = Sink()
+        let main = MainStandIn()
+        main.answering = false
+        let heartbeat = PWEHeartbeat(interval: 0.1, mainStallLimit: 0.5, probeMain: main.probe) { sink.add($0) }
+        heartbeat.start()
+        defer { heartbeat.stop() }
+        Thread.sleep(forTimeInterval: 1.0)
+        let held = sink.all.count
+        // Beats until main has been silent 0.5 s: about five, then none.
+        XCTAssertGreaterThanOrEqual(held, 3)
+        XCTAssertLessThanOrEqual(held, 6)
+        Thread.sleep(forTimeInterval: 0.6)
+        XCTAssertEqual(sink.all.count, held, "beats went on while main was silent past the limit")
+    }
+
+    func testBeatsResumeWhenMainAnswersAgain() throws {
+        let sink = Sink()
+        let main = MainStandIn()
+        main.answering = false
+        let heartbeat = PWEHeartbeat(interval: 0.1, mainStallLimit: 0.5, probeMain: main.probe) { sink.add($0) }
+        heartbeat.start()
+        defer { heartbeat.stop() }
+        Thread.sleep(forTimeInterval: 1.0)
+        let held = sink.all.count
+        main.answering = true
+        Thread.sleep(forTimeInterval: 0.6)
+        let sent = sink.all
+        XCTAssertGreaterThanOrEqual(sent.count, held + 3, "beats after main answered: \(sent.count - held)")
+        // Held beats are skipped, not counted: the sequence has no gaps.
+        XCTAssertEqual(try sent.map(sequence), Array(1...UInt64(sent.count)))
+    }
+
+    func testTheRealMainQueueAnswersAndBeatsContinue() {
+        // The default probe on a live main queue: well past the limit, beats go on.
+        let sink = Sink()
+        let heartbeat = PWEHeartbeat(interval: 0.1, mainStallLimit: 0.3) { sink.add($0) }
+        heartbeat.start()
+        defer { heartbeat.stop() }
+        RunLoop.main.run(until: Date().addingTimeInterval(1.2))
+        XCTAssertGreaterThanOrEqual(sink.all.count, 9)
+    }
+
+    func testTheDeadManLimitIsThirtySeconds() {
+        XCTAssertEqual(PWEHeartbeat.mainStallLimit, 30)
     }
 
     func testTheSessionHeartbeatIsTwoSeconds() {
