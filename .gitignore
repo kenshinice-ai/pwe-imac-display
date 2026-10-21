@@ -33,4 +33,5 @@ test_trace
 test_metal_video
 test_cursor_image
 test_log
+test_loopwatch
 *.dSYM/

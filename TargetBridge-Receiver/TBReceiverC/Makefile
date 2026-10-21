@@ -72,6 +72,8 @@ C_SRC += src/tb_trace.c src/tb_vsync.c
 C_SRC += src/tb_cursor_image.c
 # The log file, ~/Library/Logs/<app>/receiver.log (PWE 1.1).
 C_SRC += src/tb_log.c
+# The main loop's watchdog: names a call that blocks the loop (PWE 1.1, T40).
+C_SRC += src/tb_loopwatch.c
 OBJC_SRC_PWE_RENDER = src/tb_metal_video.m
 LDFLAGS += -framework Metal -framework QuartzCore
 OBJC_SRC = src/tb_gesture_bridge.m src/tb_display_tweaks.m src/tb_login_item.m
@@ -129,7 +131,7 @@ $(TEST_RECEIVER_PROFILE_BIN): tests/test_receiver_profile.c src/receiver_profile
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_receiver_profile.c src/receiver_profile.c -o $@
 
 # Receiver rendering (PWE 1.1): tests for the pure-C parts.
-PWE_RENDER_TEST_BINS = test_trace test_metal_video test_cursor_image test_log
+PWE_RENDER_TEST_BINS = test_trace test_metal_video test_cursor_image test_log test_loopwatch
 
 
 # ---- PWE: secure layer tests (need libsodium; AddressSanitizer on) -----------
@@ -176,6 +178,9 @@ test_trace: tests/test_trace.c src/tb_trace.c src/tb_trace.h
 
 test_log: tests/test_log.c src/tb_log.c src/tb_log.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_log.c src/tb_log.c -o $@
+
+test_loopwatch: tests/test_loopwatch.c src/tb_loopwatch.c src/tb_loopwatch.h
+	$(CC) $(TEST_CFLAGS) -Isrc tests/test_loopwatch.c src/tb_loopwatch.c -o $@
 
 test_cursor_image: tests/test_cursor_image.c src/tb_cursor_image.c src/tb_cursor_image.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_cursor_image.c src/tb_cursor_image.c -o $@
