@@ -2756,22 +2756,18 @@ int main(int argc, char **argv) {
     tb_dec_destroy(a.dec);
     /* PWE (T40): a clipboard that never gives its text must not hold up the exit. */
     const int clipboard_done = tb_clipboard_destroy(a.clipboard, 500);
-    if (!tb_audio_out_destroy(a.audio, 1000)) {
-        /* PWE (T40): the audio thread is still inside CoreAudio. SDL_Quit would
-         * close the same device under it, and exit() would run the audio
+    const int audio_done = tb_audio_out_destroy(a.audio, 1000);
+    if (!audio_done || !clipboard_done) {
+        /* PWE (T40): a worker is still inside a framework: the audio thread in
+         * CoreAudio, the clipboard thread in AppKit. SDL_Quit would tear down
+         * the same device or the app under it, and exit() would run the
          * frameworks' teardown under it: leave without either. */
-        fprintf(stderr, "[main] bye (sound device still closing)\n");
+        if (!audio_done) fprintf(stderr, "[main] bye (sound device still closing)\n");
+        if (!clipboard_done) fprintf(stderr, "[main] bye (clipboard thread still waiting for the clipboard)\n");
         tb_log_stop();
         _exit(0);
     }
     tb_disp_destroy(a.disp);
-    if (!clipboard_done) {
-        /* The clipboard thread is still inside AppKit: exit() would run the
-         * frameworks' teardown under it. */
-        fprintf(stderr, "[main] bye (clipboard thread still waiting for the clipboard)\n");
-        tb_log_stop();
-        _exit(0);
-    }
     fprintf(stderr, "[main] bye\n");
     return 0;
 }
