@@ -1157,7 +1157,8 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
 #if TB_RECEIVER_TEST_HOOKS
     a->pwe_test_counts[type]++;
 #endif
-    TB_LOOP_PHASE("packet: other");
+    /* Each packet names itself; the caller's phase comes back afterwards. */
+    const char *outer_phase = TB_LOOP_ENTER("packet: other");
     switch (type) {
     case TB_PKT_UI_LANGUAGE:
         TB_LOOP_PHASE("packet: UI language");
@@ -1351,6 +1352,7 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
         fprintf(stderr, "[main] unknown pkt type=0x%02x\n", type);
         break;
     }
+    TB_LOOP_LEAVE(outer_phase);
 }
 
 /* ---- Networking helpers ---------------------------------------------- */
@@ -2344,8 +2346,17 @@ int main(int argc, char **argv) {
     a.last_fps_tick_ms = now_ms();
     a.last_ip_check_ms = 0;
 
-    /* PWE (T40): name any call that holds up this loop for more than 2 s. */
-    if (tb_loopwatch_start() == 0) fprintf(stderr, "[watchdog] watching the main loop\n");
+    /* PWE (T40): name any call that holds up this loop for more than 2 s.
+     * Off with TB_RECEIVER_LOOPWATCH=0 or
+     *   defaults write <receiver bundle id> MainLoopWatchdog -bool false */
+    {
+        char setting[8];
+        const int off = tb_disp_setting("TB_RECEIVER_LOOPWATCH", "MainLoopWatchdog", setting, sizeof(setting)) &&
+                        strcmp(setting, "0") == 0;
+        if (off) fprintf(stderr, "[watchdog] main-loop watchdog off (MainLoopWatchdog)\n");
+        else if (tb_loopwatch_start() == 0) fprintf(stderr, "[watchdog] watching the main loop\n");
+        else fprintf(stderr, "[watchdog] main-loop watchdog could not start\n");
+    }
 
     while (!g_term) {
         tb_loopwatch_iteration();

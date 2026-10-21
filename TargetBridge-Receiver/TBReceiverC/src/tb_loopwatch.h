@@ -23,8 +23,9 @@
  * suspended. Lines go to stderr with write(2), not stdio: the main thread may
  * be the one holding stderr's lock.
  *
- * Costs one relaxed atomic store per phase. TB_RECEIVER_LOOPWATCH=0 turns the
- * thread off.
+ * Costs one relaxed atomic store per phase. main.c leaves the thread off
+ * when TB_RECEIVER_LOOPWATCH=0 or the defaults key MainLoopWatchdog is false.
+ * Times are uptime (CLOCK_UPTIME_RAW): a system sleep is not a stall.
  */
 
 #ifndef TB_LOOPWATCH_H
@@ -56,7 +57,7 @@ extern _Atomic(const char *) tb_loopwatch_phase_now;
     atomic_store_explicit(&tb_loopwatch_phase_now, (outer), memory_order_relaxed)
 
 /* Start the watchdog. Call once, on the main thread (it watches the caller).
- * 0 on success; -1 when it is turned off or the thread could not start. */
+ * 0 on success; -1 when the thread could not start. */
 int  tb_loopwatch_start(void);
 
 /* The main loop starts an iteration. */

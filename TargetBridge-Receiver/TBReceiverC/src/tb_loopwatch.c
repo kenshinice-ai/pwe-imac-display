@@ -26,10 +26,15 @@ static mach_port_t      g_main_thread = MACH_PORT_NULL;
 static uintptr_t        g_stack_lo, g_stack_hi;
 #endif
 
+/* Time the Mac is awake: a loop that slept with the system did not stall. */
 static uint64_t lw_now_ms(void) {
+#if defined(__APPLE__)
+    return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000000u;
+#else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+#endif
 }
 
 enum tb_loopwatch_event tb_loopwatch_decide(struct tb_loopwatch_track *t, uint64_t seq,
@@ -203,10 +208,28 @@ static void *lw_thread(void *unused) {
     return NULL;
 }
 
+/* Bind the calls made while the main thread is suspended, now, while nothing
+ * is stuck. A build for macOS 11 binds imported functions lazily, on their
+ * first call, under dyld's lock; if the suspended main thread held that lock
+ * (inside dlopen, say), a first call from the watchdog would wait for ever and
+ * the main thread would never be resumed. On a null port each call only fails. */
+static void lw_bind_suspend_calls(void) {
+#if defined(__x86_64__)
+    x86_thread_state64_t st;
+    mach_msg_type_number_t count = x86_THREAD_STATE64_COUNT;
+    (void)thread_get_state(MACH_PORT_NULL, x86_THREAD_STATE64, (thread_state_t)&st, &count);
+#elif defined(__arm64__) || defined(__aarch64__)
+    arm_thread_state64_t st;
+    mach_msg_type_number_t count = ARM_THREAD_STATE64_COUNT;
+    (void)thread_get_state(MACH_PORT_NULL, ARM_THREAD_STATE64, (thread_state_t)&st, &count);
+#endif
+    (void)thread_suspend(MACH_PORT_NULL);
+    (void)thread_resume(MACH_PORT_NULL);
+}
+
 int tb_loopwatch_start(void) {
-    const char *off = getenv("TB_RECEIVER_LOOPWATCH");
-    if (off && strcmp(off, "0") == 0) return -1;
     if (atomic_load(&g_running)) return 0;
+    lw_bind_suspend_calls();
     g_main_thread = mach_thread_self();
     pthread_t self = pthread_self();
     g_stack_hi = (uintptr_t)pthread_get_stackaddr_np(self);

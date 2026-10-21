@@ -1910,7 +1910,7 @@ static void tb_disp_sdl_show_frame(struct tb_display *d, const struct tb_frame *
  * context; nothing here caches it. The newest picture is kept: with a still
  * desktop no new frame may come. 0, or -1 when no renderer could be made. */
 static int tb_disp_rebuild_renderer(struct tb_display *d, const char *wish) {
-    TB_LOOP_PHASE("renderer: tear down and rebuild");
+    const char *outer = TB_LOOP_ENTER("renderer: tear down and rebuild");
     CVPixelBufferRef keep = d->pending ? d->pending : d->current;
     if (keep) CVPixelBufferRetain(keep);
     tb_disp_metal_release_frames(d);
@@ -1935,6 +1935,7 @@ static int tb_disp_rebuild_renderer(struct tb_display *d, const char *wish) {
         fprintf(stderr, "[disp] no renderer after the change; quitting\n");
         if (keep) CVPixelBufferRelease(keep);
         d->quit = 1;
+        TB_LOOP_LEAVE(outer);
         return -1;
     }
     tb_disp_setup_renderer(d);
@@ -1952,6 +1953,7 @@ static int tb_disp_rebuild_renderer(struct tb_display *d, const char *wish) {
         if (d->is_connected) tb_disp_show_frame(d, &f);
         CVPixelBufferRelease(keep);
     }
+    TB_LOOP_LEAVE(outer);
     return 0;
 }
 
