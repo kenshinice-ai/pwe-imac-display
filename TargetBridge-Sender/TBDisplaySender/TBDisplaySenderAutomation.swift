@@ -1,6 +1,17 @@
 import AppKit
 import Foundation
+import OSLog
 import SystemConfiguration
+
+/// PWE: this file's `[automation]` lines go to the unified log (notice level,
+/// kept on disk, public text). Foundation's NSLog from the shipped app reached
+/// only stderr, so a wake or replug on the test Mac left no trace of the retry
+/// loop's steps (T38, RC4 Q3). This shadows Foundation's NSLog in this file only.
+private let automationLog = Logger(subsystem: "com.targetbridge.sender", category: "automation")
+
+private func NSLog(_ message: String) {
+    automationLog.notice("\(message, privacy: .public)")
+}
 
 // Sender-side automation entry points.
 //
