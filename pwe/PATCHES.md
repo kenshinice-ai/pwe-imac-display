@@ -55,6 +55,8 @@
 | `692c9ee`（`pwe-1.1-t40`） | 接收端声音输出移出主循环：新文件 `src/audio_out.{h,c}`，工作线程负责打开、关闭 SDL 输出设备和设系统音量；主循环只在自己的锁下把 PCM 拷进环形缓冲，不再取 SDL 的设备锁。设备在会话第一个声音包时打开，会话结束 5 秒后才关，换画面时保持打开。`main.c` 去掉 `audio_callback`、`tb_audio_open_for_frame`、`tb_audio_close_for_idle`、`tb_set_system_volume`。`mock_sender.py` 加 `--audio`、`stall`、`cycles`；`Makefile` 加 `test_audio_out`（SDL dummy 驱动） | T40 两次停住时声音都在 iMac。SDL 2.32.10 的 CoreAudio 回调在交还缓冲（`AudioQueueEnqueueBuffer`）时持有设备锁，主循环每个声音包都要取这把锁；打开、关闭设备也在主循环上（本机实测打开 24–452 ms、关闭约 90 ms）。是否就是 T40 的原因未证实 | 待提 | 本地提交，未推；等真机复测 |
 | `2b31425`（`pwe-1.1-t40`） | `loopback_smoke.sh` 加第 3b 段（看门狗报出停住的阶段、调用栈和恢复）和第 8b 段（带声音的 Metal 会话连换 6 次，每次 5 秒内接上、声音设备只开一次、没有主循环停顿） | T40 的回归测试 | 随上两条一起提 | 本地提交，未推 |
 | （T39，`pwe-1.1-tx5`） | 发送端 `TBDisplaySenderService.swift`：心跳不再用主循环的 `Timer`，改由 `PWEHeartbeat`（加在 PWE 新文件 `TBDisplayShared/PWESecureLink.swift` 里）在自己的队列上经 `PWESecureLink` 发出；开始、停止的位置不变 | 真机 RC2 T39（2026-10-21）：发送端 10 秒一个包都没发，iMac 判定会话失效并断开。主循环的 `Timer` 在主线程卡住、或主循环不在默认模式（菜单打开、模态面板、拖动改尺寸）时都不触发 | 待提（上游有同样的问题） | 本地提交，未推；等真机复测 |
+| （`pwe-1.1-wake`） | 发送端 `TBDisplaySenderAutomation.swift`：本文件的 `NSLog` 由文件内同名函数接管，写进统一日志（`com.targetbridge.sender`，类别 `automation`，notice 级，公开） | 发布版里 `NSLog` 只到 stderr（T38），睡眠唤醒、拔插时重连循环的每一步在测试机上都没有记录（RC4 Q3） | 待提 | 本地提交，未推 |
+| （`pwe-1.1-wake`） | 发送端 `TBBridgeRedial`：记住的网桥地址也可以是接收端的 IPv6 链路本地地址（不带 scope）；唤醒或链路起来后，在本机唯一一个系统设置认得的网桥上重拨 `fe80::…%bridgeN`（与发现 `tbIP6` 同一条规则）；也监视网桥 IPv6 地址的出现。仍只在本机会话已断开、不在睡眠、Bonjour 未列出时拨，每秒一次、窗口 10 秒 | RC4 Q3：真睡眠后亮屏 2.8 秒才拨号，等的是 Bonjour 重新列出 iMac；出画面 4.9 秒，门槛 5 秒 | 随 `4bc5088` 一起提 | 本地提交，未推；等真机复测，不过就退回 1.1.1 |
 
 打包时的改名（`pwe/rebrand.py`）不改仓库里的文件，所以不在这张表里。它的锚点由脚本自己检查：上游改了对应的文字，脚本就会停下。
 

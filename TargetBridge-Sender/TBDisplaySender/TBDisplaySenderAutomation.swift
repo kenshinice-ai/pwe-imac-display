@@ -260,7 +260,8 @@ enum TBSenderAutomation {
 
         applyModeAndPreset(params, to: session)
         session.receiverIP = receiverIP
-        session.localInterfaceIP = localIP
+        // An IPv6 redial binds no local address; keep the IPv4 one for Bonjour's path.
+        if !localIP.isEmpty { session.localInterfaceIP = localIP }
         TBBridgeRedial.lastDialAt = ProcessInfo.processInfo.systemUptime
         NSLog("[automation] redialing \(receiverIP) over the Thunderbolt Bridge (\(TBBridgeRedial.triggerReason))")
         session.pweSpeculativeDial = true
@@ -781,6 +782,17 @@ enum TBSystemSleepGate {
 /// or be abandoned, so there is never a second connection. Nothing here runs
 /// unless the retry loop does: a Disconnect or automatic connection turned off
 /// means no loop, and so no redial.
+///
+/// The address that last worked may be the receiver's IPv6 link-local one
+/// (T34: a "Using DHCP" bridge has no IPv4 address for about 19 s). It is
+/// dialed on this Mac's one settings-listed cable bridge, the rule discovery
+/// uses for `tbIP6`: "fe80::…%bridge0". After a real sleep the dial waited
+/// 2.8 s after the display came on, for Bonjour to list the iMac again (RC4 Q3).
+///
+/// A redial happens only while this Mac's session is gone (not connected, not
+/// streaming): the receiver hands its connection to a new cable dial once the
+/// old session has been silent for 2.5 s, and must never be led to drop a
+/// session the sender still holds.
 @MainActor
 enum TBBridgeRedial {
     nonisolated static let window: TimeInterval = 10
@@ -796,7 +808,8 @@ enum TBBridgeRedial {
         /// Bonjour lists the remembered receiver with its bridge address:
         /// the normal path dials it at once.
         var listedWithBridgeAddress: Bool
-        /// Where the remembered receiver last answered on the bridge; empty if never.
+        /// Where the remembered receiver last answered on the bridge, without a
+        /// scope: "169.254.…" or "fe80::…"; empty if never.
         var rememberedAddress: String
         /// This Mac's address on a Thunderbolt Bridge interface; empty if it has none.
         var localBridgeIP: String
@@ -804,6 +817,9 @@ enum TBBridgeRedial {
         var secondsSinceTrigger: TimeInterval?
         /// Seconds since the last redial started; nil if none yet.
         var secondsSinceLastDial: TimeInterval?
+        /// This Mac's settings-listed bridges that hold an IPv6 link-local
+        /// address (TBConnectionDiagnostics.currentCableBridgeIPv6Interfaces).
+        var cableBridgesIPv6: [String] = []
     }
 
     enum Decision: Equatable {
@@ -817,12 +833,27 @@ enum TBBridgeRedial {
               !inputs.sessionBusy,
               !inputs.sleeping,
               !inputs.listedWithBridgeAddress,
-              inputs.rememberedAddress.hasPrefix("169.254."),
-              inputs.localBridgeIP.hasPrefix("169.254."),
               let sinceTrigger = inputs.secondsSinceTrigger, sinceTrigger >= 0, sinceTrigger < window
         else { return .wait }
         if let sinceDial = inputs.secondsSinceLastDial, sinceDial >= 0, sinceDial < interval { return .wait }
-        return .dial(receiverIP: inputs.rememberedAddress, localIP: inputs.localBridgeIP)
+        let remembered = inputs.rememberedAddress
+        if remembered.hasPrefix("169.254.") {
+            guard inputs.localBridgeIP.hasPrefix("169.254.") else { return .wait }
+            return .dial(receiverIP: remembered, localIP: inputs.localBridgeIP)
+        }
+        // IPv6: no local address to bind; the scope picks the bridge.
+        let scoped = TBConnectionDiagnostics.scopedBridgeIPv6(
+            advertised: remembered, resolved: [], cableBridges: inputs.cableBridgesIPv6)
+        guard !scoped.isEmpty else { return .wait }
+        return .dial(receiverIP: scoped, localIP: "")
+    }
+
+    /// The form a bridge address is remembered in: without its scope, and only
+    /// a link-local one ("169.254.…", "fe80::…"); "" for anything else.
+    nonisolated static func rememberable(_ receiverIP: String) -> String {
+        let address = receiverIP.split(separator: "%").first.map(String.init) ?? ""
+        if address.hasPrefix("169.254.") { return address }
+        return TBConnectionDiagnostics.isIPv6LinkLocal(address) ? address : ""
     }
 
     // MARK: - State
@@ -843,8 +874,8 @@ enum TBBridgeRedial {
 
     /// The session's receiver answered on the bridge at this address.
     static func remember(_ receiverIP: String, for identity: String) {
-        let address = receiverIP.split(separator: "%").first.map(String.init) ?? ""
-        guard !identity.isEmpty, address.hasPrefix("169.254.") else { return }
+        let address = rememberable(receiverIP)
+        guard !identity.isEmpty, !address.isEmpty else { return }
         var addresses = UserDefaults.standard.dictionary(forKey: addressesKey) as? [String: String] ?? [:]
         guard addresses[identity] != address else { return }
         addresses[identity] = address
@@ -862,6 +893,12 @@ enum TBBridgeRedial {
         let interfaces = TBConnectionDiagnostics.currentIPv4Interfaces()
             .filter { $0.name.hasPrefix("bridge") && $0.ip.hasPrefix("169.254.") }
         let localIP = interfaces.first { $0.ip == session.localInterfaceIP }?.ip ?? interfaces.first?.ip ?? ""
+        let remembered = rememberedAddress(for: id)
+        let sinceTrigger = triggeredAt.map { now - $0 }
+        // The retry loop asks every 250 ms and reading the settings-listed bridges
+        // is not free: only inside a trigger window, for an IPv6 address.
+        let mayDialIPv6 = TBConnectionDiagnostics.isIPv6LinkLocal(remembered)
+            && sinceTrigger.map { $0 >= 0 && $0 < window } == true
         return decide(Inputs(
             transport: session.transportKind,
             sessionBusy: session.isConnected || session.isStreaming || session.pweSecurity.waitsForUser,
@@ -869,10 +906,11 @@ enum TBBridgeRedial {
             listedWithBridgeAddress: !id.isEmpty && service.discoveredReceivers.contains {
                 $0.matchesPersistedIdentity(id) && !$0.ip(for: .thunderboltBridge).isEmpty
             },
-            rememberedAddress: rememberedAddress(for: id),
+            rememberedAddress: remembered,
             localBridgeIP: localIP,
-            secondsSinceTrigger: triggeredAt.map { now - $0 },
-            secondsSinceLastDial: lastDialAt.map { now - $0 }))
+            secondsSinceTrigger: sinceTrigger,
+            secondsSinceLastDial: lastDialAt.map { now - $0 },
+            cableBridgesIPv6: mayDialIPv6 ? TBConnectionDiagnostics.currentCableBridgeIPv6Interfaces() : []))
     }
 
     static func isDue(for session: TBDisplaySenderSession, service: TBDisplaySenderService) -> Bool {
@@ -881,10 +919,11 @@ enum TBBridgeRedial {
 
     // MARK: - Watching the links
 
-    /// Watch System Configuration for a link coming up or an IPv4 address
+    /// Watch System Configuration for a link coming up or an address
     /// appearing on any interface. A Thunderbolt Bridge member's link state
     /// changes the moment the cable is in; the bridge's own address may not
-    /// change at all.
+    /// change at all. A bridge's IPv6 address counts too: it is what an IPv6
+    /// redial needs on this side.
     static func install() {
         guard store == nil else { return }
         var context = SCDynamicStoreContext(version: 0, info: nil, retain: nil, release: nil, copyDescription: nil)
@@ -893,7 +932,7 @@ enum TBBridgeRedial {
             let up = keys.filter { key in
                 guard let value = SCDynamicStoreCopyValue(store, key as CFString) as? [String: Any] else { return false }
                 if key.hasSuffix("/Link") { return value["Active"] as? Bool == true }
-                return key.contains("/bridge")  // .../bridgeN/IPv4 with an address
+                return key.contains("/bridge")  // .../bridgeN/IPv4 or IPv6 with an address
             }
             guard !up.isEmpty else { return }
             MainActor.assumeIsolated {
@@ -904,7 +943,8 @@ enum TBBridgeRedial {
             NSLog("[automation] cannot watch network links; redial only after a wake")
             return
         }
-        let patterns = ["State:/Network/Interface/[^/]+/Link", "State:/Network/Interface/[^/]+/IPv4"] as CFArray
+        let patterns = ["State:/Network/Interface/[^/]+/Link", "State:/Network/Interface/[^/]+/IPv4",
+                        "State:/Network/Interface/[^/]+/IPv6"] as CFArray
         guard SCDynamicStoreSetNotificationKeys(store, nil, patterns),
               SCDynamicStoreSetDispatchQueue(store, .main) else {
             NSLog("[automation] cannot watch network links; redial only after a wake")
