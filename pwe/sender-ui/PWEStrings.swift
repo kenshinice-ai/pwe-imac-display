@@ -218,8 +218,9 @@ struct PWEStrings {
     var pair: String { t("Pair", "配对") }
     var legacyTitle: String { t("Connect without encryption?", "不加密连接？") }   // DRAFT (title only)
     var legacyOriginal: String {
-        t("This iMac runs the original TargetBridge receiver. The connection won’t be encrypted or verified. Connect anyway?",
-          "这台 iMac 运行的是 TargetBridge 原版接收端。连接不会加密，也无法确认对方身份。仍然连接？")
+        // The title asks the question and the buttons answer it; the body only explains.
+        t("The receiver on this iMac can’t encrypt, so the connection won’t be encrypted or verified. Installing PWE Screen Encore Receiver on the iMac fixes this.",
+          "这台 iMac 上的接收端不支持加密，连接不会加密，也无法确认对方身份。在 iMac 上装 PWE Screen Encore Receiver 就能加密。")
     }
     var connectAnyway: String { t("Connect Anyway", "仍然连接") }
     /// §3.4 gives the Chinese only; the English is a DRAFT.
@@ -268,8 +269,8 @@ struct PWEStrings {
     // Settings › Advanced
     var allowUnencrypted: String { t("Allow unencrypted connections", "允许不加密的连接") }   // DRAFT
     var allowUnencryptedHint: String {
-        t("For iMacs that run the original TargetBridge or a 1.0 receiver: picture and sound only, always with a warning.",
-          "用于运行 TargetBridge 原版或 1.0 版接收端的 iMac：只传画面和声音，并始终提示未加密。")
+        t("For iMacs that still run an older receiver: picture and sound only, always with a warning.",
+          "用于还在运行旧版接收端的 iMac：只传画面和声音，并始终提示未加密。")
     }   // DRAFT
     var pairedIMacs: String { t("Paired iMacs", "已配对的 iMac") }
     var noPairedIMacs: String { t("None yet. An iMac is paired the first time you enter its code.", "还没有。第一次输入 iMac 的配对码时就会配对。") }   // DRAFT
@@ -360,8 +361,8 @@ struct PWEStrings {
           "一个文本文件，含版本、设置和本 App 最近 30 分钟的日志，用于求助。")
     }
     var openConsoleHint: String {
-        t("TargetBridge's own console: every engine setting, in the upstream interface.",
-          "TargetBridge 引擎自带的控制台：全部设置都在这里，界面保持上游原样。")
+        t("The engine’s full console: every setting, in its original layout.",
+          "引擎自带的完整控制台：全部设置都在这里，保持原来的界面。")
     }
 
     // About
