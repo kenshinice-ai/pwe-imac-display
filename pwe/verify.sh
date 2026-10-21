@@ -67,8 +67,9 @@ elif [[ ! -f "$DEPS/universal/lib/libsodium.a" ]]; then
 else
   echo "▸ Sender tests…"
   ( cd "$SRC/TargetBridge-Sender" && xcodegen generate -q &&
-    PWE_SODIUM_DIR="$DEPS/universal" xcodebuild -scheme TBDisplaySender -configuration Debug \
-      -derivedDataPath "$WORK/DerivedData" CODE_SIGNING_ALLOWED=NO test ) > "$LOGS/sender-test.log" 2>&1
+    xcodebuild -scheme TBDisplaySender -configuration Debug \
+      -derivedDataPath "$WORK/DerivedData" PWE_SODIUM_DIR="$DEPS/universal" CODE_SIGNING_ALLOWED=NO test ) \
+      > "$LOGS/sender-test.log" 2>&1
   ran="$(grep -Eo 'Executed [0-9]+ tests?, with [0-9]+ tests? skipped and [0-9]+ failures?' "$LOGS/sender-test.log" | tail -1)"
   [[ -n "$ran" ]] || ran="$(grep -Eo 'Executed [0-9]+ tests?, with [0-9]+ failures?' "$LOGS/sender-test.log" | tail -1)"
   if grep -q '\*\* TEST SUCCEEDED \*\*' "$LOGS/sender-test.log"; then
