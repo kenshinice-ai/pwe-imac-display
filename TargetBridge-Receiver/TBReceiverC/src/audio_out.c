@@ -12,6 +12,7 @@
 
 #include <errno.h>
 #include <pthread.h>
+#include <unistd.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,9 +45,10 @@ struct tb_audio_out {
     atomic_int worker_done;
     atomic_int device_open;   /* for tests and logs: the device is open */
 
+    uint64_t retry_after_ms;     /* no open attempt before this */
+
     /* Worker only. */
     SDL_AudioDeviceID device;
-    uint64_t retry_after_ms;
 };
 
 static uint64_t ao_now_ms(void) {
@@ -117,7 +119,8 @@ static void ao_set_system_volume(double level) {
 #endif
 }
 
-static void ao_open(struct tb_audio_out *o) {
+/* 1 when the device opened. */
+static int ao_open(struct tb_audio_out *o) {
     SDL_AudioSpec spec;
     SDL_zero(spec);
     spec.freq = 48000;
@@ -132,12 +135,9 @@ static void ao_open(struct tb_audio_out *o) {
     const uint64_t t0 = ao_now_ms();
     o->device = SDL_OpenAudioDevice(NULL, 0, &spec, &obtained, 0);
     if (o->device == 0) {
-        /* Retry later, not for every packet: the device may be busy for a while. */
-        o->retry_after_ms = ao_now_ms() + TB_AUDIO_OUT_RETRY_MS;
         fprintf(stderr, "[audio] warning: SDL_OpenAudioDevice failed: %s; retrying in 5s\n", SDL_GetError());
-        return;
+        return 0;
     }
-    o->retry_after_ms = 0;
     /* SDL opens devices paused; the session's first packet is already queued. */
     SDL_PauseAudioDevice(o->device, 0);
     atomic_store(&o->device_open, 1);
@@ -145,10 +145,16 @@ static void ao_open(struct tb_audio_out *o) {
             "[audio] output device opened for the session in %llu ms: 48000Hz stereo 16-bit PCM "
             "(obtained %d samples)\n",
             (unsigned long long)(ao_now_ms() - t0), obtained.samples);
+    return 1;
 }
 
 static void ao_close(struct tb_audio_out *o) {
     const uint64_t t0 = ao_now_ms();
+#if TB_RECEIVER_TEST_HOOKS
+    /* Tests only: a close that takes this long, as a stuck CoreAudio would. */
+    const char *delay = getenv("TB_RECEIVER_TEST_AUDIO_CLOSE_DELAY_MS");
+    if (delay && *delay) usleep((useconds_t)(strtoul(delay, NULL, 10) * 1000u));
+#endif
     atomic_store(&o->device_open, 0);
     SDL_CloseAudioDevice(o->device);
     o->device = 0;
@@ -174,10 +180,13 @@ static void *ao_worker(void *arg) {
         if (volume_pending || action != TB_AUDIO_OUT_NOTHING) {
             /* CoreAudio may take its time: never with the lock held. */
             pthread_mutex_unlock(&o->lock);
-            if (action == TB_AUDIO_OUT_OPEN) ao_open(o);
+            int opened = 1;
+            if (action == TB_AUDIO_OUT_OPEN) opened = ao_open(o);
             else if (action == TB_AUDIO_OUT_CLOSE) ao_close(o);
             if (volume_pending) ao_set_system_volume(volume);
             pthread_mutex_lock(&o->lock);
+            /* A failed open retries later, not for every packet. */
+            if (action == TB_AUDIO_OUT_OPEN) o->retry_after_ms = opened ? 0 : ao_now_ms() + TB_AUDIO_OUT_RETRY_MS;
             continue;
         }
 
@@ -267,8 +276,8 @@ int tb_audio_out_device_open(struct tb_audio_out *o) {
     return o ? atomic_load(&o->device_open) : 0;
 }
 
-void tb_audio_out_destroy(struct tb_audio_out *o, unsigned wait_ms) {
-    if (!o) return;
+int tb_audio_out_destroy(struct tb_audio_out *o, unsigned wait_ms) {
+    if (!o) return 1;
     pthread_mutex_lock(&o->lock);
     o->quit = 1;
     pthread_cond_signal(&o->wake);
@@ -280,11 +289,12 @@ void tb_audio_out_destroy(struct tb_audio_out *o, unsigned wait_ms) {
     if (!atomic_load(&o->worker_done)) {
         fprintf(stderr, "[audio] the output device did not close within %u ms; leaving it\n", wait_ms);
         pthread_detach(o->thread);
-        return;   /* the worker still uses `o`: not freed */
+        return 0;   /* the worker still uses `o`: not freed */
     }
     pthread_join(o->thread, NULL);
     pthread_cond_destroy(&o->wake);
     pthread_mutex_destroy(&o->lock);
     pthread_mutex_destroy(&o->ring_lock);
     free(o);
+    return 1;
 }

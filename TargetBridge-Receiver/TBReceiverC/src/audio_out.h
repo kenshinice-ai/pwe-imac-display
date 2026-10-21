@@ -43,9 +43,11 @@ void tb_audio_out_set_volume(struct tb_audio_out *o, double level);
 /* Whether the output device is open now (tests). */
 int  tb_audio_out_device_open(struct tb_audio_out *o);
 
-/* At exit: close the device and stop the worker, waiting at most `wait_ms`
- * (a worker stuck in CoreAudio is left behind; the process is ending). */
-void tb_audio_out_destroy(struct tb_audio_out *o, unsigned wait_ms);
+/* At exit: close the device and stop the worker, waiting at most `wait_ms`.
+ * 1 when the worker finished. 0 when it is still inside CoreAudio and was left
+ * behind: the caller must not shut SDL's audio down under it (no SDL_Quit),
+ * and should end the process with _exit(). */
+int  tb_audio_out_destroy(struct tb_audio_out *o, unsigned wait_ms);
 
 /* ---- The worker's decision, separate for the unit test ------------------- */
 

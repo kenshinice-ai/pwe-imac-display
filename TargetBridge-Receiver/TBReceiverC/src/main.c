@@ -2683,7 +2683,14 @@ int main(int argc, char **argv) {
     if (a.server6_fd >= 0) close(a.server6_fd);
     bonjour_deinit(&a);
     tb_dec_destroy(a.dec);
-    tb_audio_out_destroy(a.audio, 1000);
+    if (!tb_audio_out_destroy(a.audio, 1000)) {
+        /* PWE (T40): the audio thread is still inside CoreAudio. SDL_Quit would
+         * close the same device under it, and exit() would run the audio
+         * frameworks' teardown under it: leave without either. */
+        fprintf(stderr, "[main] bye (sound device still closing)\n");
+        tb_log_stop();
+        _exit(0);
+    }
     tb_disp_destroy(a.disp);
     fprintf(stderr, "[main] bye\n");
     return 0;

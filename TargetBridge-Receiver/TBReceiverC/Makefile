@@ -132,7 +132,7 @@ $(TEST_AUDIO_RING_BIN): tests/test_audio_ring.c src/audio_ring.c src/audio_ring.
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_audio_ring.c src/audio_ring.c -o $@
 
 $(TEST_AUDIO_OUT_BIN): tests/test_audio_out.c src/audio_out.c src/audio_out.h src/audio_ring.c src/audio_ring.h
-	$(CC) $(TEST_CFLAGS) -Isrc $(shell $(PKG) --cflags sdl2) tests/test_audio_out.c src/audio_out.c src/audio_ring.c \
+	$(CC) $(TEST_CFLAGS) -DTB_RECEIVER_TEST_HOOKS=1 -Isrc $(shell $(PKG) --cflags sdl2) tests/test_audio_out.c src/audio_out.c src/audio_ring.c \
 	    $(shell $(PKG) --libs sdl2) -o $@
 
 $(TEST_RECEIVER_PROFILE_BIN): tests/test_receiver_profile.c src/receiver_profile.c src/receiver_profile.h

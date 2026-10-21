@@ -21,6 +21,8 @@
 #   8b. picture changes -> six session changes with sound on Metal, each taken
 #                       within 5 s, the sound device kept open across them, and
 #                       no main-loop stall (PWE, T40; skipped without ffmpeg)
+#   8c. quit while the sound device is closing -> a close held up for 3 s
+#                       (test hook) does not hang or crash the receiver's exit
 #   9. log file      -> every receiver above also wrote a stamped receiver.log
 #
 # The receiver runs with TB_RECEIVER_NO_BONJOUR=1 on TB_RECEIVER_TEST_PORT, so a
@@ -222,6 +224,24 @@ if (( ! NO_STREAM )) && command -v ffmpeg >/dev/null; then
     else
         pass "no main-loop stall during the changes"
     fi
+
+    phase "Phase 8c: quit while the sound device is closing (T40)"
+    relaunch TB_RECEIVER_TEST_AUDIO_CLOSE_DELAY_MS=3000
+    mock --mode stream --duration 2 --audio || fail "mock stream with sound exited non-zero"
+    expect_log "[audio] output device opened" "sound device opened"
+    kill -TERM "$RECEIVER_PID" 2>/dev/null
+    quit_tries=0
+    while kill -0 "$RECEIVER_PID" 2>/dev/null && (( quit_tries < 40 )); do sleep 0.1; quit_tries=$((quit_tries + 1)); done
+    if kill -0 "$RECEIVER_PID" 2>/dev/null; then
+        fail "receiver still running 4 s after quit"
+    else
+        wait "$RECEIVER_PID" 2>/dev/null
+        quit_status=$?
+        if (( quit_status == 0 )); then pass "receiver quit cleanly (exit 0)"
+        else fail "receiver exit status $quit_status (crash?)"; fi
+    fi
+    RECEIVER_PID=""
+    expect_log "[main] bye (sound device still closing)" "receiver left the stuck sound device behind"
 fi
 
 phase "Phase 9: log file"

@@ -99,14 +99,38 @@ static void test_worker(void) {
     tb_audio_out_push(o, pcm, sizeof(pcm));
     CHECK(wait_open(o, 1, 2000));
     const uint64_t t1 = now_ms();
-    tb_audio_out_destroy(o, 1000);
+    CHECK(tb_audio_out_destroy(o, 1000) == 1);
     CHECK(now_ms() - t1 < 1000);
     SDL_Quit();
+}
+
+/* Quit while the device is still closing (a stuck CoreAudio): destroy gives
+ * up after its wait and says so, so the caller leaves SDL's audio alone.
+ * Needs the test hook that slows the close. Runs last: the worker is left
+ * behind inside the close, and SDL is not shut down under it. */
+static void test_quit_while_closing(void) {
+#if TB_RECEIVER_TEST_HOOKS
+    setenv("SDL_AUDIODRIVER", "dummy", 1);
+    if (SDL_Init(SDL_INIT_AUDIO) < 0) return;
+    setenv("TB_RECEIVER_TEST_AUDIO_CLOSE_DELAY_MS", "2000", 1);
+    struct tb_audio_out *o = tb_audio_out_create();
+    CHECK(o != NULL);
+    if (!o) return;
+    uint8_t pcm[1920];
+    memset(pcm, 0, sizeof(pcm));
+    tb_audio_out_push(o, pcm, sizeof(pcm));
+    CHECK(wait_open(o, 1, 2000));
+    const uint64_t t0 = now_ms();
+    CHECK(tb_audio_out_destroy(o, 300) == 0);   /* left behind, not freed */
+    const uint64_t took = now_ms() - t0;
+    CHECK(took >= 280 && took < 1000);
+#endif
 }
 
 int main(void) {
     test_decide();
     test_worker();
+    test_quit_while_closing();
     if (failures) {
         fprintf(stderr, "test_audio_out: %d of %d checks failed\n", failures, checks);
         return 1;
