@@ -79,6 +79,8 @@ C_SRC += src/audio_out.c
 OBJC_SRC_PWE_RENDER = src/tb_metal_video.m
 LDFLAGS += -framework Metal -framework QuartzCore
 OBJC_SRC = src/tb_gesture_bridge.m src/tb_display_tweaks.m src/tb_login_item.m
+# The iMac's clipboard on its own thread, off the main loop (PWE 1.1, T40).
+OBJC_SRC += src/tb_clipboard.m
 OBJC_SRC += $(OBJC_SRC_PWE_RENDER)
 OBJ = $(C_SRC:.c=.o) $(OBJC_SRC:.m=.o) $(SEC_OBJ)
 BIN = tbreceiver
@@ -99,7 +101,8 @@ src/pwe_%.o: $(SEC_DIR)/pwe_%.c $(SEC_DIR)/pwe_secure.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
-	rm -f $(OBJ) $(BIN) $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEIVER_PROFILE_BIN) $(TEST_AUDIO_RING_BIN) $(TEST_AUDIO_OUT_BIN) test_monitor_shield
+	rm -f $(OBJ) $(BIN) $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEIVER_PROFILE_BIN) $(TEST_AUDIO_RING_BIN) $(TEST_AUDIO_OUT_BIN) $(TEST_CLIPBOARD_BIN) test_monitor_shield
+	rm -f smoke_peer pboard_tool
 	rm -f $(PWE_RENDER_TEST_BINS)
 	rm -f $(TEST_SECURE_BIN) bench_secure secure_receiver secure_peer
 	rm -rf *.dSYM
@@ -118,6 +121,8 @@ TEST_RECEIVER_PROFILE_BIN = test_receiver_profile
 TEST_AUDIO_RING_BIN = test_audio_ring
 # PWE (T40): the sound output thread; SDL's dummy audio driver, no device.
 TEST_AUDIO_OUT_BIN = test_audio_out
+# PWE (T40): the clipboard thread; named test pasteboards, never the system clipboard.
+TEST_CLIPBOARD_BIN = test_clipboard
 
 test_net_parser: tests/test_net_parser.c src/net.c src/net.h src/proto.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_net_parser.c src/net.c $(TEST_LDFLAGS) -o $@
@@ -134,6 +139,10 @@ $(TEST_AUDIO_RING_BIN): tests/test_audio_ring.c src/audio_ring.c src/audio_ring.
 $(TEST_AUDIO_OUT_BIN): tests/test_audio_out.c src/audio_out.c src/audio_out.h src/audio_ring.c src/audio_ring.h
 	$(CC) $(TEST_CFLAGS) -DTB_RECEIVER_TEST_HOOKS=1 -Isrc $(shell $(PKG) --cflags sdl2) tests/test_audio_out.c src/audio_out.c src/audio_ring.c \
 	    $(shell $(PKG) --libs sdl2) -o $@
+
+$(TEST_CLIPBOARD_BIN): tests/test_clipboard.m src/tb_clipboard.m src/tb_clipboard.h
+	$(CC) -O2 -g -Wall -Wextra -Wno-unused-parameter -fobjc-arc -DTB_RECEIVER_TEST_HOOKS=1 -Isrc tests/test_clipboard.m src/tb_clipboard.m \
+	    -framework Foundation -framework AppKit -o $@
 
 $(TEST_RECEIVER_PROFILE_BIN): tests/test_receiver_profile.c src/receiver_profile.c src/receiver_profile.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_receiver_profile.c src/receiver_profile.c -o $@
@@ -172,13 +181,14 @@ bench-secure: bench_secure
 	./bench_secure --bench
 # ---- end PWE ---------------------------------------------------------------
 
-test: $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEIVER_PROFILE_BIN) $(TEST_AUDIO_RING_BIN) $(TEST_AUDIO_OUT_BIN) $(PWE_RENDER_TEST_BINS) $(TEST_SECURE_BIN)
+test: $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEIVER_PROFILE_BIN) $(TEST_AUDIO_RING_BIN) $(TEST_AUDIO_OUT_BIN) $(TEST_CLIPBOARD_BIN) $(PWE_RENDER_TEST_BINS) $(TEST_SECURE_BIN)
 	./$(TEST_BIN)
 	./$(TEST_INPUT_QUEUE_BIN)
 	./$(TEST_IDLE_WATCHDOG_BIN)
 	./$(TEST_RECEIVER_PROFILE_BIN)
 	./$(TEST_AUDIO_RING_BIN)
 	./$(TEST_AUDIO_OUT_BIN)
+	./$(TEST_CLIPBOARD_BIN)
 	for t in $(PWE_RENDER_TEST_BINS); do ./$$t || exit 1; done
 	./$(TEST_SECURE_BIN)
 
