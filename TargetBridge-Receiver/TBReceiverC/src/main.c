@@ -27,6 +27,7 @@
 #include "tb_log.h"
 #include "tb_loopwatch.h"
 #include "tb_trace.h"
+#include "tb_clipboard.h"
 /* PWE: pairing and encrypted sessions */
 #include "pwe_secure.h"
 #include "pwe_keystore.h"
@@ -141,8 +142,9 @@ struct app {
     int      sent_option_down;
     int      sent_control_down;
     int      sent_caps_down;
-    uint64_t last_clipboard_poll_ms;
-    char     last_clipboard_text[4096];
+    /* PWE (T40): the iMac's clipboard, on its own thread (tb_clipboard.h). */
+    struct tb_clipboard *clipboard;
+    int      clipboard_polling;
 
     /* ---- PWE: pairing and encrypted sessions (tb_conn.c) ---- */
     CFStringRef             app_id;           /* preferences domain */
@@ -221,9 +223,7 @@ static void send_receiver_info(struct app *a);
 static void tb_receiver_apply_input_event(struct app *a, const uint8_t *payload, size_t len);
 static void tb_receiver_apply_input_control_mode(struct app *a, const uint8_t *payload, size_t len);
 static void tb_receiver_refresh_input_capture(struct app *a);
-static void tb_receiver_set_clipboard_text(const char *text);
-static int tb_receiver_get_clipboard_text(char *dest, size_t size);
-static void tb_receiver_send_clipboard_if_changed(struct app *a);
+static void tb_receiver_send_clipboard_text(struct app *a, const char *text);
 static void write_be32(uint8_t *dst, uint32_t value);
 static void tb_receiver_send_display_tweaks_if_changed(struct app *a);
 
@@ -477,41 +477,11 @@ static void tb_json_escape_string(const char *src, char *dest, size_t size) {
     dest[j] = '\0';
 }
 
-static void tb_receiver_set_clipboard_text(const char *text) {
-    FILE *pipe = popen("pbcopy", "w");
-    if (!pipe) return;
-    if (text && *text) {
-        fwrite(text, 1, strlen(text), pipe);
-    }
-    pclose(pipe);
-}
-
-static int tb_receiver_get_clipboard_text(char *dest, size_t size) {
-    if (!dest || size == 0) return 0;
-    dest[0] = '\0';
-
-    FILE *pipe = popen("pbpaste", "r");
-    if (!pipe) return 0;
-
-    size_t total = 0;
-    while (!feof(pipe) && total + 1 < size) {
-        size_t n = fread(dest + total, 1, size - total - 1, pipe);
-        total += n;
-        if (n == 0) break;
-    }
-    dest[total] = '\0';
-    pclose(pipe);
-    return 1;
-}
-
-static void tb_receiver_send_clipboard_if_changed(struct app *a) {
+/* PWE (T40): the clipboard is read and written on its own thread
+ * (tb_clipboard.m); upstream ran pbpaste and pbcopy on this loop. This sends
+ * text the worker found. */
+static void tb_receiver_send_clipboard_text(struct app *a, const char *text) {
     if (!a || strcmp(a->input_control_mode, "receiverMaster") != 0 || a->client_fd < 0) return;
-
-    char text[4096];
-    if (!tb_receiver_get_clipboard_text(text, sizeof(text))) return;
-    if (strcmp(text, a->last_clipboard_text) == 0) return;
-
-    snprintf(a->last_clipboard_text, sizeof(a->last_clipboard_text), "%s", text);
 
     char escaped[8192];
     tb_json_escape_string(text, escaped, sizeof(escaped));
@@ -1299,11 +1269,11 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
         }
         break;
     case TB_PKT_CLIPBOARD:
-        TB_LOOP_PHASE("packet: clipboard (pbcopy)");
+        TB_LOOP_PHASE("packet: clipboard (handed to the clipboard thread)");
         {
-            char text[4096];
+            char text[TB_CLIPBOARD_MAX_TEXT];
             extract_json_string_field(payload, len, "\"text\"", text, sizeof(text));
-            tb_receiver_set_clipboard_text(text);
+            tb_clipboard_write(a->clipboard, text);   /* PWE (T40): written on the clipboard thread */
         }
         break;
     case TB_PKT_VOLUME:
@@ -1809,7 +1779,15 @@ static void tb_receiver_start_input_tap(struct app *a) {
 
 static void tb_receiver_refresh_input_capture(struct app *a) {
     if (!a) return;
-    if (strcmp(a->input_control_mode, "receiverMaster") == 0 && a->client_fd >= 0) {
+    int capture = strcmp(a->input_control_mode, "receiverMaster") == 0 && a->client_fd >= 0;
+#if TB_RECEIVER_TEST_HOOKS
+    /* Tests only: receiverMaster without taking this Mac's keyboard and mouse. */
+    if (capture && getenv("TB_RECEIVER_TEST_NO_INPUT_CAPTURE")) {
+        fprintf(stderr, "[test] receiverMaster: input capture left off\n");
+        capture = 0;
+    }
+#endif
+    if (capture) {
         const int wants_global_tap = tb_receiver_input_monitoring_trusted() ? 1 : 0;
         const int wants_consume = tb_receiver_accessibility_trusted() ? 1 : 0;
         if (a->input_tap && (!wants_global_tap || a->input_tap_consumes_events != wants_consume)) {
@@ -1965,7 +1943,10 @@ static void close_client(struct app *a) {
     tb_disp_set_cursor(a->disp, 0, 0, 1, 1, 0, 0, 0);
     tb_disp_set_cursor_image(a->disp, NULL);
     tb_refresh_idle_localized_strings(a);
-    a->last_clipboard_text[0] = '\0';
+    TB_LOOP_PHASE("session end: clipboard idle");
+    a->clipboard_polling = 0;
+    tb_clipboard_set_polling(a->clipboard, 0);
+    tb_clipboard_new_session(a->clipboard);
     TB_LOOP_PHASE("session end: decoder reset");
     tb_dec_reset(a->dec);   /* fresh decoder for next session */
     TB_LOOP_PHASE("session end: sound idle");
@@ -2323,6 +2304,19 @@ int main(int argc, char **argv) {
     /* After SDL_Init (tb_disp_create): the audio thread opens SDL devices. */
     a.audio = tb_audio_out_create();
     if (!a.audio) fprintf(stderr, "[audio] warning: no audio thread; the session's sound is dropped\n");
+    {
+        /* PWE (T40): the clipboard thread. Test builds never use the system
+         * clipboard: a pasteboard named by TB_RECEIVER_TEST_PASTEBOARD, or a
+         * private one. */
+        const char *pasteboard = NULL;
+#if TB_RECEIVER_TEST_HOOKS
+        pasteboard = getenv("TB_RECEIVER_TEST_PASTEBOARD");
+        if (!pasteboard) pasteboard = "";
+        fprintf(stderr, "[test] clipboard: %s pasteboard\n", *pasteboard ? pasteboard : "a private");
+#endif
+        a.clipboard = tb_clipboard_create(pasteboard);
+        if (!a.clipboard) fprintf(stderr, "[clipboard] warning: no clipboard thread; the clipboard is not shared\n");
+    }
     a.dec = tb_dec_create(on_frame, &a);
     if (!a.dec) { fprintf(stderr, "tb_dec_create failed\n"); tb_disp_destroy(a.disp); return 1; }
 
@@ -2578,12 +2572,23 @@ int main(int argc, char **argv) {
             tb_disp_render_connecting(a.disp);
         }
 
-        if (strcmp(a.input_control_mode, "receiverMaster") == 0 && a.client_fd >= 0) {
-            if (t - a.last_clipboard_poll_ms >= 100) {
-                a.last_clipboard_poll_ms = t;
-                TB_LOOP_PHASE("clipboard poll (pbpaste)");
-                tb_receiver_send_clipboard_if_changed(&a);
+        /* PWE (T40): the clipboard thread looks for new text while the iMac
+         * drives the Mac; this loop only takes what it found and sends it. */
+        {
+            const int want_clipboard = strcmp(a.input_control_mode, "receiverMaster") == 0 && a.client_fd >= 0;
+            TB_LOOP_PHASE("clipboard: take new text from the clipboard thread");
+            if (want_clipboard != a.clipboard_polling) {
+                a.clipboard_polling = want_clipboard;
+                tb_clipboard_set_polling(a.clipboard, want_clipboard);
             }
+            char clipboard_text[TB_CLIPBOARD_MAX_TEXT];
+            if (want_clipboard && tb_clipboard_take(a.clipboard, clipboard_text, sizeof(clipboard_text))) {
+                TB_LOOP_PHASE("clipboard: send to the Mac");
+                tb_receiver_send_clipboard_text(&a, clipboard_text);
+            }
+        }
+
+        if (strcmp(a.input_control_mode, "receiverMaster") == 0 && a.client_fd >= 0) {
             TB_LOOP_PHASE("forward input to the Mac");
             struct tb_input_event input_event;
             while (tb_disp_pop_input_event(a.disp, &input_event)) {
@@ -2683,6 +2688,8 @@ int main(int argc, char **argv) {
     if (a.server6_fd >= 0) close(a.server6_fd);
     bonjour_deinit(&a);
     tb_dec_destroy(a.dec);
+    /* PWE (T40): a clipboard that never gives its text must not hold up the exit. */
+    const int clipboard_done = tb_clipboard_destroy(a.clipboard, 500);
     if (!tb_audio_out_destroy(a.audio, 1000)) {
         /* PWE (T40): the audio thread is still inside CoreAudio. SDL_Quit would
          * close the same device under it, and exit() would run the audio
@@ -2692,6 +2699,13 @@ int main(int argc, char **argv) {
         _exit(0);
     }
     tb_disp_destroy(a.disp);
+    if (!clipboard_done) {
+        /* The clipboard thread is still inside AppKit: exit() would run the
+         * frameworks' teardown under it. */
+        fprintf(stderr, "[main] bye (clipboard thread still waiting for the clipboard)\n");
+        tb_log_stop();
+        _exit(0);
+    }
     fprintf(stderr, "[main] bye\n");
     return 0;
 }
