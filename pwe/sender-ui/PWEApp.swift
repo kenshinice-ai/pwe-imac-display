@@ -11,6 +11,7 @@ import SwiftUI
 /// still there as the "Full Console", opened from Settings › Advanced.
 @main
 struct PWEApp: App {
+    @NSApplicationDelegateAdaptor(PWEAppDelegate.self) private var appDelegate
     @StateObject private var service: TBDisplaySenderService
     @StateObject private var model: PWESenderModel
     @StateObject private var updates = UpdateCheck()
@@ -90,6 +91,23 @@ struct PWEApp: App {
 
         Settings {
             PWESettingsView(model: model, updates: updates, strings: strings)
+        }
+    }
+}
+
+/// A Dock click (or `open -a` on the running app) brings back the main window.
+/// SwiftUI does that only when no window is visible: with Settings or About
+/// open, the click did nothing and the main window stayed closed.
+final class PWEAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        MainActor.assumeIsolated {
+            guard PWEWindows.shared.openWindow != nil, !PWEWindows.shared.isMainShown else {
+                // Nothing captured yet: SwiftUI's default opens the main window
+                // when no window is visible.
+                return true
+            }
+            PWEWindows.shared.showMain()
+            return false
         }
     }
 }
