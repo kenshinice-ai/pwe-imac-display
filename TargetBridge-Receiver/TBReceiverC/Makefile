@@ -167,6 +167,16 @@ secure_receiver: tests/secure_receiver.c $(SEC_TEST_SRC) $(SEC_DIR)/pwe_keystore
 secure_peer: tests/secure_peer.c $(SEC_TEST_SRC) $(SEC_DIR)/pwe_keystore.h
 	$(CC) $(SEC_TEST_FLAGS) tests/secure_peer.c $(SEC_TEST_SRC) $(SEC_TEST_LIBS) -o $@
 
+# PWE (T40): the receiver smoke's encrypted sender for its clipboard phase:
+# secure_peer without sanitizers (it runs under Rosetta for x86_64), and the
+# helper that copies on a named test pasteboard.
+smoke_peer: tests/secure_peer.c $(SEC_TEST_SRC) $(SEC_DIR)/pwe_secure.h $(SEC_DIR)/pwe_keystore.h
+	$(CC) $(TEST_CFLAGS) -D_DARWIN_C_SOURCE -Isrc -I$(SEC_DIR) $(SODIUM_CFLAGS) \
+	  tests/secure_peer.c $(SEC_TEST_SRC) $(SEC_TEST_LIBS) -o $@
+
+pboard_tool: tests/pboard_tool.m
+	$(CC) -O2 -g -Wall -Wextra -fobjc-arc tests/pboard_tool.m -framework Foundation -framework AppKit -o $@
+
 # Pairing + encrypted stream between two processes over loopback, with the
 # login keychain. A test hook until main.c uses tb_conn (step R2).
 test-loopback: secure_receiver secure_peer

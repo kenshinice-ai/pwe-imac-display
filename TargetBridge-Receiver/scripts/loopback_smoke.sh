@@ -23,6 +23,16 @@
 #                       no main-loop stall (PWE, T40; skipped without ffmpeg)
 #   8c. quit while the sound device is closing -> a close held up for 3 s
 #                       (test hook) does not hang or crash the receiver's exit
+#   10. a redial for a silent session -> off the cable it never takes the slot;
+#                       over the cable it replaces a session silent for 2.5 s,
+#                       never a live one (PWE, T45; loopback stands in for the
+#                       cable through a test hook)
+#   11. clipboard    -> an encrypted test sender switches to receiverMaster:
+#                       the Mac's text reaches the iMac's clipboard and is not
+#                       sent back, a copy on the iMac reaches the Mac, reads
+#                       held up 3 s (test hook) never stall the main loop, and
+#                       quitting during one does not hang (PWE, T40). Uses a
+#                       named test pasteboard, never the system clipboard
 #   9. log file      -> every receiver above also wrote a stamped receiver.log
 #
 # The receiver runs with TB_RECEIVER_NO_BONJOUR=1 on TB_RECEIVER_TEST_PORT, so a
@@ -40,7 +50,9 @@ SRC="$ROOT/TBReceiverC"
 LOG="$(mktemp -t tb_smoke_receiver.err)"
 # PWE: the receivers' log file goes here, not to ~/Library/Logs.
 export TB_RECEIVER_LOG_DIR="$(mktemp -d -t tb_smoke_logs)"
-PORT=54399
+# TB_SMOKE_PORT: another port, so two smoke runs on one Mac (two worktrees)
+# cannot take each other's connections.
+PORT="${TB_SMOKE_PORT:-54399}"
 MOCK_PY="$SRC/tests/mock_sender.py"
 mock() { python3 "$MOCK_PY" --port "$PORT" "$@"; }
 NO_STREAM=0
@@ -85,9 +97,15 @@ wait_listening() {
     return 1
 }
 
+# PWE (T40): the clipboard phase's sender keys and test pasteboard.
+PEER_SERVICE="com.pwegroup.pweimacdisplay.test.smoke-peer.$$"
+TEST_PASTEBOARD="com.pwegroup.pweimacdisplay.test.smoke.$$"
+
 cleanup() {
     [[ -n "$RECEIVER_PID" ]] && kill "$RECEIVER_PID" 2>/dev/null
     wait 2>/dev/null
+    [[ -x "$SRC/smoke_peer" ]] && "$SRC/smoke_peer" --service "$PEER_SERVICE" --forget-everything >/dev/null 2>&1
+    [[ -x "$SRC/pboard_tool" ]] && "$SRC/pboard_tool" "$TEST_PASTEBOARD" release >/dev/null 2>&1
 }
 trap cleanup EXIT INT TERM
 
@@ -242,6 +260,68 @@ if (( ! NO_STREAM )) && command -v ffmpeg >/dev/null; then
     fi
     RECEIVER_PID=""
     expect_log "[main] bye (sound device still closing)" "receiver left the stuck sound device behind"
+fi
+
+phase "Phase 10: a redial for a silent session (T45)"
+relaunch
+if mock --mode displace --expect kept; then
+    pass "a new connection off the cable did not take a silent session's slot"
+else
+    fail "a connection off the cable took a silent session's slot"
+fi
+expect_log "only a cable connection replaces a silent one" "receiver closed it and kept the session"
+relaunch TB_RECEIVER_TEST_LOOPBACK_IS_CABLE=1
+if mock --mode displace --expect taken --max-change-s 3.5; then
+    pass "a cable redial replaced the silent session within 3.5 s (the idle timeout takes 10 s)"
+else
+    fail "a cable redial waited for the silent session"
+fi
+expect_log "closing the stale session" "receiver logged why it closed the old session"
+if mock --mode displace --expect kept --live; then
+    pass "a live session kept the slot; the redial was taken after its TEARDOWN"
+else
+    fail "a cable redial took a live session's slot, or was lost"
+fi
+
+phase "Phase 11: clipboard in receiverMaster, off the main loop (T40)"
+if ! make -C "$SRC" smoke_peer pboard_tool >/dev/null; then
+    fail "could not build the clipboard phase's test sender"
+else
+    CODE_FILE="$(mktemp -t tb_smoke_code)"
+    rm -f "$CODE_FILE"
+    PEER_LOG="$(mktemp -t tb_smoke_peer)"
+    relaunch TB_RECEIVER_TEST_LOOPBACK_IS_CABLE=1 TB_RECEIVER_TEST_CODE_FILE="$CODE_FILE" \
+        TB_RECEIVER_TEST_PASTEBOARD="$TEST_PASTEBOARD" TB_RECEIVER_TEST_NO_INPUT_CAPTURE=1 \
+        TB_RECEIVER_TEST_CLIPBOARD_READ_DELAY_MS=3000
+    expect_log "[test] clipboard: $TEST_PASTEBOARD pasteboard" "receiver uses the test pasteboard"
+    if "$SRC/smoke_peer" --port "$PORT" --service "$PEER_SERVICE" --code-file "$CODE_FILE" --expect-code \
+           --clipboard "$TEST_PASTEBOARD" --pboard-tool "$SRC/pboard_tool" --leave-read >"$PEER_LOG" 2>&1; then
+        pass "paired; Mac -> iMac, no echo, iMac -> Mac ($(grep -o 'after [0-9]* ms' "$PEER_LOG" | tr '\n' ' '))"
+    else
+        fail "clipboard exchange: $(tail -1 "$PEER_LOG")"
+    fi
+    expect_log "[input] control mode updated to receiverMaster" "receiver switched to receiverMaster"
+    expect_log "[clipboard] the clipboard took 3." "slow clipboard reads ran on the clipboard thread"
+    if grep -qF "[watchdog] main loop stuck" "$LOG"; then
+        fail "main loop stalled: $(grep -F "[watchdog] main loop stuck" "$LOG" | head -1)"
+    else
+        pass "no main-loop stall while the clipboard took 3 s per read"
+    fi
+    # The peer left while the receiver was inside a 3 s read: quit now.
+    kill -TERM "$RECEIVER_PID" 2>/dev/null
+    quit_tries=0
+    while kill -0 "$RECEIVER_PID" 2>/dev/null && (( quit_tries < 40 )); do sleep 0.1; quit_tries=$((quit_tries + 1)); done
+    if kill -0 "$RECEIVER_PID" 2>/dev/null; then
+        fail "receiver still running 4 s after quit"
+    else
+        wait "$RECEIVER_PID" 2>/dev/null
+        quit_status=$?
+        if (( quit_status == 0 )); then pass "receiver quit cleanly during a clipboard read (exit 0)"
+        else fail "receiver exit status $quit_status (crash?)"; fi
+    fi
+    RECEIVER_PID=""
+    expect_log "[main] bye (clipboard thread still waiting for the clipboard)" "receiver left the stuck clipboard read behind"
+    rm -f "$CODE_FILE"
 fi
 
 phase "Phase 9: log file"

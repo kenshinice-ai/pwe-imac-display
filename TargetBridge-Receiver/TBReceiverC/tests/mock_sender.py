@@ -29,6 +29,14 @@ Modes (--mode):
                 --sizes, and time how long the receiver takes to take the new
                 session. Fails if one change takes longer than --max-change-s
                 (PWE, T40).
+    displace    a cable replug before the receiver's 10 s idle timeout (PWE,
+                T45): session A says HELLO, then goes silent with its socket
+                open (--live: it heartbeats every 0.5 s instead). 0.5 s later
+                connection B dials and says HELLO at once, as the Mac does after
+                a replug, and the mode times how long the receiver takes to send
+                B its display profile. --expect taken: within --max-change-s,
+                and A closed. --expect kept: B is not taken while A is there
+                (4 s); with --live, B is then taken once A says TEARDOWN.
 
 --audio adds silent 48 kHz stereo PCM (AUDIO_FRAME) to stream, pointer and
 cycles, so the receiver opens and closes its sound device as with "sound on
@@ -45,6 +53,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 # Packet types (src/proto.h)
@@ -148,9 +157,9 @@ def split_annexb(data: bytes):
     return nals
 
 
-def read_profile(sock: socket.socket) -> dict:
+def read_profile(sock: socket.socket, timeout_s: float = 3) -> dict:
     """The DISPLAY_PROFILE the receiver sends as soon as it accepts us."""
-    sock.settimeout(3)
+    sock.settimeout(timeout_s)
     buf = b""
     try:
         while True:
@@ -166,7 +175,7 @@ def read_profile(sock: socket.socket) -> dict:
             if not chunk:
                 return {}
             buf += chunk
-    except socket.timeout:
+    except (socket.timeout, ConnectionResetError):
         return {}
     finally:
         sock.settimeout(None)
@@ -322,9 +331,94 @@ def run_cycles(args) -> int:
     return 0
 
 
+def closed_by_receiver(sock: socket.socket, timeout_s: float) -> bool:
+    """True when the receiver closes this connection within timeout_s."""
+    sock.settimeout(timeout_s)
+    try:
+        while True:
+            if not sock.recv(65536):
+                return True
+    except ConnectionResetError:
+        return True
+    except (socket.timeout, OSError):
+        return False
+    finally:
+        sock.settimeout(None)
+
+
+def run_displace(args) -> int:
+    a = socket.create_connection((args.host, args.port), timeout=5)
+    a.sendall(hello_packet(args.name + " A"))
+    if not read_profile(a):
+        print("[mock] ERROR: the receiver did not take session A")
+        return 1
+    print(f"[mock] session A taken; it now {'heartbeats' if args.live else 'goes silent'}", flush=True)
+    stop = threading.Event()
+
+    def heartbeats():
+        seq = 0
+        while not stop.wait(0.5):
+            try:
+                a.sendall(json_packet(PKT_HEARTBEAT, {"sequence": seq}))
+            except OSError:
+                return
+            seq += 1
+            drain_receiver(a, quiet=True)
+
+    beater = threading.Thread(target=heartbeats, daemon=True)
+    if args.live:
+        beater.start()
+    time.sleep(0.5)
+
+    start = time.monotonic()
+    b = socket.create_connection((args.host, args.port), timeout=5)
+    b.sendall(hello_packet(args.name + " B"))
+    window = args.max_change_s if args.expect == "taken" else 4.0
+    profile = read_profile(b, window)
+    took = time.monotonic() - start
+    rc = 0
+    if args.expect == "taken":
+        if not profile:
+            print(f"[mock] ERROR: B was not taken within {window:.1f} s")
+            rc = 1
+        else:
+            print(f"[mock] B taken after {took:.2f} s")
+            if closed_by_receiver(a, 2.0):
+                print("[mock] the receiver closed session A")
+            else:
+                print("[mock] ERROR: session A is still open")
+                rc = 1
+    else:
+        if profile:
+            print(f"[mock] ERROR: B took the slot after {took:.2f} s while A was there")
+            rc = 1
+        else:
+            print(f"[mock] B not taken in {window:.1f} s: session A kept the slot")
+            if args.live:
+                stop.set()
+                beater.join()
+                a.sendall(json_packet(PKT_TEARDOWN, {"reason": "mock done"}))
+                start = time.monotonic()
+                if read_profile(b, 5):
+                    print(f"[mock] B taken {time.monotonic() - start:.2f} s after A's TEARDOWN (it had waited)")
+                else:
+                    print("[mock] ERROR: B was not taken after A's TEARDOWN")
+                    rc = 1
+    stop.set()
+    for sock in (a, b):
+        try:
+            sock.sendall(json_packet(PKT_TEARDOWN, {"reason": "mock done"}))
+        except OSError:
+            pass
+        sock.close()
+    return rc
+
+
 def run(args) -> int:
     if args.mode == "cycles":
         return run_cycles(args)
+    if args.mode == "displace":
+        return run_displace(args)
     sock = socket.create_connection((args.host, args.port), timeout=5)
     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     print(f"[mock] connected to {args.host}:{args.port}")
@@ -405,7 +499,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=54321)
-    ap.add_argument("--mode", choices=["handshake", "stream", "hang", "badlen", "drop", "pointer", "stall", "cycles"],
+    ap.add_argument("--mode", choices=["handshake", "stream", "hang", "badlen", "drop", "pointer", "stall", "cycles",
+                                       "displace"],
                     default="handshake")
     ap.add_argument("--duration", type=int, default=5, help="seconds (mode-specific)")
     ap.add_argument("--fps", type=int, default=30, help="stream/pointer: frame rate")
@@ -415,6 +510,9 @@ def main() -> int:
     ap.add_argument("--cycles", type=int, default=6, help="cycles: how many preset changes")
     ap.add_argument("--sizes", default="1280x720,1920x1080,2560x1440", help="cycles: sizes in turn")
     ap.add_argument("--max-change-s", type=float, default=5.0, help="cycles: slowest change allowed")
+    ap.add_argument("--expect", choices=["taken", "kept"], default="taken",
+                    help="displace: whether the second connection should take the slot")
+    ap.add_argument("--live", action="store_true", help="displace: the first session keeps heartbeating")
     ap.add_argument("--name", default="MockSender")
     ap.add_argument("--renderer", choices=["", "opengl", "metal"], default="",
                     help="PWE: receiverRenderer in the HELLO (absent by default, as from upstream)")
