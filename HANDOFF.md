@@ -9,6 +9,7 @@
 > **公证测试版**（2026-10-22，`pwe-1.1` c9f5398 = RC6 加截图倍数开关 `PWE_SNAPSHOT_SCALE`，构建号 20261022083325，sha256 `8d250a67…`，Gatekeeper：Notarized Developer ID）在 `pwe/dist/beta-20261022083325/`（DMG、ffmpeg 源码包、SHA256SUMS）。本地标签 `pwe-1.1.0` 指向它，未推；正式版前标签会移。RC6 真机全部通过（U0–U3、2 小时办公、网络边界 N1–N3）。测试者说明已定稿。
 > T47（P2，网络边界测试发现，详情不入库）：修复在本地分支 `pwe-1.1-t47`（64c3a33，含独立评审的修正），过真机再并进 1.1，没过留 1.1.1（Lee 2026-10-22 定）。**RC7**（构建号 20261022085717，sha256 `bd9acb25…`，未公证）= 公证测试版加 T47，在 `pwe/dist/local/`，2026-10-22 交测试机按清单「T47 复测（RC7）」测，10-25 前完成；RC6 移到 `pwe/dist/local/rc6-20261021234804/`。
 > 使用说明（中英双语，带截图）：https://claude.ai/artifact/3aYZkUhTKifqsYKJJYSZ7V （私有，要分享从页面里点；可导出 PDF/Word）。现在只给测试者；以后上自己网站（Lee 2026-10-22 定）：上网站前换成正式版截图，T+14 前去掉配对码那张图，由工具站会话做成 pwestudio.site 的页面。
+> **测试者回报（Lee 2026-10-22 定，对外承诺）：参加测试的朋友，PWE Screen Encore 以后所有版本终身免费，含更新——包括将来如果出收费版。** 已写进测试者说明和朋友圈邀请；名单记在 `docs/pwe/BETA-testers-roster.md`（不入库）。以后定价、做授权时必须兑现。
 > 测试版分享包（2026-10-22）：iCloud Drive `PWE/Screen Encore 测试版 1.1/`（DMG、ffmpeg 源码包、SHA256SUMS、去掉内部说明的测试者说明），Lee 从访达共享链接发给测试者。
 > **RC6**（2026-10-21，`pwe-1.1` ded0d5d，构建号 20261021234804，sha256 `17a14cbb…`）在 `pwe/dist/local/PWE-Screen-Encore-1.1.0.dmg`：RC5 再加 T46（保存报告不再卡 15 秒）、「关于」显示构建号、21.5 吋 4K iMac 默认 4096 × 2304。RC5 真机已过：T45、插线、醒来重连、T39、换画面、界面；23:29 那次 -3817 断开是 Lee 自己点了录屏指示，不是问题。RC5 在 `pwe/dist/local/rc5-20261021172703/`。
 > **RC5**（2026-10-21，`pwe-1.1` 2bcbace，构建号 20261021172703，sha256 `83b03151…`）在 `pwe/dist/local/PWE-Screen-Encore-1.1.0.dmg`：RC4 再加 T40 真正的修复（剪贴板改到单独线程，不再每 100 ms 开 `pbpaste`）、T45（快速重插时顶掉静默 ≥ 2.5 秒的旧会话，只限线缆）、T39（心跳独立于主线程，主线程 30 秒无响应才停；主线程卡顿检测）、醒来和插线后直接拨 iMac 的 IPv6 地址、界面统一版式、iMac 如实报告 HEVC 硬解（没有就让 Mac 用 HEVC + 软件解码）、日志开头 `[sys]` 一行。每批改动都有独立只读审查，提出的问题已修。RC4 在 `pwe/dist/local/rc4-20261021131443/`。
@@ -30,6 +31,7 @@
 
 ## 宣发
 
+- **[排队] 朋友圈 · 测评邀请 1 条** — 正文 A 定稿、P3 文字卡在 `docs/pwe/launch-kit-2026-10-22/moments-beta-invite.md` 和 `moments-beta/` · 等 Blender（P1）和 ChatGPT（P2）出图，Claude 加「效果图」后 Lee 发
 - **[已发] 官网 · 2026-10-21 · /screenencore/ 加逐年机型表（2014–2020，状态和最高 macOS）和「21.5 吋 4K 还没测过、暂不承诺」** — 工具站会话部署（main 62b3590，Cloudflare 36566e3b），PWE Assist 知识已同步；线上已核对；仍无下载链接 · 数据：未抄
 - **[排队] 微信、小红书、V2EX · 3 条** — 草稿在宣发简报附录 A · 等 10-28 发布后由 Lee 发
 
