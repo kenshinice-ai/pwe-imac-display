@@ -300,6 +300,22 @@ enum PWESnapshot {
         }
     }
 
+    /// PWE_SNAPSHOT_SCALE=3 draws at that many pixels per point, for close-ups in
+    /// a film; unset follows the Mac's screen (2 on a Retina Mac).
+    @MainActor
+    private static func bitmap(for view: NSView) -> NSBitmapImageRep? {
+        guard let scale = ProcessInfo.processInfo.environment["PWE_SNAPSHOT_SCALE"].flatMap(Double.init),
+              scale > 0 else { return view.bitmapImageRepForCachingDisplay(in: view.bounds) }
+        let size = view.bounds.size
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil,
+                                   pixelsWide: Int((size.width * scale).rounded()),
+                                   pixelsHigh: Int((size.height * scale).rounded()),
+                                   bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                   colorSpaceName: .calibratedRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        rep?.size = size   // points, so cacheDisplay draws at the scale above
+        return rep
+    }
+
     @MainActor
     private static func write<V: View>(_ view: V, to url: URL) {
         // Opaque, like the window it stands for: transparent PNGs lose their text
@@ -324,7 +340,7 @@ enum PWESnapshot {
         window.contentView = host
         guard let frame = host.superview else { return }
         frame.layoutSubtreeIfNeeded()
-        guard let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds) else { return }
+        guard let rep = bitmap(for: frame) else { return }
         frame.cacheDisplay(in: frame.bounds, to: rep)
         try? rep.representation(using: .png, properties: [:])?.write(to: url)
     }
@@ -335,7 +351,7 @@ enum PWESnapshot {
         window.appearance = appearance
         window.contentView = view
         view.layoutSubtreeIfNeeded()
-        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        guard let rep = bitmap(for: view) else { return }
         view.cacheDisplay(in: view.bounds, to: rep)
         try? rep.representation(using: .png, properties: [:])?.write(to: url)
     }
