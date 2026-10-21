@@ -28,6 +28,7 @@
 #include "tb_loopwatch.h"
 #include "tb_trace.h"
 #include "tb_clipboard.h"
+#include "tb_sysinfo.h"
 /* PWE: pairing and encrypted sessions */
 #include "pwe_secure.h"
 #include "pwe_keystore.h"
@@ -2271,6 +2272,11 @@ int main(int argc, char **argv) {
             fprintf(stderr, "[log] receiver %s (%s) started, pid %d\n",
                     TB_RECEIVER_VERSION, TB_RECEIVER_BUILD, (int)getpid());
         }
+    }
+    {
+        /* PWE: the facts a remote tester's log needs; nothing personal. */
+        char sys[192];
+        fprintf(stderr, "[sys] %s\n", tb_sysinfo_describe(sys, sizeof(sys)));
     }
 
     char startup_language_pref[8];
