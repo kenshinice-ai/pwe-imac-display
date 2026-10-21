@@ -398,6 +398,10 @@ enum TBDisplayCodecPreference: String, CaseIterable, Identifiable, Codable {
 struct TBDisplayCodecDecision: Equatable {
     let codecType: CMVideoCodecType
     let usedFallback: Bool
+    /// PWE: HEVC to a receiver that reported no HEVC hardware decode, because
+    /// the sender has no H.264 hardware encoder at this size. The receiver
+    /// decodes it in software: slow, but a picture.
+    var receiverDecodesInSoftware = false
 }
 
 enum TBDisplayCaptureSource: String, CaseIterable, Identifiable {
@@ -1621,6 +1625,9 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
 
     private var sentSnapshot = 0
     private var sessionAckSent = false
+    /// PWE: the software-decode codec fallback is logged once per session, not
+    /// again on every capture restart.
+    private var pweSoftwareDecodeLogged = false
     private var captureBlockedByScreenRecordingPermission = false
     private var fpsTimer: Timer?
     /// PWE (T39): off the main thread; see PWEHeartbeat.
@@ -1789,6 +1796,18 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         }
         if preferredCodec == kCMVideoCodecType_H264, hevcAvailable {
             return TBDisplayCodecDecision(codecType: kCMVideoCodecType_HEVC, usedFallback: true)
+        }
+        // PWE: neither codec has a hardware path on both Macs. Apple's H.264
+        // encoders stop below 5120x2880 (require-hardware: -12903; 4096x2304
+        // works), so a 5K preset to an iMac without HEVC hardware decode (2014,
+        // mid-2015) lands here. Before the receiver reported that honestly it got
+        // HEVC and decoded it in software; keep that picture rather than none.
+        if senderSupportsHEVC {
+            return TBDisplayCodecDecision(
+                codecType: kCMVideoCodecType_HEVC,
+                usedFallback: true,
+                receiverDecodesInSoftware: true
+            )
         }
 
         return nil
@@ -3117,6 +3136,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             // armed against a session that has already delivered frames — it then
             // tears down a healthy stream ~4s in. See onFirstFrame wiring below.
             self.sessionAckSent = false
+            self.pweSoftwareDecodeLogged = false
             self.captureBlockedByScreenRecordingPermission = false
             self.setStatus(.startingCapture(self.capturePreset.description, self.captureSource))
             let started = await self.startCapture(for: profile)
@@ -3189,7 +3209,14 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             let codecName = usesRawNV12 ? "NV12 RAW" : codecName(for: codecType)
             activeCodecType = usesRawNV12 ? nil : codecType
             activeCodecName = codecName
-            if codecDecision.usedFallback {
+            if codecDecision.receiverDecodesInSoftware {
+                if !pweSoftwareDecodeLogged {
+                    pweSoftwareDecodeLogged = true
+                    TBLog.connection.notice(
+                        "capture: HEVC with receiver software decode (no H.264 hw encoder at \(preset.width, privacy: .public)x\(preset.height, privacy: .public), receiver has no HEVC hw decode)"
+                    )
+                }
+            } else if codecDecision.usedFallback {
                 TBLog.connection.notice(
                     "capture: codec fallback preference=\(self.codecPreference.rawValue, privacy: .public) selected=\(codecName, privacy: .public)"
                 )

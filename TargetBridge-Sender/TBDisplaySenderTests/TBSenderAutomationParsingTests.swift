@@ -244,6 +244,65 @@ final class TBSenderAutomationParsingTests: XCTestCase {
         XCTAssertEqual(h264ToHEVC?.usedFallback, true)
     }
 
+    /// A 5K preset to an iMac without HEVC hardware decode (2014, mid-2015):
+    /// no H.264 hardware encoder at 5120x2880, so HEVC, decoded in software.
+    func testNoHEVCDecodeAndNoH264EncoderFallsBackToHEVCInSoftware() {
+        for preference in [TBDisplayCodecPreference.automatic, .h264, .hevc] {
+            let decision = TBDisplaySenderSession.chooseCodec(
+                preference: preference,
+                preset: .native5k,
+                receiverSupportsHEVC: false,
+                senderSupportsH264: false,
+                senderSupportsHEVC: true
+            )
+            XCTAssertEqual(decision?.codecType, kCMVideoCodecType_HEVC, "\(preference)")
+            XCTAssertEqual(decision?.usedFallback, true, "\(preference)")
+            XCTAssertEqual(decision?.receiverDecodesInSoftware, true, "\(preference)")
+        }
+    }
+
+    /// The whole table: receiver HEVC decode x sender H.264 encode x sender
+    /// HEVC encode x preference. Software decode only when nothing else exists.
+    func testCodecDecisionTable() {
+        let hevc = kCMVideoCodecType_HEVC, h264 = kCMVideoCodecType_H264
+        typealias Row = (rx: Bool, h264: Bool, hevc: Bool, pref: TBDisplayCodecPreference,
+                         codec: CMVideoCodecType?, fallback: Bool, software: Bool)
+        let rows: [Row] = [
+            (true, true, true, .automatic, hevc, false, false),
+            (true, true, true, .h264, h264, false, false),
+            (true, true, true, .hevc, hevc, false, false),
+            (true, true, false, .automatic, h264, true, false),
+            (true, true, false, .h264, h264, false, false),
+            (true, true, false, .hevc, h264, true, false),
+            (true, false, true, .automatic, hevc, false, false),
+            (true, false, true, .h264, hevc, true, false),
+            (true, false, true, .hevc, hevc, false, false),
+            (true, false, false, .automatic, nil, false, false),
+            (false, true, true, .automatic, h264, true, false),
+            (false, true, true, .h264, h264, false, false),
+            (false, true, true, .hevc, h264, true, false),
+            (false, true, false, .automatic, h264, true, false),
+            (false, false, true, .automatic, hevc, true, true),
+            (false, false, true, .h264, hevc, true, true),
+            (false, false, true, .hevc, hevc, true, true),
+            (false, false, false, .automatic, nil, false, false),
+            (false, false, false, .hevc, nil, false, false),
+        ]
+        for row in rows {
+            // native5k's own codec is HEVC, so .automatic prefers HEVC here.
+            let decision = TBDisplaySenderSession.chooseCodec(
+                preference: row.pref, preset: .native5k,
+                receiverSupportsHEVC: row.rx, senderSupportsH264: row.h264, senderSupportsHEVC: row.hevc
+            )
+            let label = "rx=\(row.rx) h264=\(row.h264) hevc=\(row.hevc) pref=\(row.pref)"
+            XCTAssertEqual(decision?.codecType, row.codec, label)
+            if row.codec != nil {
+                XCTAssertEqual(decision?.usedFallback, row.fallback, label)
+                XCTAssertEqual(decision?.receiverDecodesInSoftware, row.software, label)
+            }
+        }
+    }
+
     func testCodecSelectionFailsCleanlyWhenNoHardwarePathExists() {
         XCTAssertNil(TBDisplaySenderSession.chooseCodec(
             preference: .automatic,
