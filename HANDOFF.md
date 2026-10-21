@@ -4,8 +4,8 @@
 > 1.1 候选版（产品改名 **PWE Screen Encore**，Lee 2026-10-20 定；bundle ID、`pweimacdisplay://`、数据路径不变）在本地分支 `pwe-1.1`（未推送），已含 1.0.1 的全部修复。**RC3**（2026-10-21，源码 `b770bd7`，构建号 20261021100614，sha256 `23abf70f…`）在 `pwe/dist/local/PWE-Screen-Encore-1.1.0.dmg`：在 RC2 上加了 T33 菜单开着时整体刷新、T38 日志进系统日志、T34 插线后走雷雳网桥的 IPv6 本地地址（IPv4 照旧作后备），并收紧了「哪个网桥算线缆」。RC2 移到 `pwe/dist/local/rc2-20261021012201/`，RC1 在 `rc1-20261020225620/`。**计划 2026-10-28（周三）发布**，Marco 2026-10-20 已收到一周通知。
 > 2026-10-20 给 Marco 发了补充报告（回在 10-14 那封的线程里）。他 10-16 把 #212–#216 合进了 `maint-3.6`，3.6.1 候选版是上游 PR #218。
 > 测试版（Lee 2026-10-21 定）：等 RC5（含 T40 剪贴板的真正修复）真机测过后，10-23～24 公证、用私下链接发给第一批测试者（不放 GitHub release，`pwe-1.1` 不推）。反馈走 GitHub issue 或 support@pwestudio.site。给测试者的说明 `docs/pwe/BETA-1.1-testers.md`（不入库，两处「发前核对」等 RC4 结果）。
-> **RC4**（2026-10-21，`pwe-1.1` 9bc77b2，构建号 20261021131443，sha256 `a0aa0061…`）在 `pwe/dist/local/PWE-Screen-Encore-1.1.0.dmg`：RC3 再加 T37 第二处（别的构建写的配对条目改按引用删）、T40（接收端声音移到单独线程，加主循环看门狗，日志 `[watchdog]`；可用 `defaults write com.pwegroup.pweimacdisplay.receiver MainLoopWatchdog -bool false` 关掉）、T41 安装指南、support@pwestudio.site、`verify.sh` 的 `PWE_DEPS` 修复。T40 和看门狗各有一个只读子代理审查，提出的问题都已修。T40 的根因没坐实（本机 92 次换画面没复现），真机若再卡，看门狗会写出卡在哪。RC3 移到 `pwe/dist/local/rc3-20261021100614/`。
-> RC4 验证（2026-10-21，这台 Mac）：发送端 350 个测试（4 个跳过，0 失败）、接收端全部单元测试、两种架构冒烟各 39 段都通过；DMG 两个 App 过 check-bundle、Developer ID 签名有效，未公证。RC2 真机已过：T32、T35、T36、剪贴板、声音、2 小时办公（243 次采样 iMac 屏没丢，内存 141 → 49 MB）。**RC3、RC4 的改动都没上真机。**
+> **RC5**（2026-10-21，`pwe-1.1` 2bcbace，构建号 20261021172703，sha256 `83b03151…`）在 `pwe/dist/local/PWE-Screen-Encore-1.1.0.dmg`：RC4 再加 T40 真正的修复（剪贴板改到单独线程，不再每 100 ms 开 `pbpaste`）、T45（快速重插时顶掉静默 ≥ 2.5 秒的旧会话，只限线缆）、T39（心跳独立于主线程，主线程 30 秒无响应才停；主线程卡顿检测）、醒来和插线后直接拨 iMac 的 IPv6 地址、界面统一版式、iMac 如实报告 HEVC 硬解（没有就让 Mac 用 HEVC + 软件解码）、日志开头 `[sys]` 一行。每批改动都有独立只读审查，提出的问题已修。RC4 在 `pwe/dist/local/rc4-20261021131443/`。
+> RC5 验证（2026-10-21，这台 Mac）：发送端 373 个测试（4 个跳过，0 失败）、接收端全部单元测试、两种架构冒烟各 51 项通过；DMG 两个 App 过 check-bundle、Developer ID 签名有效，未公证；成品里没有测试钩子的字符串。RC4 真机已过：T37、T38、T33、T34（IPv6 2.5–3.3 秒）、换画面 14 次。**RC5 的改动都没上真机。**
 > Lee 2026-10-21 定：重连门槛拆成两条（睡眠和换画面每次 ≤ 5 秒；拔插从 iMac 有地址起 ≤ 5 秒，T34 的约 20 秒写进已知问题，1.1.1 改走 IPv6）；忘记正连着的 iMac 就断开，下次要码；出画面时 Esc 不响应；快捷键按键盘上标的字母认；「忘记」失败的提示定稿。
 > 方案和决定：`docs/pwe/PLAN-1.1-2026-10-19.md`、`DESIGN-pairing-2026-10-19.md`、`RESEARCH-Metal-2026-10-19.md`（三份都不入库）。
 > 2026-10-20 申请了 OpenAI Codex for Open Source 和 Claude for Open Source（Lee 提交；名字 Li Liu，lee.liu.melbourne@gmail.com）。结果会发邮件，滚动审核。
@@ -28,7 +28,7 @@
 
 ## 等 Lee
 
-- **[动手] 在 iMac 上测 RC5** — RC5 打好后（T40 剪贴板、T45 快速重插、T39 心跳），按测试清单最前面的 RC5 一节测；过了就公证、发测试版 · 不测则测试版和 10-28 都发不了 · 自 2026-10-21
+- **[动手] 在 iMac 上测 RC5** — 按 `docs/pwe/TEST-1.1-rc-2026-10-21.md` 最前面的「RC5 先做这一节」S0–S6；插拔和合盖要你在场；过了就公证、发测试版 · 不测则测试版和 10-28 都发不了 · 自 2026-10-21
 - **[决定] iMac 上默认用哪种渲染方式** — 推荐按测试清单第 5 节用同口径计时重测；在那之前默认 OpenGL · 不定则按 OpenGL 发 · 自 2026-10-20
 - **[决定] Homebrew cask 改名** — 推荐新 cask `pwe-screen-encore`，旧的 `pwe-imac-display` 已删，不再恢复 · 不定则 1.1 用旧名字的 cask · 自 2026-10-20
 - **[决定] 宣发简报的 D1–D4** — 推荐都按简报：发布和推广拆开、英文推广等第二款机型的结果；10-26 晚按门槛定 go/no-go；首波只开微信、小红书、V2EX；T+14 前推广不提配对和加密。简报 `docs/pwe/LAUNCH-BRIEF-1.1-2026-10-21.md`（不入库），网页版 https://claude.ai/artifact/DVXRmqViPuUQFGeBgR5oFS · 不定则 10-28 后推广没有章法 · 自 2026-10-21
