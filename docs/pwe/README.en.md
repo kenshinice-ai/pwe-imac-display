@@ -1,7 +1,7 @@
 # PWE Screen Encore for iMac
 
-**Your 5K iMac, back on stage.** Turn a 2014–2017 5K iMac into a display for a
-newer Mac. No firmware hacks, no teardown, one Thunderbolt cable. [中文](../../.github/README.md)
+**Your 5K iMac, back on stage.** Turn a 2014–2020 27-inch 5K iMac into a display
+for a newer Mac. No firmware hacks, no teardown, one Thunderbolt cable. [中文](../../.github/README.md)
 
 Formerly PWE iMac Display; renamed with 1.1.
 
@@ -42,7 +42,10 @@ Fixes go to TargetBridge first, such as the
 ## Requirements
 
 - A Mac with Apple silicon or Intel, macOS 14 or later, for the sender.
-- A 5K iMac for the receiver, which targets macOS 11.
+- A 2014–2020 27-inch 5K iMac on macOS 11 or later for the receiver. Fully tested
+  on the 2017 model (iMac18,3); the other years should work by design, and we are
+  collecting results from more models. 2014 and mid-2015 models have no HEVC
+  hardware decoding and may need a lower picture setting.
 - A Thunderbolt cable. 2014 and 2015 iMacs have Thunderbolt 2 and need Apple's
   Thunderbolt 3 (USB-C) to Thunderbolt 2 Adapter.
 

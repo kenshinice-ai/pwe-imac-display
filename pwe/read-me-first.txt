@@ -1,6 +1,8 @@
 PWE Screen Encore（用于 iMac）— 读我
 
-让 5K iMac 返场。把 2014–2017 年的 5K iMac 变成新 Mac 的外接显示器。两台电脑各装一个 App，用一根雷雳线连起来。
+让 5K iMac 返场。把 2014–2020 年的 27 吋 5K iMac 变成新 Mac 的外接显示器。两台电脑各装一个 App，用一根雷雳线连起来。
+我们在 2017 款上完整测过；其他年份按设计应当可用，还在收集更多机型的测试结果。
+2014 年和 2015 年年中的机型可能需要用较低的画面档位。
 
 装过 PWE iMac Display？那是本 App 的旧名。先把旧版移到废纸篓（新 Mac 和 iMac 上各一个），
 再装新的。设置和配对会保留。
@@ -26,8 +28,11 @@ PWE Screen Encore 基于开源项目 TargetBridge（MIT），由 PWE 构建并�
 
 PWE Screen Encore for iMac — Read Me First
 
-Your 5K iMac, back on stage. Turn a 2014–2017 5K iMac into a display for a
-newer Mac. Each computer gets one app, and one Thunderbolt cable connects them.
+Your 5K iMac, back on stage. Turn a 2014–2020 27-inch 5K iMac into a display
+for a newer Mac. Each computer gets one app, and one Thunderbolt cable connects
+them. Fully tested on the 2017 model; the other years should work by design,
+and we are collecting results from more models. 2014 and mid-2015 models may
+need a lower picture setting.
 
 Installed PWE iMac Display before? That was this app's old name. Move the old
 app to the Trash first (one on the newer Mac, one on the iMac), then install
