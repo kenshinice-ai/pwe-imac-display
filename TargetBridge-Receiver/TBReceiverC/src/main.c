@@ -27,6 +27,8 @@
 #include "tb_log.h"
 #include "tb_loopwatch.h"
 #include "tb_trace.h"
+#include "tb_clipboard.h"
+#include "tb_sysinfo.h"
 /* PWE: pairing and encrypted sessions */
 #include "pwe_secure.h"
 #include "pwe_keystore.h"
@@ -36,6 +38,7 @@
 #include <net/if.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <poll.h>
 #ifndef TB_RECEIVER_TEST_HOOKS
 #define TB_RECEIVER_TEST_HOOKS 0   /* 1 only in test builds: make TEST_HOOKS=1 */
 #endif
@@ -141,8 +144,9 @@ struct app {
     int      sent_option_down;
     int      sent_control_down;
     int      sent_caps_down;
-    uint64_t last_clipboard_poll_ms;
-    char     last_clipboard_text[4096];
+    /* PWE (T40): the iMac's clipboard, on its own thread (tb_clipboard.h). */
+    struct tb_clipboard *clipboard;
+    int      clipboard_polling;
 
     /* ---- PWE: pairing and encrypted sessions (tb_conn.c) ---- */
     CFStringRef             app_id;           /* preferences domain */
@@ -221,9 +225,7 @@ static void send_receiver_info(struct app *a);
 static void tb_receiver_apply_input_event(struct app *a, const uint8_t *payload, size_t len);
 static void tb_receiver_apply_input_control_mode(struct app *a, const uint8_t *payload, size_t len);
 static void tb_receiver_refresh_input_capture(struct app *a);
-static void tb_receiver_set_clipboard_text(const char *text);
-static int tb_receiver_get_clipboard_text(char *dest, size_t size);
-static void tb_receiver_send_clipboard_if_changed(struct app *a);
+static void tb_receiver_send_clipboard_text(struct app *a, const char *text);
 static void write_be32(uint8_t *dst, uint32_t value);
 static void tb_receiver_send_display_tweaks_if_changed(struct app *a);
 
@@ -477,41 +479,11 @@ static void tb_json_escape_string(const char *src, char *dest, size_t size) {
     dest[j] = '\0';
 }
 
-static void tb_receiver_set_clipboard_text(const char *text) {
-    FILE *pipe = popen("pbcopy", "w");
-    if (!pipe) return;
-    if (text && *text) {
-        fwrite(text, 1, strlen(text), pipe);
-    }
-    pclose(pipe);
-}
-
-static int tb_receiver_get_clipboard_text(char *dest, size_t size) {
-    if (!dest || size == 0) return 0;
-    dest[0] = '\0';
-
-    FILE *pipe = popen("pbpaste", "r");
-    if (!pipe) return 0;
-
-    size_t total = 0;
-    while (!feof(pipe) && total + 1 < size) {
-        size_t n = fread(dest + total, 1, size - total - 1, pipe);
-        total += n;
-        if (n == 0) break;
-    }
-    dest[total] = '\0';
-    pclose(pipe);
-    return 1;
-}
-
-static void tb_receiver_send_clipboard_if_changed(struct app *a) {
+/* PWE (T40): the clipboard is read and written on its own thread
+ * (tb_clipboard.m); upstream ran pbpaste and pbcopy on this loop. This sends
+ * text the worker found. */
+static void tb_receiver_send_clipboard_text(struct app *a, const char *text) {
     if (!a || strcmp(a->input_control_mode, "receiverMaster") != 0 || a->client_fd < 0) return;
-
-    char text[4096];
-    if (!tb_receiver_get_clipboard_text(text, sizeof(text))) return;
-    if (strcmp(text, a->last_clipboard_text) == 0) return;
-
-    snprintf(a->last_clipboard_text, sizeof(a->last_clipboard_text), "%s", text);
 
     char escaped[8192];
     tb_json_escape_string(text, escaped, sizeof(escaped));
@@ -1299,11 +1271,11 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
         }
         break;
     case TB_PKT_CLIPBOARD:
-        TB_LOOP_PHASE("packet: clipboard (pbcopy)");
+        TB_LOOP_PHASE("packet: clipboard (handed to the clipboard thread)");
         {
-            char text[4096];
+            char text[TB_CLIPBOARD_MAX_TEXT];
             extract_json_string_field(payload, len, "\"text\"", text, sizeof(text));
-            tb_receiver_set_clipboard_text(text);
+            tb_clipboard_write(a->clipboard, text);   /* PWE (T40): written on the clipboard thread */
         }
         break;
     case TB_PKT_VOLUME:
@@ -1809,7 +1781,15 @@ static void tb_receiver_start_input_tap(struct app *a) {
 
 static void tb_receiver_refresh_input_capture(struct app *a) {
     if (!a) return;
-    if (strcmp(a->input_control_mode, "receiverMaster") == 0 && a->client_fd >= 0) {
+    int capture = strcmp(a->input_control_mode, "receiverMaster") == 0 && a->client_fd >= 0;
+#if TB_RECEIVER_TEST_HOOKS
+    /* Tests only: receiverMaster without taking this Mac's keyboard and mouse. */
+    if (capture && getenv("TB_RECEIVER_TEST_NO_INPUT_CAPTURE")) {
+        fprintf(stderr, "[test] receiverMaster: input capture left off\n");
+        capture = 0;
+    }
+#endif
+    if (capture) {
         const int wants_global_tap = tb_receiver_input_monitoring_trusted() ? 1 : 0;
         const int wants_consume = tb_receiver_accessibility_trusted() ? 1 : 0;
         if (a->input_tap && (!wants_global_tap || a->input_tap_consumes_events != wants_consume)) {
@@ -1965,7 +1945,10 @@ static void close_client(struct app *a) {
     tb_disp_set_cursor(a->disp, 0, 0, 1, 1, 0, 0, 0);
     tb_disp_set_cursor_image(a->disp, NULL);
     tb_refresh_idle_localized_strings(a);
-    a->last_clipboard_text[0] = '\0';
+    TB_LOOP_PHASE("session end: clipboard idle");
+    a->clipboard_polling = 0;
+    tb_clipboard_set_polling(a->clipboard, 0);
+    tb_clipboard_new_session(a->clipboard);
     TB_LOOP_PHASE("session end: decoder reset");
     tb_dec_reset(a->dec);   /* fresh decoder for next session */
     TB_LOOP_PHASE("session end: sound idle");
@@ -2085,6 +2068,97 @@ static void tb_pwe_on_conn_event(struct tb_conn *c, int ev, void *ud) {
     tb_pwe_refresh_notice(a, now_ms());
 }
 
+/* PWE: accept one waiting connection and decide from its link alone, before
+ * any byte reaches the parser. Pairing only over the cable, and loopback is
+ * not the cable. -1 when nothing was waiting or the link is refused (closed). */
+static int tb_pwe_accept_checked(struct app *a, int listener, int is_ipv6, char *ifname, size_t ifname_size,
+                                 struct tb_accept_policy *policy, enum tb_link_kind *link_out) {
+    struct tb_accept_policy none = { 0, 0, 0 };
+    *policy = none;
+    *link_out = TB_LINK_NETWORK;
+    if (ifname_size) ifname[0] = '\0';
+    int c = tb_net_accept(listener);
+    if (c < 0) return -1;
+    int direct = tb_net_client_is_direct_link(c, ifname, ifname_size);
+    enum tb_link_kind link = tb_net_link_kind(ifname, direct);
+#if TB_RECEIVER_TEST_HOOKS
+    if (getenv("TB_RECEIVER_TEST_LOOPBACK_IS_CABLE") && link == TB_LINK_LOOPBACK) link = TB_LINK_CABLE;
+#endif
+    *policy = tb_net_accept_policy_family(link, is_ipv6, tb_pwe_network_allowed(a), a->allow_plaintext);
+    *link_out = link;
+    if (!policy->accept) {
+        tb_pwe_log_refused(ifname, is_ipv6);
+        close(c);
+        return -1;
+    }
+    return c;
+}
+
+/* PWE: make an accepted connection the session. */
+static void tb_pwe_adopt_client(struct app *a, int c, const char *ifname, int is_ipv6,
+                                struct tb_accept_policy policy, uint64_t t) {
+    a->client_fd = c;
+    a->have_video_frame = 0;
+    a->session_active = 0;
+    a->reported_night_shift = -1;   /* force one report per session */
+    a->reported_true_tone = -1;
+    a->last_recv_ms = t;
+    SDL_DisableScreenSaver();
+    struct tb_conn_config conn_cfg = {
+        a->have_keys ? &a->identity : NULL, &a->store, &a->gate, policy.pairing, policy.plaintext
+    };
+    tb_conn_init(&a->conn, c, &conn_cfg, on_packet, tb_pwe_on_conn_event, a);
+    a->session_plaintext = 0;
+    a->pwe_test_frames_at_connect = a->frames;
+    fprintf(stderr, "[main] client connected (%s%s%s)\n", ifname[0] ? ifname : "?",
+            is_ipv6 ? ", IPv6" : "",
+            policy.pairing ? ", cable" : (policy.plaintext ? "" : ", encrypted only"));
+    tb_receiver_refresh_input_capture(a);
+    /* The display profile goes out once the connection is secure (or
+     * accepted unencrypted): tb_pwe_on_conn_event, TB_CONN_EV_READY. */
+}
+
+/* PWE (T45): the Mac dials again over the cable while this session has been
+ * silent (the cable was pulled and plugged back before the 10 s idle timeout).
+ * Take the new connection now instead of letting its handshake time out.
+ * Rules in net.h (tb_net_may_replace_session): only an idle session that is
+ * not pairing, and only for a connection that came over the cable. */
+static void tb_pwe_take_cable_redial(struct app *a) {
+    const uint64_t now = now_ms();
+    const uint64_t silent = now > a->last_recv_ms ? now - a->last_recv_ms : 0;
+    const int pairing = a->gate.code[0] && tb_conn_is_pairing(&a->conn);
+    if (!tb_net_session_replaceable(silent, pairing)) return;
+
+    const int listeners[2] = { a->server_fd, a->server6_fd };
+    for (int which = 0; which < 2; which++) {
+        if (listeners[which] < 0) continue;
+        /* Only accept() when a connection is waiting: a look costs nothing. */
+        struct pollfd pfd = { listeners[which], POLLIN, 0 };
+        if (poll(&pfd, 1, 0) <= 0 || !(pfd.revents & POLLIN)) continue;
+        const int is_ipv6 = which == 1;
+        char ifname[IFNAMSIZ] = "";
+        struct tb_accept_policy policy;
+        enum tb_link_kind link;
+        int c = tb_pwe_accept_checked(a, listeners[which], is_ipv6, ifname, sizeof(ifname), &policy, &link);
+        if (c < 0) continue;
+        if (!tb_net_may_replace_session(silent, pairing, link, policy.accept)) {
+            /* Its sender retries; before, it would have waited out its
+             * handshake in the queue. */
+            fprintf(stderr, "[main] new connection on %s%s closed: a session is in place, "
+                            "and only a cable connection replaces a silent one\n",
+                    ifname[0] ? ifname : "?", is_ipv6 ? " (IPv6)" : "");
+            close(c);
+            continue;
+        }
+        fprintf(stderr, "[main] the Mac dialled again over the cable (%s%s) after %llu ms of silence "
+                        "from this session; closing the stale session\n",
+                ifname[0] ? ifname : "?", is_ipv6 ? ", IPv6" : "", (unsigned long long)silent);
+        close_client(a);
+        tb_pwe_adopt_client(a, c, ifname, is_ipv6, policy, now_ms());
+        return;
+    }
+}
+
 static void tb_pwe_refresh_menu(struct app *a) {
     tb_pairing_menu_update(tb_i18n_get("receiver.menu.allow_unencrypted"), a->allow_plaintext,
                            tb_i18n_get("receiver.menu.forget_all"));
@@ -2198,6 +2272,11 @@ int main(int argc, char **argv) {
             fprintf(stderr, "[log] receiver %s (%s) started, pid %d\n",
                     TB_RECEIVER_VERSION, TB_RECEIVER_BUILD, (int)getpid());
         }
+    }
+    {
+        /* PWE: the facts a remote tester's log needs; nothing personal. */
+        char sys[192];
+        fprintf(stderr, "[sys] %s\n", tb_sysinfo_describe(sys, sizeof(sys)));
     }
 
     char startup_language_pref[8];
@@ -2323,6 +2402,19 @@ int main(int argc, char **argv) {
     /* After SDL_Init (tb_disp_create): the audio thread opens SDL devices. */
     a.audio = tb_audio_out_create();
     if (!a.audio) fprintf(stderr, "[audio] warning: no audio thread; the session's sound is dropped\n");
+    {
+        /* PWE (T40): the clipboard thread. Test builds never use the system
+         * clipboard: a pasteboard named by TB_RECEIVER_TEST_PASTEBOARD, or a
+         * private one. */
+        const char *pasteboard = NULL;
+#if TB_RECEIVER_TEST_HOOKS
+        pasteboard = getenv("TB_RECEIVER_TEST_PASTEBOARD");
+        if (!pasteboard) pasteboard = "";
+        fprintf(stderr, "[test] clipboard: %s pasteboard\n", *pasteboard ? pasteboard : "a private");
+#endif
+        a.clipboard = tb_clipboard_create(pasteboard);
+        if (!a.clipboard) fprintf(stderr, "[clipboard] warning: no clipboard thread; the clipboard is not shared\n");
+    }
     a.dec = tb_dec_create(on_frame, &a);
     if (!a.dec) { fprintf(stderr, "tb_dec_create failed\n"); tb_disp_destroy(a.disp); return 1; }
 
@@ -2459,46 +2551,11 @@ int main(int argc, char **argv) {
                 const int which = (a.accept_turn + k) & 1;
                 if (listeners[which] < 0) continue;
                 const int c_is_ipv6 = which == 1;
-                int c = tb_net_accept(listeners[which]);
-                /* PWE: decide from the link alone, before any byte reaches the
-                 * parser. Pairing only over the cable, and loopback is not the cable. */
                 char ifname[IFNAMSIZ] = "";
                 struct tb_accept_policy policy = { 0, 0, 0 };
-                if (c >= 0) {
-                    int direct = tb_net_client_is_direct_link(c, ifname, sizeof(ifname));
-                    enum tb_link_kind link = tb_net_link_kind(ifname, direct);
-#if TB_RECEIVER_TEST_HOOKS
-                    if (getenv("TB_RECEIVER_TEST_LOOPBACK_IS_CABLE") && link == TB_LINK_LOOPBACK) link = TB_LINK_CABLE;
-#endif
-                    policy = tb_net_accept_policy_family(link, c_is_ipv6,
-                                                         tb_pwe_network_allowed(&a), a.allow_plaintext);
-                    if (!policy.accept) {
-                        tb_pwe_log_refused(ifname, c_is_ipv6);
-                        close(c);
-                        c = -1;
-                    }
-                }
-                if (c >= 0) {
-                    a.client_fd = c;
-                    a.have_video_frame = 0;
-                    a.session_active = 0;
-                    a.reported_night_shift = -1;   /* force one report per session */
-                    a.reported_true_tone = -1;
-                    a.last_recv_ms = t;
-                    SDL_DisableScreenSaver();
-                    struct tb_conn_config conn_cfg = {
-                        a.have_keys ? &a.identity : NULL, &a.store, &a.gate, policy.pairing, policy.plaintext
-                    };
-                    tb_conn_init(&a.conn, c, &conn_cfg, on_packet, tb_pwe_on_conn_event, &a);
-                    a.session_plaintext = 0;
-                    a.pwe_test_frames_at_connect = a.frames;
-                    fprintf(stderr, "[main] client connected (%s%s%s)\n", ifname[0] ? ifname : "?",
-                            c_is_ipv6 ? ", IPv6" : "",
-                            policy.pairing ? ", cable" : (policy.plaintext ? "" : ", encrypted only"));
-                    tb_receiver_refresh_input_capture(&a);
-                    /* The display profile goes out once the connection is secure (or
-                     * accepted unencrypted): tb_pwe_on_conn_event, TB_CONN_EV_READY. */
-                }
+                enum tb_link_kind link = TB_LINK_NETWORK;
+                int c = tb_pwe_accept_checked(&a, listeners[which], c_is_ipv6, ifname, sizeof(ifname), &policy, &link);
+                if (c >= 0) tb_pwe_adopt_client(&a, c, ifname, c_is_ipv6, policy, t);
             }
         } else {
             TB_LOOP_PHASE("connection tick");
@@ -2537,6 +2594,9 @@ int main(int argc, char **argv) {
                                 "[main] no data from sender for %llu ms; closing stale session\n",
                                 (unsigned long long)idle_ms);
                         close_client(&a);
+                    } else {
+                        TB_LOOP_PHASE("a cable redial for a silent session");
+                        tb_pwe_take_cable_redial(&a);   /* PWE (T45) */
                     }
                 }
             }
@@ -2578,12 +2638,23 @@ int main(int argc, char **argv) {
             tb_disp_render_connecting(a.disp);
         }
 
-        if (strcmp(a.input_control_mode, "receiverMaster") == 0 && a.client_fd >= 0) {
-            if (t - a.last_clipboard_poll_ms >= 100) {
-                a.last_clipboard_poll_ms = t;
-                TB_LOOP_PHASE("clipboard poll (pbpaste)");
-                tb_receiver_send_clipboard_if_changed(&a);
+        /* PWE (T40): the clipboard thread looks for new text while the iMac
+         * drives the Mac; this loop only takes what it found and sends it. */
+        {
+            const int want_clipboard = strcmp(a.input_control_mode, "receiverMaster") == 0 && a.client_fd >= 0;
+            TB_LOOP_PHASE("clipboard: take new text from the clipboard thread");
+            if (want_clipboard != a.clipboard_polling) {
+                a.clipboard_polling = want_clipboard;
+                tb_clipboard_set_polling(a.clipboard, want_clipboard);
             }
+            char clipboard_text[TB_CLIPBOARD_MAX_TEXT];
+            if (want_clipboard && tb_clipboard_take(a.clipboard, clipboard_text, sizeof(clipboard_text))) {
+                TB_LOOP_PHASE("clipboard: send to the Mac");
+                tb_receiver_send_clipboard_text(&a, clipboard_text);
+            }
+        }
+
+        if (strcmp(a.input_control_mode, "receiverMaster") == 0 && a.client_fd >= 0) {
             TB_LOOP_PHASE("forward input to the Mac");
             struct tb_input_event input_event;
             while (tb_disp_pop_input_event(a.disp, &input_event)) {
@@ -2683,6 +2754,8 @@ int main(int argc, char **argv) {
     if (a.server6_fd >= 0) close(a.server6_fd);
     bonjour_deinit(&a);
     tb_dec_destroy(a.dec);
+    /* PWE (T40): a clipboard that never gives its text must not hold up the exit. */
+    const int clipboard_done = tb_clipboard_destroy(a.clipboard, 500);
     if (!tb_audio_out_destroy(a.audio, 1000)) {
         /* PWE (T40): the audio thread is still inside CoreAudio. SDL_Quit would
          * close the same device under it, and exit() would run the audio
@@ -2692,6 +2765,13 @@ int main(int argc, char **argv) {
         _exit(0);
     }
     tb_disp_destroy(a.disp);
+    if (!clipboard_done) {
+        /* The clipboard thread is still inside AppKit: exit() would run the
+         * frameworks' teardown under it. */
+        fprintf(stderr, "[main] bye (clipboard thread still waiting for the clipboard)\n");
+        tb_log_stop();
+        _exit(0);
+    }
     fprintf(stderr, "[main] bye\n");
     return 0;
 }

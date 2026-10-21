@@ -21,6 +21,7 @@
 #include <string.h>
 
 #include "tb_loopwatch.h"
+#include "tb_sysinfo.h"
 #include "tb_trace.h"
 
 #if defined(__APPLE__)
@@ -118,7 +119,18 @@ struct tb_decoder *tb_dec_create(tb_frame_cb cb, void *ud) {
     return d;
 }
 
+/* PWE: asked once. FFmpeg alone says yes on every Mac (it allows hardware
+ * HEVC, it does not require it); tb_sysinfo adds whether VideoToolbox has a
+ * hardware HEVC decoder here (tb_sysinfo.h). */
+static int ffmpeg_hevc_hw_config(void);
+
 int tb_dec_supports_hevc_hwdecode(void) {
+    static int cached = -1;
+    if (cached < 0) cached = tb_sysinfo_advertise_hevc(ffmpeg_hevc_hw_config(), tb_sysinfo_hevc_hw_decode());
+    return cached;
+}
+
+static int ffmpeg_hevc_hw_config(void) {
     const AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_HEVC);
     if (!codec) return 0;
 

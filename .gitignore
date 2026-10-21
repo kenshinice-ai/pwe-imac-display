@@ -35,4 +35,8 @@ test_cursor_image
 test_log
 test_loopwatch
 test_audio_out
+test_clipboard
+test_sysinfo
+smoke_peer
+pboard_tool
 *.dSYM/

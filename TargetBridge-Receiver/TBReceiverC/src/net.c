@@ -621,6 +621,15 @@ struct tb_accept_policy tb_net_accept_policy_family(enum tb_link_kind link, int 
     return tb_net_accept_policy(link, network_allowed, compat_mode);
 }
 
+/* ---- PWE (T45): replacing a silent session (net.h) ------------------------ */
+int tb_net_session_replaceable(uint64_t silent_ms, int pairing) {
+    return !pairing && silent_ms >= TB_NET_STALE_SESSION_MS;
+}
+
+int tb_net_may_replace_session(uint64_t silent_ms, int pairing, enum tb_link_kind link, int accepted) {
+    return accepted && link == TB_LINK_CABLE && tb_net_session_replaceable(silent_ms, pairing);
+}
+
 int tb_net_get_tb_ip(char *buf, size_t bufsz) {
     struct ifaddrs *ifap = NULL;
     if (getifaddrs(&ifap) != 0) return -1;
