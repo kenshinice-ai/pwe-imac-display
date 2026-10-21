@@ -16,6 +16,11 @@
 #                       fresh receiver (also skipped without ffmpeg)
 #   8. the Mac's choice -> the HELLO's receiverRenderer switches to Metal and
 #                       back to OpenGL (PWE; skipped without ffmpeg)
+#   3b. watchdog     -> a main loop held up for 3 s is reported with its phase
+#                       and stack, and again when it runs (PWE, T40)
+#   8b. picture changes -> six session changes with sound on Metal, each taken
+#                       within 5 s, the sound device kept open across them, and
+#                       no main-loop stall (PWE, T40; skipped without ffmpeg)
 #   9. log file      -> every receiver above also wrote a stamped receiver.log
 #
 # The receiver runs with TB_RECEIVER_NO_BONJOUR=1 on TB_RECEIVER_TEST_PORT, so a
@@ -140,6 +145,15 @@ mock --mode hang --duration 14 || fail "mock hang exited non-zero"
 expect_log "closing stale session" "idle watchdog reaped silent sender"
 sleep 1
 
+phase "Phase 3b: main-loop watchdog"
+expect_log "[watchdog] watching the main loop" "watchdog started"
+mock --mode stall --stall-ms 3000 || fail "mock stall exited non-zero"
+expect_log "[watchdog] main loop stuck" "watchdog reported the stalled loop"
+expect_log "in packet: test stall (main.c:" "watchdog named the phase"
+expect_log "on_packet" "watchdog printed the main thread's stack"
+expect_log "[watchdog] main loop ran again after 3." "watchdog reported the recovery"
+sleep 1
+
 phase "Phase 4: H.264 stream"
 if (( NO_STREAM )) || ! command -v ffmpeg >/dev/null; then
     print "skipped (no ffmpeg or --no-stream)"
@@ -189,6 +203,25 @@ if (( ! NO_STREAM )) && command -v ffmpeg >/dev/null; then
     mock --mode stream --duration 3 --renderer opengl || fail "mock stream (opengl) exited non-zero"
     expect_log "the Mac asks for OpenGL: switching the renderer" "receiver switched back to OpenGL"
     expect_log "[disp] texture " "OpenGL rendered the next session"
+
+    phase "Phase 8b: picture changes with sound (T40)"
+    relaunch TB_RECEIVER_RENDER_DRIVER=metal
+    if mock --mode cycles --cycles 6 --duration 1 --audio --renderer metal --max-change-s 5; then
+        pass "six picture changes, each taken within 5 s"
+    else
+        fail "a picture change took longer than 5 s, or a session was not taken"
+    fi
+    expect_count "[main] client disconnected" 6 "receiver ended every old session"
+    if (( $(grep -cF "[audio] output device opened" "$LOG") == 1 )); then
+        pass "sound device opened once and kept across the changes"
+    else
+        fail "sound device opened $(grep -cF "[audio] output device opened" "$LOG") times (wanted 1)"
+    fi
+    if grep -qF "[watchdog] main loop stuck" "$LOG"; then
+        fail "main loop stalled during the changes: $(grep -F "[watchdog] main loop stuck" "$LOG" | head -1)"
+    else
+        pass "no main-loop stall during the changes"
+    fi
 fi
 
 phase "Phase 9: log file"
