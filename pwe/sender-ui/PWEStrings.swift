@@ -74,6 +74,7 @@ struct PWEStrings {
         case .standard1440p: return t("Standard · 1440p", "标准 · 1440p")
         case .native5k: return t("5K · 48 Hz", "5K · 48 Hz")
         case .native5k60Experimental: return t("5K · 60 Hz", "5K · 60 Hz")
+        case .retina4k60: return t("4K · 60 Hz", "4K · 60 Hz")
         default: return "\(preset.title) · \(preset.description)"
         }
     }
