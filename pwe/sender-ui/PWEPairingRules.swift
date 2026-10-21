@@ -66,6 +66,19 @@ enum PWEPairingRules {
         return name == receiver.name
     }
 
+    /// An encrypted session began with an iMac the paired list does not show:
+    /// read the list again, so Settings › Advanced shows a pairing as it finishes.
+    /// `sessionID`: the key id the session's Bonjour hint names; without a hint,
+    /// the iMac's name. Only once the list has been read (Settings opened): no
+    /// keychain reads for a list no one has looked at.
+    static func pairedListIsStale(_ security: PWESecurityState, sessionID: Data?, listLoaded: Bool,
+                                  listed: [PWEPairedReceiver]) -> Bool {
+        guard listLoaded, case .encrypted(let name) = security else { return false }
+        guard let sessionID else { return !listed.contains { $0.name == name } }
+        let hex = PWEPairingStore.hex(sessionID)
+        return !listed.contains { $0.id.lowercased() == hex }
+    }
+
     /// While the Mac asks for a new code, the window stays on the code step,
     /// unless the attempt failed (then the usual failure shows).
     static func holdsCodeStep(_ note: PWECodeNote?, _ state: PWEEngineState) -> PWESecurityState? {
