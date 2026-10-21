@@ -86,7 +86,6 @@ struct app {
     int      held_fd;
     int      held_ipv6;
     char     held_ifname[IFNAMSIZ];
-    struct tb_accept_policy held_policy;
 
     uint64_t frames;
     uint64_t last_fps_tick_ms;
@@ -2124,20 +2123,42 @@ static void tb_pwe_adopt_client(struct app *a, int c, const char *ifname, int is
      * accepted unencrypted): tb_pwe_on_conn_event, TB_CONN_EV_READY. */
 }
 
-/* PWE (T47): give up the held connection, if any. */
-static void tb_pwe_drop_held(struct app *a, const char *why) {
+/* PWE (T47): give up the held connection, if any (a newer one replaces it). */
+static void tb_pwe_drop_held(struct app *a) {
     if (a->held_fd < 0) return;
-    fprintf(stderr, "[main] cable connection on %s%s given up: %s\n",
-            a->held_ifname[0] ? a->held_ifname : "?", a->held_ipv6 ? " (IPv6)" : "", why);
     close(a->held_fd);
     a->held_fd = -1;
 }
 
-/* PWE (T47): a held cable connection becomes the session. */
+/* PWE (T47): a held cable connection becomes the session. Its policy is
+ * decided now, not when it arrived: "Allow unencrypted connections" may have
+ * been turned off while it waited. */
 static void tb_pwe_adopt_held(struct app *a) {
     const int c = a->held_fd;
     a->held_fd = -1;
-    tb_pwe_adopt_client(a, c, a->held_ifname, a->held_ipv6, a->held_policy, now_ms());
+    const struct tb_accept_policy policy =
+        tb_net_accept_policy_family(TB_LINK_CABLE, a->held_ipv6, tb_pwe_network_allowed(a), a->allow_plaintext);
+    if (!policy.accept) {
+        close(c);
+        return;
+    }
+    tb_pwe_adopt_client(a, c, a->held_ifname, a->held_ipv6, policy, now_ms());
+}
+
+/* PWE (T47): a cable connection held while a session is in place. Rate-limited:
+ * a second Mac on another port redials every few seconds for as long as the
+ * session lasts. */
+static void tb_pwe_log_held(const char *ifname, int ipv6, int pairing) {
+    static uint64_t last_ms;
+    static unsigned long quiet;
+    const uint64_t t = now_ms();
+    if (last_ms && t - last_ms < 10000) { quiet++; return; }
+    fprintf(stderr, "[main] cable connection on %s%s held: the session in place is %s",
+            ifname && *ifname ? ifname : "?", ipv6 ? " (IPv6)" : "", pairing ? "pairing" : "live");
+    if (quiet) fprintf(stderr, "; %lu more since the last report", quiet);
+    fputc('\n', stderr);
+    last_ms = t;
+    quiet = 0;
 }
 
 /* PWE (T47): connections closed because a session is in place. Rate-limited
@@ -2191,24 +2212,22 @@ static void tb_pwe_screen_new_connections(struct app *a) {
             struct tb_accept_policy policy;
             enum tb_link_kind link;
             int c = tb_pwe_accept_checked(a, listeners[which], is_ipv6, ifname, sizeof(ifname), &policy, &link);
-            if (c < 0) continue;   /* refused by its link, and closed */
+            if (c < 0) continue;   /* none after all, or refused by its link and closed */
             switch (tb_net_offer_during_session(silent, pairing, link, policy.accept)) {
             case TB_OFFER_REPLACE:
                 fprintf(stderr, "[main] the Mac dialled again over the cable (%s%s) after %llu ms of silence "
                                 "from this session; closing the stale session\n",
                         ifname[0] ? ifname : "?", is_ipv6 ? ", IPv6" : "", (unsigned long long)silent);
-                tb_pwe_drop_held(a, "a newer cable connection");
+                tb_pwe_drop_held(a);
                 close_client(a);
                 tb_pwe_adopt_client(a, c, ifname, is_ipv6, policy, now_ms());
                 return;
             case TB_OFFER_HOLD:
-                tb_pwe_drop_held(a, "a newer cable connection");
+                tb_pwe_drop_held(a);
                 a->held_fd = c;
                 a->held_ipv6 = is_ipv6;
                 snprintf(a->held_ifname, sizeof(a->held_ifname), "%s", ifname);
-                a->held_policy = policy;
-                fprintf(stderr, "[main] cable connection on %s%s held: the session in place is %s\n",
-                        ifname[0] ? ifname : "?", is_ipv6 ? " (IPv6)" : "", pairing ? "pairing" : "live");
+                tb_pwe_log_held(ifname, is_ipv6, pairing);
                 break;
             case TB_OFFER_CLOSE:
             default:
@@ -2814,6 +2833,7 @@ int main(int argc, char **argv) {
     }
 #endif
     tb_receiver_stop_input_tap(&a);
+    tb_pwe_drop_held(&a);
     if (a.server_fd >= 0) close(a.server_fd);
     if (a.server6_fd >= 0) close(a.server6_fd);
     bonjour_deinit(&a);

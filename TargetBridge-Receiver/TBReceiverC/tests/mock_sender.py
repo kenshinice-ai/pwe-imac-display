@@ -383,6 +383,13 @@ def run_displace(args) -> int:
             print("[mock] ERROR: B was left open (queued) for 1 s while A was there")
             rc = 1
         stop.set()
+        if args.live:
+            beater.join()
+        if closed_by_receiver(a, 0.3):
+            print("[mock] ERROR: session A lost the slot")
+            rc = 1
+        else:
+            print("[mock] session A kept the slot")
         for sock in (a, b):
             try:
                 sock.sendall(json_packet(PKT_TEARDOWN, {"reason": "mock done"}))

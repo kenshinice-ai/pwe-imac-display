@@ -272,6 +272,7 @@ else
     fail "a connection off the cable took a silent session's slot"
 fi
 expect_log "only a cable connection replaces a silent one" "receiver closed it and kept the session"
+sleep 1   # the last session's TEARDOWN is handled before the next one dials
 if mock --mode displace --expect closed --live; then
     pass "a connection off the cable during a live session was closed at once (T47)"
 else
