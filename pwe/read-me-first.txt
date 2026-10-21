@@ -9,6 +9,7 @@ PWE Screen Encore（用于 iMac）— 读我
    第一次打开时，按提示在「隐私与安全性」里允许录屏。
 2. 在 iMac 上：把「PWE Screen Encore Receiver」拷进 iMac 的「应用程序」并打开。
    屏幕中间显示「等待 Mac 连接」。iMac 需要 macOS 11 或更新。
+   如果 iMac 问是否允许它查找本地网络上的设备，点「允许」。
 3. 用雷雳线连接两台电脑。
    2014、2015 款 iMac 是雷雳 2 接口，需要 Apple 的雷雳 3（USB-C）转雷雳 2 转换器。
    普通的 USB-C 转 Mini DisplayPort 转换器不行。
@@ -37,6 +38,8 @@ these. Settings and pairing are kept.
 2. On the iMac: copy "PWE Screen Encore Receiver" to the iMac's Applications and
    open it. It shows "Waiting for your Mac" in the middle of the screen.
    The iMac needs macOS 11 or later.
+   If the iMac asks whether it may find devices on your local network,
+   click Allow.
 3. Connect the two computers with a Thunderbolt cable.
    2014 and 2015 iMacs have Thunderbolt 2 ports and need Apple's Thunderbolt 3
    (USB-C) to Thunderbolt 2 Adapter. A plain USB-C to Mini DisplayPort adapter
