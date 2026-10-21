@@ -50,6 +50,8 @@ struct PWEApp: App {
         // The iMac's brightness keys and HUD; it also takes the app's URLs from
         // Apple events, so a background URL never opens a window (PWEBrightnessKeys).
         PWEBrightness.shared.start()
+        // Evidence for the next silent sender (T39): a log line when the main thread stalls.
+        PWEMainThreadWatch.shared.start()
         TBSenderAutomation.handleLaunchArguments(CommandLine.arguments)
     }
 
