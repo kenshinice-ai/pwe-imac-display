@@ -19,7 +19,8 @@ struct tb_clipboard {
     pthread_cond_t  wake;
     int      quit;
     int      polling;
-    unsigned generation;           /* bumped by new_session and set_polling(0) */
+    unsigned session;              /* bumped by new_session */
+    unsigned polling_epoch;        /* bumped by set_polling(0) */
     long     last_seen;            /* change count last looked at; -1: read on the next poll */
     char     last_sent[TB_CLIPBOARD_MAX_TEXT];   /* the text the Mac has, as far as we know */
     int      slot_full;
@@ -82,23 +83,35 @@ static void *cb_worker(void *arg) {
             char text[TB_CLIPBOARD_MAX_TEXT];
             memcpy(text, c->write_text, sizeof(text));
             c->write_pending = 0;
-            const unsigned gen = c->generation;
+            const unsigned session = c->session;
             pthread_mutex_unlock(&c->lock);
 
             long count = -1;
             @autoreleasepool {
-                NSString *s = [NSString stringWithUTF8String:text];
-                /* The count of our own change. If another app changed the
-                 * clipboard right after, the count moves on and that change
-                 * is read and sent as usual. */
-                count = (long)[pb clearContents];
-                if (s) [pb setString:s forType:NSPasteboardTypeString];
+                /* Text cut at 4095 bytes may end inside a character: drop
+                 * that tail. Text that still is not UTF-8 is not written. */
+                const size_t n = strlen(text);
+                NSString *s = nil;
+                for (size_t cut = 0; !s && cut < 4 && cut <= n; cut++) {
+                    s = [[NSString alloc] initWithBytes:text length:n - cut encoding:NSUTF8StringEncoding];
+                }
+                if (s) {
+                    /* The count of our own change. If another app changes the
+                     * clipboard right after, the count moves on and that
+                     * change is read and sent as usual. */
+                    count = (long)[pb clearContents];
+                    [pb setString:s forType:NSPasteboardTypeString];
+                    cb_copy_text(text, sizeof(text), s.UTF8String);
+                }
             }
 
             pthread_mutex_lock(&c->lock);
+            if (count < 0) continue;   /* nothing written */
             /* Our own change: never sent back. The iMac's clipboard is now the
-             * Mac's text, so older iMac text not yet sent is stale. */
-            if (gen == c->generation) {
+             * Mac's text, so older iMac text not yet sent is stale. Polling
+             * turned off meanwhile does not matter; a new session does (its
+             * Mac does not have this text). */
+            if (session == c->session) {
                 c->last_seen = count;
                 memcpy(c->last_sent, text, sizeof(c->last_sent));
                 c->slot_full = 0;
@@ -108,7 +121,7 @@ static void *cb_worker(void *arg) {
 
         const uint64_t now = cb_now_ms();
         if (c->polling && now >= next_poll) {
-            const unsigned gen = c->generation;
+            const unsigned session = c->session, epoch = c->polling_epoch;
             const long seen = c->last_seen;
             pthread_mutex_unlock(&c->lock);
 
@@ -141,7 +154,7 @@ static void *cb_worker(void *arg) {
             next_poll = cb_now_ms() + TB_CLIPBOARD_POLL_MS;
             /* A session that ended, or polling turned off, while we read:
              * the result belongs to nobody. last_seen stays as reset. */
-            if (have_text && gen == c->generation) {
+            if (have_text && session == c->session && epoch == c->polling_epoch) {
                 c->last_seen = count;
                 if (strcmp(text, c->last_sent) != 0) {
                     memcpy(c->slot, text, sizeof(c->slot));
@@ -206,7 +219,7 @@ void tb_clipboard_set_polling(struct tb_clipboard *c, int on) {
         if (!on) {
             /* Text not taken is dropped; it is read again (and compared with
              * what the Mac has) when polling resumes. */
-            c->generation++;
+            c->polling_epoch++;
             c->slot_full = 0;
             c->last_seen = -1;
         }
@@ -218,7 +231,7 @@ void tb_clipboard_set_polling(struct tb_clipboard *c, int on) {
 void tb_clipboard_new_session(struct tb_clipboard *c) {
     if (!c) return;
     pthread_mutex_lock(&c->lock);
-    c->generation++;
+    c->session++;
     c->last_seen = -1;
     c->last_sent[0] = '\0';
     c->slot_full = 0;

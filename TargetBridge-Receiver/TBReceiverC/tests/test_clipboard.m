@@ -139,6 +139,18 @@ static void test_size_bound(void) {
     char text[TB_CLIPBOARD_MAX_TEXT];
     CHECK(take_within(c, 1000, text, sizeof(text)), "long text is taken");
     CHECK(strlen(text) == 4094, "cut before a character that does not fit in 4095 bytes");
+    /* The Mac's text cut inside a character (the 4096-byte packet field). */
+    char cut[16];
+    snprintf(cut, sizeof(cut), "abc\xe4\xb8");   /* "abc" and two of the three bytes of U+4E2D */
+    tb_clipboard_write(c, cut);
+    const uint64_t until = now_ms() + 1000;
+    while (now_ms() < until && ![pasteboard_text(name) isEqualToString:@"abc"]) usleep(10000);
+    CHECK([pasteboard_text(name) isEqualToString:@"abc"], "a character cut short is dropped, the rest written");
+    CHECK(!take_within(c, 300, text, sizeof(text)), "and not sent back");
+    tb_clipboard_write(c, "\xff\xfe not text");
+    usleep(300000);
+    CHECK([pasteboard_text(name) isEqualToString:@"abc"], "bytes that are not UTF-8 leave the clipboard alone");
+
     CHECK(tb_clipboard_destroy(c, 1000) == 1, "worker stops");
     release_pasteboard(name);
 }
