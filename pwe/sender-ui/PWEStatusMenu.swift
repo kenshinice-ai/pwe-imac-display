@@ -45,12 +45,21 @@ final class PWEStatusMenu: NSObject {
             .sink { [weak self] phase in
                 self?.updateButton(phase)
                 guard let self else { return }
-                if let line = self.statusLine { line.title = self.strings.status(phase) }
+                if let line = self.statusLine { line.title = self.statusText(phase) }
                 // `$phase` publishes before the model changes. Look again on the
                 // next turn (the main queue also runs while a menu tracks) and
                 // rebuild an open menu whose items no longer fit: open while it
                 // reconnected, it kept Cancel and lost the sliders (T33, RC2).
                 DispatchQueue.main.async { [weak self] in self?.refreshOpenMenu() }
+            }
+            .store(in: &cancellables)
+        // "Reconnecting to apply the change…" for a few seconds after a setting
+        // that reconnects, in place of the phase's words (also in the window).
+        model.$reconnectNotice
+            .removeDuplicates()
+            .sink { [weak self] notice in
+                guard let self, let line = self.statusLine else { return }
+                line.title = self.statusText(self.model.phase, reconnecting: notice)
             }
             .store(in: &cancellables)
         // A code to type or a question to answer needs the window, even when the
@@ -86,6 +95,13 @@ final class PWEStatusMenu: NSObject {
 
     private var strings: PWEStrings {
         PWEStrings(language: previewLanguage ?? model.service?.language ?? .english)
+    }
+
+    /// The first line's words: the phase, or the reconnect notice while it shows.
+    /// `$reconnectNotice` publishes before the model changes, so a sink passes
+    /// the new value in.
+    private func statusText(_ phase: PWEPhase, reconnecting: Bool? = nil) -> String {
+        (reconnecting ?? model.reconnectNotice) ? strings.reconnectNotice : strings.status(phase)
     }
 
     private func installItem() {
@@ -145,7 +161,7 @@ final class PWEStatusMenu: NSObject {
         sliderTargets.removeAll()
         let strings = strings
 
-        let line = disabled(strings.status(model.phase))
+        let line = disabled(statusText(model.phase))
         statusLine = line
         menu.addItem(line)
         if let version = updates?.available?.version {

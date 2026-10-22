@@ -199,6 +199,13 @@ struct PWEMainView: View {
             PWESymbol(name: "desktopcomputer")
         } detail: {
             PWEProgressLine(strings.stage(stage))
+            // A setting that reconnects says so here too, not only in Settings.
+            if model.reconnectNotice {
+                Text(strings.reconnectNotice)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         } actions: {
             Button(strings.cancel) { model.disconnect() }
                 .controlSize(.large)
