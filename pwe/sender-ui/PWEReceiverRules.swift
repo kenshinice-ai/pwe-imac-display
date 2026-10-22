@@ -78,6 +78,15 @@ enum PWEPictureRules {
         isRetina4K(panelWidth) ? [.retina4k60, .standard1440p] : [.native5k60Experimental, .native5k, .standard1440p]
     }
 
+    /// Whose Picture setting the menu shows and sets: the iMac on screen, or
+    /// the session's remembered one while it is out of the list (after a failed
+    /// start, for one). Nil only with no iMac at all (PWEReceiverRulesTests).
+    static func pictureKey(onScreen: String?, remembered: String?) -> String? {
+        if let onScreen { return onScreen }
+        guard let remembered, !remembered.isEmpty else { return nil }
+        return remembered
+    }
+
     /// 4096 wide, with room for a scaled or rounded report; never a 5K panel.
     static func isRetina4K(_ panelWidth: Int?) -> Bool {
         guard let panelWidth else { return false }

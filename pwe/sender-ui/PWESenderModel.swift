@@ -758,10 +758,14 @@ final class PWESenderModel: ObservableObject {
     /// The receiver the Picture choice belongs to: the one on screen, or the
     /// session's remembered one while it is briefly out of the list.
     private var receiverKey: String? {
-        if let service, let target = current(service) { return target.id }
-        guard let id = session?.selectedReceiverID, !id.isEmpty else { return nil }
-        return id
+        PWEPictureRules.pictureKey(onScreen: service.flatMap { current($0)?.id }, remembered: session?.selectedReceiverID)
     }
+
+    /// The Picture menu's choices can be set: there is an iMac to remember them
+    /// for. Not `knownReceiverName`, which is nil in an interruption whose iMac
+    /// has left the list, while "The picture did not start" points there.
+    /// Snapshots have no engine and go by the phase's iMac.
+    var canChoosePicture: Bool { service == nil ? knownReceiverName != nil : receiverKey != nil }
 
     private func rememberedPicture(for key: String?) -> TBDisplayCapturePreset? {
         guard let key, let raw = (defaults.dictionary(forKey: Keys.pictures) as? [String: String])?[key] else { return nil }

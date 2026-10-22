@@ -227,8 +227,10 @@ final class PWEStatusMenu: NSObject {
         let item = NSMenuItem(title: strings.picture, action: nil, keyEquivalent: "")
         let submenu = NSMenu()
         submenu.autoenablesItems = false
-        // The picture is remembered per iMac; with none in sight there is nothing to set.
-        let knowsIMac = model.knownReceiverName != nil
+        // The picture is remembered per iMac; with none known there is nothing to
+        // set. A remembered iMac out of the list still counts: "The picture did
+        // not start" sends people here.
+        let knowsIMac = model.canChoosePicture
         for preset in model.pictureChoices {
             let choice = action(strings.pictureName(preset)) { [weak model] in model?.picture = preset }
             choice.state = knowsIMac && preset == model.picture ? .on : .off
