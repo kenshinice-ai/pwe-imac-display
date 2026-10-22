@@ -38,10 +38,17 @@
 
 ## 等 Lee
 
-- **[动手] 把测试版发给第一批测试者** — Lee 自己发（2026-10-22）：共享 iCloud Drive `PWE/Screen Encore 测试版 1.1/` 的链接，使用说明页从页面里点分享；朋友圈测评邀请 4 张图和文案已备好；发出后把测试者记进 `docs/pwe/BETA-testers-roster.md` · 不发则 10-26 前没有第二款机型的结果 · 自 2026-10-22
-- **[动手] 发给 Marco 的英文公告** — Gmail 草稿已备好（回在 10-14「a signed build of TargetBridge, before we publish」那条线程里，只有公告和致谢句，不提安全），Lee 看一眼后发送 · 不发也照期发布，但 Show HN 要等他不反对 · 自 2026-10-21
-- **[动手] 开通 `kenshinice-ai` 的 GitHub Sponsors，发布后打开本仓库的 Sponsorships 开关** — 要你本人填收款和税务资料；`.github/FUNDING.yml` 已在 `pwe-1.1`（d87021f），随发布进 `main` · 不开则支持页和仓库页的赞助按钮没有去处 · 自 2026-10-21
-- **[给料] 更多真机照片** — 10-22 已给一张（朋友圈用了）；小红书还缺 iMac 亮屏正面、一根线的特写，推荐 10-24 前后拍，关掉屏幕共享、用中文界面 · 不拍则小红书只能用效果图和截图 · 自 2026-10-21
+- **[给料] 测试者名单** — Lee 2026-10-22 已把测试版发给第一批人；请把发给了谁（称呼、联系方式、iMac 年份）记进 `docs/pwe/BETA-testers-roster.md`，终身免费要靠这份名单兑现 · 不记则以后核对不了谁该免费 · 自 2026-10-22
+- **[动手] GitHub Sponsors 审核通过后打开仓库的 Sponsorships 开关** — 资料已提交，2026-10-22 状态 Pending（GitHub 审核中）；通过后 GitHub 会发邮件，Lee 到仓库 Settings › General › Features 勾选 Sponsorships · 不开则仓库页没有赞助入口（支持页另由工具站会话放出按钮）· 自 2026-10-21
+- **[给料] 更多真机照片** — Lee 之后拍（2026-10-22）：小红书要 iMac 亮屏正面、一根线的特写；关掉屏幕共享、用中文界面 · 不拍则小红书只能用效果图和截图 · 自 2026-10-21
+
+## GitHub Sponsors 跟进（2026-10-22 起）
+
+1. 查状态（Claude，每次会话开头顺带查）：`gh api graphql -f query='{ viewer { hasSponsorsListing sponsorsListing { isPublic url } } }'`。成功判据：`hasSponsorsListing` 为 `true`，`https://github.com/sponsors/kenshinice-ai` 不再 302 到个人主页。2026-10-22 实测：`false`、302。
+2. 通过后，请工具站会话把 pwestudio.site/support 上藏着的「Sponsor on GitHub」按钮放出来（页面里已写好，带 `hidden`）。部署要 Lee 在那个会话里说「部署」。成功判据：线上支持页能点到 GitHub Sponsors 页。
+3. 通过后，`.github/FUNDING.yml` 加一行 `github: kenshinice-ai`（保留 `custom`）。如果 1.1 已发布，随下一次推送；没发布就随 1.1。成功判据：仓库页的 Sponsor 按钮同时列出 GitHub Sponsors 和支持页。
+4. Lee 打开仓库 Sponsorships 开关（见「等 Lee」）。
+5. 10-28 前还没通过也照常发布：FUNDING.yml 现在只指向我们自己的支持页，支持页写着「开通后会放在这里」，不会出现死链接。
 
 ## 1.1 发布步骤（2026-10-28，Claude 做，候选版测试的 P1 修完之后）
 
