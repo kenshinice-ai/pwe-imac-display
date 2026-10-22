@@ -168,10 +168,16 @@ enum TBSenderAutomation {
         }
     }
 
+    /// PWE: the attempt under way logs nothing per attempt (PWERetryPacing).
+    private static var quietAttempt = false
+
     private static func connectContinuously(_ params: [String: String]) async {
         TBBridgeRedial.install()
         TBBridgeRedial.leftSessionConnecting = false
         var attempt = 0
+        // PWE: when the iMac was last seen connected in this loop; nil before
+        // the first failed attempt. Paces the log and the pauses (PWERetryPacing).
+        var absentSince: TimeInterval?
         while !Task.isCancelled {
             await TBSystemSleepGate.waitUntilAwake()
             guard !Task.isCancelled else { return }
@@ -192,12 +198,16 @@ enum TBSenderAutomation {
                 continue
             case .notDue:
                 attempt += 1
-                NSLog("[automation] automatic connection attempt \(attempt)")
+                quietAttempt = !PWERetryPacing.logsAttempt(attempt)
+                if !quietAttempt { NSLog("[automation] automatic connection attempt \(attempt)") }
                 connected = await connect(params)
+                quietAttempt = false
             }
 
             if let session = connected {
                 if await waitForConnection(session) {
+                    attempt = 0
+                    absentSince = nil
                     NSLog("[automation] automatic connection active; monitoring link", level: .notice)
                     while !Task.isCancelled && (session.isConnected || session.isStreaming) {
                         try? await Task.sleep(nanoseconds: 1_000_000_000)
@@ -214,18 +224,21 @@ enum TBSenderAutomation {
             }
 
             guard !Task.isCancelled else { return }
-            await pauseBeforeRetry(params)
+            let now = ProcessInfo.processInfo.systemUptime
+            if absentSince == nil { absentSince = now }
+            await pauseBeforeRetry(params, upTo: PWERetryPacing.pauseCap(absentFor: absentSince.map { now - $0 }))
         }
     }
 
-    /// PWE: up to 2 s between attempts, as before, but cut short when a bridge
-    /// redial falls due or the remembered receiver appears in Bonjour. Sleeping
-    /// through either cost up to 2.6 s after Bonjour's `Add` (T10, 2026-10-20).
-    private static func pauseBeforeRetry(_ params: [String: String]) async {
+    /// PWE: up to `cap` seconds between attempts (2 s, as before; 5 s once the
+    /// iMac has been absent a minute), but cut short when a bridge redial falls
+    /// due or the remembered receiver appears in Bonjour. Sleeping through
+    /// either cost up to 2.6 s after Bonjour's `Add` (T10, 2026-10-20).
+    private static func pauseBeforeRetry(_ params: [String: String], upTo cap: TimeInterval) async {
         let service = TBDisplaySenderService.shared
         let session = resolveSession(service, params["session"])
         let wasListed = session.map { isListedWithAddress(service, $0) } ?? false
-        for _ in 0..<8 {
+        for _ in 0..<Int((cap / 0.25).rounded()) {
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled, let session else { continue }
             if TBBridgeRedial.isDue(for: session, service: service) { return }
@@ -340,7 +353,9 @@ enum TBSenderAutomation {
                 in: discoveredReceivers,
                 preferredIdentity: session.selectedReceiverID
             ) else {
-                if !session.selectedReceiverID.isEmpty {
+                if quietAttempt {
+                    // PWE: the retry loop said nothing for this attempt either.
+                } else if !session.selectedReceiverID.isEmpty {
                     NSLog("[automation] preferred monitor unavailable or ambiguous; waiting for that monitor")
                 } else if discoveredReceivers.count > 1 {
                     NSLog("[automation] multiple receivers discovered and no preferred monitor is selected; waiting for user choice")
