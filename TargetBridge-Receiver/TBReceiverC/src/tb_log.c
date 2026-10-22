@@ -165,6 +165,37 @@ const char *tb_log_path(void) {
     return g_log.started ? g_log.path : NULL;
 }
 
+int tb_log_read_last_line(const char *dir, char *out, size_t size) {
+    if (!out || size == 0) return 0;
+    out[0] = '\0';
+    if (!dir || !*dir) return 0;
+    char path[PATH_MAX];
+    snprintf(path, sizeof(path), "%s/receiver.log", dir);
+    const int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    char tail[2048];
+    struct stat st;
+    const off_t from = fstat(fd, &st) == 0 && st.st_size > (off_t)sizeof(tail) ? st.st_size - (off_t)sizeof(tail) : 0;
+    const ssize_t n = pread(fd, tail, sizeof(tail), from);
+    close(fd);
+    if (n <= 0) return 0;
+    size_t end = (size_t)n;
+    while (end > 0 && (tail[end - 1] == '\n' || tail[end - 1] == '\r')) end--;
+    if (end == 0) return 0;
+    size_t start = end;
+    while (start > 0 && tail[start - 1] != '\n') start--;
+    const size_t len = end - start < size - 1 ? end - start : size - 1;
+    memcpy(out, tail + start, len);
+    out[len] = '\0';
+    return 1;
+}
+
+int tb_log_line_is_clean_exit(const char *line) {
+    /* "2026-10-20 18:47:01.123 [main] bye" */
+    static const char bye[] = "[main] bye";
+    return line && strlen(line) >= 24 + sizeof(bye) - 1 && strncmp(line + 24, bye, sizeof(bye) - 1) == 0;
+}
+
 int tb_log_start(const char *dir, size_t max_bytes) {
     if (g_log.running || !dir || !*dir) return -1;
     if (mkdir(dir, 0755) != 0 && errno != EEXIST) return -1;

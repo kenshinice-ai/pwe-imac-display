@@ -2436,6 +2436,12 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "--windowed") == 0) fullscreen = 0;
     }
 
+    /* PWE (1.1.1): whether the previous run ended without "[main] bye" (a
+     * crash, a force quit, a power cut). Read before this run appends to the
+     * file; said once this copy has its port, so a second copy, whose log
+     * ends with the running receiver's latest line, never says it. */
+    char previous_last_line[160] = "";
+    int previous_run_unclean = 0;
     /* PWE: the log file, also when opened from Finder or at login (tb_log.h),
      * and the facts a remote tester's log needs (nothing personal). Each file
      * a rotation starts opens with the same facts (1.1.1). */
@@ -2448,7 +2454,11 @@ int main(int argc, char **argv) {
         tb_log_set_header(header);
         char log_dir[PATH_MAX];
         if (tb_log_default_dir("TargetBridge Receiver", log_dir, sizeof(log_dir)) &&
-            tb_log_start(log_dir, TB_LOG_MAX_BYTES) == 0) {
+            tb_log_read_last_line(log_dir, previous_last_line, sizeof(previous_last_line)) &&
+            !tb_log_line_is_clean_exit(previous_last_line)) {
+            previous_run_unclean = 1;
+        }
+        if (log_dir[0] && tb_log_start(log_dir, TB_LOG_MAX_BYTES) == 0) {
             fprintf(stderr, "[log] receiver %s (%s) started, pid %d\n",
                     TB_RECEIVER_VERSION, TB_RECEIVER_BUILD, (int)getpid());
         }
@@ -2464,6 +2474,7 @@ int main(int argc, char **argv) {
 
     signal(SIGINT,  on_sigint);
     signal(SIGTERM, on_sigint);
+    signal(SIGHUP,  on_sigint);   /* PWE (1.1.1): a closed Terminal ends it cleanly too */
     signal(SIGPIPE, SIG_IGN);
 
     char tb_ip[64] = {0};
@@ -2643,6 +2654,10 @@ int main(int argc, char **argv) {
     a.server6_fd = tb_net_listen6(listen_port);
     fprintf(stderr, "[net] listening on port %u over IPv4%s\n", (unsigned)listen_port,
             a.server6_fd >= 0 ? " and IPv6" : " only (no IPv6 listener)");
+    if (previous_run_unclean) {
+        fprintf(stderr, "[main] the previous run did not end normally (its last line: \"%s\"); "
+                        "if it crashed, the report is in ~/Library/DiagnosticReports\n", previous_last_line);
+    }
     /* Announce only once both listeners are up (PWE). */
     bonjour_update(&a, TB_PORT);
 

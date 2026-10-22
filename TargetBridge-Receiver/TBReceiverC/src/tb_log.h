@@ -46,6 +46,15 @@ const char *tb_log_path(void);
  * ~/Library/Logs/<app_name>. 0 when there is none (no home, or TB_RECEIVER_LOG=0). */
 int  tb_log_default_dir(const char *app_name, char *out, size_t size);
 
+/* PWE (1.1.1): the last line of <dir>/receiver.log, without its newline, for
+ * telling whether the previous run ended normally. Call before tb_log_start.
+ * 1 when there is one; 0 when the file is missing or empty. */
+int  tb_log_read_last_line(const char *dir, char *out, size_t size);
+
+/* Whether a stamped log line is the receiver's last word on a normal exit
+ * ("[main] bye", with or without a reason after it). */
+int  tb_log_line_is_clean_exit(const char *line);
+
 /* For the unit test: stamp `in` (any bytes) into lines as the file gets them.
  * `at_line_start` carries over between calls. Returns the bytes written to `out`. */
 size_t tb_log_stamp(const char *in, size_t len, const char *stamp, int *at_line_start,
