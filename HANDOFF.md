@@ -33,7 +33,7 @@
 
 ## 宣发
 
-- **[排队] 小红书 · 发布图文 1 篇（T+1，10-29 12:00 墨尔本）** — 9 张定稿在 `~/Documents/ClaudeCode/小红书-图文/PWE-Screen-Encore-返场/out/`，2026-10-22 Claude 核过事实（删了一句没出处的线材说法）；不放网址和 GitHub（小红书判站外引导会限流），结尾请机主在评论区报机型 · 等 Lee 过目、定标题、主页简介加网址；10-28 换正式版截图，Lee 补拍后换封面和第 4 张
+- **[排队] 小红书 · 发布图文 1 篇（T+1，10-29 12:00 墨尔本）** — 9 张定稿在 `~/Documents/ClaudeCode/小红书-图文/PWE-Screen-Encore-返场/out/`，2026-10-22 Claude 核过事实（删了一句没出处的线材说法）；不放网址和 GitHub（小红书判站外引导会限流），结尾请机主在评论区报机型 · Lee 2026-10-22 已定：标题「家里那台5K iMac｜别卖，接上当5K屏」、只写 A$2,599 起。小红书会话 10-28 19:17 确认发布后换截图、核价、设定时
 - **[排队] 朋友圈 · 测评邀请 1 条** — 正文 A 定稿、P3 文字卡在 `docs/pwe/launch-kit-2026-10-22/moments-beta-invite.md` 和 `moments-beta/` · 等 Blender（P1）和 ChatGPT（P2）出图，Claude 加「效果图」后 Lee 发
 - **[已发] 官网 · 2026-10-21 · /screenencore/ 加逐年机型表（2014–2020，状态和最高 macOS）和「21.5 吋 4K 还没测过、暂不承诺」** — 工具站会话部署（main 62b3590，Cloudflare 36566e3b），PWE Assist 知识已同步；线上已核对；仍无下载链接 · 数据：未抄
 - **[排队] 微信、小红书、V2EX · 3 条** — 草稿在宣发简报附录 A · 等 10-28 发布后由 Lee 发
@@ -42,7 +42,7 @@
 
 - **[给料] 测试者名单** — Lee 2026-10-22 已把测试版发给第一批人；请把发给了谁（称呼、联系方式、iMac 年份）记进 `docs/pwe/BETA-testers-roster.md`，终身免费要靠这份名单兑现 · 不记则以后核对不了谁该免费 · 自 2026-10-22
 - **[动手] GitHub Sponsors 审核通过后打开仓库的 Sponsorships 开关** — 资料已提交，2026-10-22 状态 Pending（GitHub 审核中）；通过后 GitHub 会发邮件，Lee 到仓库 Settings › General › Features 勾选 Sponsorships · 不开则仓库页没有赞助入口（支持页另由工具站会话放出按钮）· 自 2026-10-21
-- **[决定] 小红书 T+1 那篇过目、定标题** — 推荐主推「家里那台5K iMac｜别卖，接上当5K屏」；发帖前在小红书主页简介写上 pwestudio.site/screenencore（纯文字），评论区有人问就回「主页简介里有」· 不定则 10-29 发不了 · 自 2026-10-22
+- **[动手] 小红书主页简介写上 pwestudio.site/screenencore（纯文字）** — 10-29 发帖前；帖子里不放网址，评论区有人问就回「主页简介里有」· 不写则问下载的人找不到 · 自 2026-10-22
 - **[给料] 更多真机照片** — Lee 之后拍（2026-10-22）：小红书要 iMac 亮屏正面、一根线的特写；关掉屏幕共享、用中文界面 · 不拍则小红书只能用效果图和截图 · 自 2026-10-21
 
 ## GitHub Sponsors 跟进（2026-10-22 起）
@@ -68,6 +68,7 @@
     3. 把首页卡片（`site/public/index.html` 的「Coming late October」）和 `/help` 的 Screen Encore 卡片改成已发布。
     4. 运行 `python3 site/chrome.py`，看 `git status`，再运行 `./site/deploy.sh`。成功判据：它核对每个 sitemap 页面和下载校验值，全部通过；`curl 'https://pwestudio.site/app/check?product=screenencore&version=1.0.0'` 返回 1.1.0。
     5. 把新的 pwe-tools 知识提交号发给 PWE Assist 会话（「PWE Assist 项目总规划」）。号码看 `deploy.sh` 的输出，或 `https://pwestudio.site/_pwe/status.json`。成功判据：那边回复已按新的 Screen Encore 事实重跑问题集。
+7c. 发布后马上给「小红书 文案 图文 创意 总监」会话发一条：go 了没有、正式版截图目录名（`docs/pwe/film-assets-2026-10-28/release-<构建号>/`）；推迟就给新日期。它 10-28 19:17（墨尔本）换图、核价、设 10-29 12:00 的定时。成功判据：那边回复已设定时。
 7b. 给「Screen Encore 全 3D 产品片制作」会话交正式版素材（10-30 前），放进 `docs/pwe/film-assets-2026-10-28/`，按它 README 的状态表填，每批交完发消息给那个会话。发送端截图用 `PWE_SNAPSHOT_SCALE=3`（`pwe-1.1` c9f5398 起）。内容：用正式构建跑 `--pwe-snapshot`（发送端 01、02、04、05、07，浅色和深色，中文）；接收端等待画面（中文，5120 × 2880，用素材目录 `tools/` 里的离屏渲染工具）；菜单栏图标（浅色、深色栏）；一张合成的「扩展桌面」图（PWE 壁纸加一个 PWE 窗口，不出现 Apple 标志和别家 App）。再用正式版实测插线到出画面 3–5 次，把秒数和日期发过去。成功判据：那边回复已收到，片子里没有测试版号。
 8. 回信告诉 Marco 已发布（10-14 那封的线程）。
 9. 删除本地分支 `security-1.0.1`（已全部并进 1.1）。
