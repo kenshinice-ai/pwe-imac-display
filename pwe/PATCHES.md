@@ -69,6 +69,7 @@
 | `pwe-1.1.1-receiver`（待合并） | 接收端 `main.c`：开不了显示窗口、起不了解码器、监听口出错（端口被占以外）时，先弹出错误框（原因、系统给的说明、日志路径）再退出；`tb_log.c` 加 `tb_log_path()`；新键 `receiver.fatal.*`（五种语言，de/fr/it 暂用英文） | 评审 2026-10-22：这三种失败只写日志就 `return 1`，从访达或开机打开时接收端一声不响地消失 | 待提 | 1.1.1 |
 | `pwe-1.1.1-receiver`（待合并） | 接收端 `main.c`：每个会话的第一帧画面（解码帧或 RAW 帧）调用 `IOPMAssertionDeclareUserActivity`，像按一下键那样唤醒 iMac 的屏幕；`Makefile` 链接 IOKit。设了密码的 iMac 醒到锁屏，不解锁 | 评审 2026-10-22：iMac 屏幕已睡时 Mac 接上来，画面推到黑屏上，要有人碰一下 iMac 才亮 | 待提 | 1.1.1 |
 | `pwe-1.1.1-receiver`（待合并） | 接收端 `main.c`：每次启动后第一次进入 receiverMaster（Mac 把控制交给 iMac）时，缺哪个权限就请求哪个：`CGRequestListenEventAccess()`（输入监控）、`AXIsProcessTrustedWithOptions(prompt)`（辅助功能）。只在会话里、只一次；空闲时从不弹 | 评审 2026-10-22：接收端只查询（`CGPreflightListenEventAccess`、`AXIsProcessTrusted`）从不请求，系统设置的两个列表里都没有它，只能手动添加 | 待提 | 1.1.1 |
+| `pwe-1.1.1-receiver`（待合并） | 接收端 `tb_vsync.c`/`.h`：`tb_vsync_start` 返回成败；`display.c`：显示链接起不来时改为到帧即画（`paced = 0`，记一行），之后某次起来了再恢复节拍；没有节拍时的兜底等待从固定 50 ms 改为 1.5 个刷新周期；窗口换到另一块显示器（`SDL_WINDOWEVENT_DISPLAY_CHANGED`）时显示链接跟着换 | 评审 2026-10-22：`CVDisplayLinkStart` 失败时仍按节拍等永远不来的刷新，每帧多等 50 ms；窗口拖到另一块屏后仍按原屏刷新计数 | 待提 | 1.1.1 |
 
 打包时的改名（`pwe/rebrand.py`）不改仓库里的文件，所以不在这张表里。它的锚点由脚本自己检查：上游改了对应的文字，脚本就会停下。
 

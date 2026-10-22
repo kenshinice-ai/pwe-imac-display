@@ -64,9 +64,13 @@ void tb_vsync_set_display(struct tb_vsync *v, uint32_t display_id) {
     }
 }
 
-void tb_vsync_start(struct tb_vsync *v) {
-    if (!v || v->running) return;
-    if (CVDisplayLinkStart(v->link) == kCVReturnSuccess) v->running = 1;
+int tb_vsync_start(struct tb_vsync *v) {
+    if (!v) return kCVReturnInvalidArgument;
+    if (v->running) return 0;
+    const CVReturn r = CVDisplayLinkStart(v->link);
+    if (r != kCVReturnSuccess) return (int)r;
+    v->running = 1;
+    return 0;
 }
 
 void tb_vsync_stop(struct tb_vsync *v) {

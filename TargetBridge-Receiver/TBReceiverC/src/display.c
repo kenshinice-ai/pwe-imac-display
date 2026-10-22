@@ -1888,6 +1888,22 @@ static void tb_disp_sdl_show_frame(struct tb_display *d, const struct tb_frame *
 
 static uint64_t tb_disp_now_ns(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW); }
 
+/* PWE (1.1.1): start the refresh ticks on the display the window is on. If
+ * CoreVideo will not start the link, pacing would wait on ticks that never
+ * come: draw on arrival instead (as with no display link at all), and pace
+ * again when a later start succeeds. */
+static void tb_disp_start_vsync(struct tb_display *d) {
+    if (!d->vsync) return;
+    tb_vsync_set_display(d->vsync, d->mtl ? tb_mtl_display_id(d->mtl) : 0);
+    const int err = tb_vsync_start(d->vsync);
+    if (err && d->paced) {
+        fprintf(stderr, "[disp] display link did not start (CVReturn %d): frames are drawn on arrival\n", err);
+    } else if (!err && !d->paced) {
+        fprintf(stderr, "[disp] display link running again: frames paced to the refresh\n");
+    }
+    d->paced = err == 0;
+}
+
 static uint64_t tb_disp_tick_count(const struct tb_display *d) {
     return d->vsync ? tb_vsync_count(d->vsync) : 0;
 }
@@ -1895,8 +1911,10 @@ static uint64_t tb_disp_tick_count(const struct tb_display *d) {
 static int tb_disp_metal_slot_free(const struct tb_display *d) {
     if (!d->paced) return 1;
     if (tb_disp_tick_count(d) != d->last_submit_tick) return 1;
-    /* No refresh ticks (display link stopped, display asleep): do not stall. */
-    return tb_disp_now_ns() - d->last_submit_ns > 50000000ull;
+    /* No refresh ticks (display link stopped, display asleep): do not stall.
+     * PWE (1.1.1): wait one and a half refresh periods, not a fixed 50 ms
+     * (three refreshes at 60 Hz). */
+    return tb_disp_now_ns() - d->last_submit_ns > tb_vsync_period_ns(d->vsync) * 3 / 2;
 }
 
 /* Whether a moved pointer should wait for the next video frame instead of
@@ -1959,10 +1977,7 @@ static int tb_disp_rebuild_renderer(struct tb_display *d, const char *wish) {
     }
     tb_disp_setup_renderer(d);
     tb_disp_refresh_window_mode(d);
-    if (d->mtl && d->is_connected && d->vsync) {
-        tb_vsync_set_display(d->vsync, tb_mtl_display_id(d->mtl));
-        tb_vsync_start(d->vsync);
-    }
+    if (d->mtl && d->is_connected) tb_disp_start_vsync(d);
     if (keep) {
         struct tb_frame f = {
             .width = (int)CVPixelBufferGetWidth(keep),
@@ -2318,6 +2333,10 @@ unsigned int tb_disp_poll_actions(struct tb_display *d) {
             fprintf(stderr, "[disp] quit: Command-Q, the close button or a signal\n");
             d->quit = 1;
         }
+        /* PWE (1.1.1): the window moved to another display: tick with that one. */
+        else if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_DISPLAY_CHANGED) {
+            if (d->vsync && d->mtl) tb_vsync_set_display(d->vsync, tb_mtl_display_id(d->mtl));
+        }
         else if (own_keys &&
                  tb_disp_is_shortcut(&ev, SDLK_ESCAPE, SDL_SCANCODE_ESCAPE)) tb_disp_escape(d);
         else if (own_keys &&
@@ -2520,10 +2539,7 @@ static void tb_disp_set_stream_state(struct tb_display *d, int connected, int co
     d->is_connecting = connecting;
     const char *outer = TB_LOOP_ENTER("display link: start or stop (CVDisplayLink)");
     if (connected) {
-        if (d->vsync) {
-            tb_vsync_set_display(d->vsync, d->mtl ? tb_mtl_display_id(d->mtl) : 0);
-            tb_vsync_start(d->vsync);
-        }
+        tb_disp_start_vsync(d);
     } else {
         tb_vsync_stop(d->vsync);
         tb_disp_metal_release_frames(d);
