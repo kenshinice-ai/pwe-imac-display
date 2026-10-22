@@ -4,6 +4,7 @@
 > 1.1 候选版（产品改名 **PWE Screen Encore**，Lee 2026-10-20 定；bundle ID、`pweimacdisplay://`、数据路径不变）在本地分支 `pwe-1.1`（未推送），已含 1.0.1 的全部修复。**RC3**（2026-10-21，源码 `b770bd7`，构建号 20261021100614，sha256 `23abf70f…`）在 `pwe/dist/local/PWE-Screen-Encore-1.1.0.dmg`：在 RC2 上加了 T33 菜单开着时整体刷新、T38 日志进系统日志、T34 插线后走雷雳网桥的 IPv6 本地地址（IPv4 照旧作后备），并收紧了「哪个网桥算线缆」。RC2 移到 `pwe/dist/local/rc2-20261021012201/`，RC1 在 `rc1-20261020225620/`。**计划 2026-10-28（周三）发布**，Marco 2026-10-20 已收到一周通知。
 > 2026-10-20 给 Marco 发了补充报告（回在 10-14 那封的线程里）。他 10-16 把 #212–#216 合进了 `maint-3.6`，3.6.1 候选版是上游 PR #218。
 > 渲染方式（Lee 2026-10-22 定）：iMac 默认 OpenGL；用户可在设置 › 高级改成「占用更少（Metal）」。测试里两种都通过。
+> 2026-10-22 给 Marco 发了英文公告和致谢句（Lee 授权，回在 10-14「a signed build of TargetBridge, before we publish」那条线程，只讲发布，不提安全）。他还没回过任何一封；Show HN 要等他不反对。同日 Lee 把测试版私发给第一批人。
 > Lee 2026-10-22 按推荐定：1.1 完全免费（不注册、不试用、不锁功能，收入靠赞助，收费推到 2.0、T+60 约 2026-12-27 复盘）；新 cask 叫 `pwe-screen-encore`；仓库 Sponsor 按钮指向 pwestudio.site/support；10-26 晚的 go/no-go 推荐 go，到时只核对门槛。
 > 宣发（Lee 2026-10-21 定，按宣发简报的推荐）：发布和推广拆开，英文推广等第二款机型的结果和第一周 issue 处理得过来；10-26 晚按门槛定 go/no-go，推迟就整个日历顺延；首波只开微信、小红书、V2EX；T+14 前推广不提配对和加密；仓库 `pwe-imac-display` 发布周不改名，1.1.x 再议。简报 `docs/pwe/LAUNCH-BRIEF-1.1-2026-10-21.md`，网页版 https://claude.ai/artifact/DVXRmqViPuUQFGeBgR5oFS 。
 > 测试版（Lee 2026-10-21 定）：等 RC5（含 T40 剪贴板的真正修复）真机测过后，10-23～24 公证、用私下链接发给第一批测试者（不放 GitHub release，`pwe-1.1` 不推）。反馈走 GitHub issue 或 support@pwestudio.site。给测试者的说明 `docs/pwe/BETA-1.1-testers.md`（不入库，两处「发前核对」等 RC4 结果）。
