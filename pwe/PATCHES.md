@@ -65,6 +65,9 @@
 | `783e94b`（`pwe-1.1-rc5`） | 接收端 `main.c` 退出：先确定声音、剪贴板两个工作线程是否结束，任何一个没结束就记日志、`_exit(0)`，不调 `tb_disp_destroy`（SDL_Quit）；日志行不变 | 剪贴板线程卡住时原来先 SDL_Quit 再 `_exit`，与声音路径不一致 | 随 `b30cdaf` 一起提 | 本地提交，未推 |
 | `74ad9ee`（`pwe-1.1-rc5`） | 发送端 `TBDisplaySenderAutomation.swift`：本文件的 `NSLog` 替身默认 info 级（不落盘）；睡眠门、命令、拨号（connecting、redialing）和拨号结果标 notice（落盘）。`pwe/rebrand.py` 的锚点随之更新 | 上一行（`pwe-1.1-wake`）全部用 notice：iMac 不在时重连循环每 2 秒几行，一天落盘约 3–6 万行 | 随上一行一起提 | 本地提交，未推 |
 | `ff3793c`、`64c3a33`（`pwe-1.1-t47`） | 接收端 `main.c`、`net.c`/`net.h`：会话进行中也逐个接下新来的连接、按链路当场判断（`tb_net_offer_during_session`）：不是线缆的立即关闭；线缆的接替静默的会话（T45），否则保留一个、不读，等会话可被接替或结束再接上，策略在接上时重新判断；保留和关闭的日志限频。测试：`test_net_parser.c` 判定表；`loopback_smoke.sh` 第 10 段加「会话中非线缆连接 1 秒内被关、原会话保留」 | 真机网络边界测试 2026-10-22：会话进行中，Wi‑Fi 上的连接要等会话结束才被拒绝 | 待提（发布后） | 本地提交，未推；真机复测 2026-10-22 通过 |
+| `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderService.swift` `sendVolumeUpdate()`：只在声音送到 iMac（`shouldRelayAudio`）时发音量包 | 每次连接都发记住的音量（默认 0.5），声音留在本机时也会改动 iMac 的系统音量 | 待提 | 本地提交，未推 |
+| `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderAutomation.swift`：重连循环的 attempt 日志只记前 3 次和每第 30 次，这些次的「preferred monitor unavailable」也不记；iMac 不在满 60 秒后，两次尝试之间的停顿上限由 2 秒升到 5 秒（`PWERetryPacing`，带测试），网桥重拨到期或 iMac 重新列出时仍立即结束停顿 | 拔线时每 2 秒记两行、唤醒一次进程，Mac 开着就一直如此 | 随 `74ad9ee` 一起提 | 本地提交，未推 |
+| `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderManager.swift`：剪贴板 10 Hz 轮询只在有已连接、角色为 senderMaster 的会话时运行（`updateClipboardMonitoring()`，角色和会话变化时重新判断）；开始轮询时先记下当前的 `changeCount` | 原来从启动起无条件运行，空闲时每秒唤醒进程 10 次 | 待提 | 本地提交，未推 |
 
 打包时的改名（`pwe/rebrand.py`）不改仓库里的文件，所以不在这张表里。它的锚点由脚本自己检查：上游改了对应的文字，脚本就会停下。
 
