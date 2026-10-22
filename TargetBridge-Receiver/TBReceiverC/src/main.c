@@ -92,6 +92,10 @@ struct app {
     uint64_t frames;
     uint64_t last_fps_tick_ms;
     uint64_t last_fps_count;
+    /* PWE (1.1.1): per-second counts gathered into one line every 10 s. */
+    uint64_t fps_report_ms;
+    unsigned fps_seconds, fps_min, fps_max;
+    uint64_t fps_sum;
     uint64_t last_ip_check_ms;
     /* Last display-tweak state reported to the sender, so changes made on this
      * Mac (Control Center, System Settings) propagate back and the sender's
@@ -2419,19 +2423,23 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "--windowed") == 0) fullscreen = 0;
     }
 
-    /* PWE: the log file, also when opened from Finder or at login (tb_log.h). */
+    /* PWE: the log file, also when opened from Finder or at login (tb_log.h),
+     * and the facts a remote tester's log needs (nothing personal). Each file
+     * a rotation starts opens with the same facts (1.1.1). */
     {
+        char sys[192];
+        tb_sysinfo_describe(sys, sizeof(sys));
+        char header[320];
+        snprintf(header, sizeof(header), "receiver %s (%s), pid %d; %s",
+                 TB_RECEIVER_VERSION, TB_RECEIVER_BUILD, (int)getpid(), sys);
+        tb_log_set_header(header);
         char log_dir[PATH_MAX];
         if (tb_log_default_dir("TargetBridge Receiver", log_dir, sizeof(log_dir)) &&
             tb_log_start(log_dir, TB_LOG_MAX_BYTES) == 0) {
             fprintf(stderr, "[log] receiver %s (%s) started, pid %d\n",
                     TB_RECEIVER_VERSION, TB_RECEIVER_BUILD, (int)getpid());
         }
-    }
-    {
-        /* PWE: the facts a remote tester's log needs; nothing personal. */
-        char sys[192];
-        fprintf(stderr, "[sys] %s\n", tb_sysinfo_describe(sys, sizeof(sys)));
+        fprintf(stderr, "[sys] %s\n", sys);
     }
 
     char startup_language_pref[8];
@@ -2918,12 +2926,30 @@ int main(int argc, char **argv) {
         TB_LOOP_PHASE("trace and fps lines");
         tb_trace_tick(tb_trace_now_ns());
 
-        /* FPS log */
+        /* FPS log. PWE (1.1.1): counted every second, logged every 10 s as
+         * average, lowest and highest over the seconds that had frames (a still
+         * desktop sends none), instead of one line a second. */
         if (t - a.last_fps_tick_ms >= 1000) {
-            uint64_t df = a.frames - a.last_fps_count;
+            const uint64_t df = a.frames - a.last_fps_count;
             a.last_fps_count   = a.frames;
             a.last_fps_tick_ms = t;
-            if (df > 0) fprintf(stderr, "[main] %llu fps\n", (unsigned long long)df);
+            if (df > 0) {
+                const unsigned fps = df > UINT_MAX ? UINT_MAX : (unsigned)df;
+                if (a.fps_seconds == 0 || fps < a.fps_min) a.fps_min = fps;
+                if (fps > a.fps_max) a.fps_max = fps;
+                a.fps_sum += df;
+                a.fps_seconds++;
+            }
+            if (a.fps_report_ms == 0) a.fps_report_ms = t;
+            if (t - a.fps_report_ms >= 10000) {
+                if (a.fps_seconds > 0) {
+                    fprintf(stderr, "[main] fps over %u s with frames: avg %.1f, min %u, max %u\n",
+                            a.fps_seconds, (double)a.fps_sum / a.fps_seconds, a.fps_min, a.fps_max);
+                }
+                a.fps_report_ms = t;
+                a.fps_seconds = a.fps_min = a.fps_max = 0;
+                a.fps_sum = 0;
+            }
         }
 
         /* Yield when idle or when a nonblocking active socket had no data,

@@ -71,6 +71,7 @@
 | `pwe-1.1.1-receiver`（待合并） | 接收端 `main.c`：每次启动后第一次进入 receiverMaster（Mac 把控制交给 iMac）时，缺哪个权限就请求哪个：`CGRequestListenEventAccess()`（输入监控）、`AXIsProcessTrustedWithOptions(prompt)`（辅助功能）。只在会话里、只一次；空闲时从不弹 | 评审 2026-10-22：接收端只查询（`CGPreflightListenEventAccess`、`AXIsProcessTrusted`）从不请求，系统设置的两个列表里都没有它，只能手动添加 | 待提 | 1.1.1 |
 | `pwe-1.1.1-receiver`（待合并） | 接收端 `tb_vsync.c`/`.h`：`tb_vsync_start` 返回成败；`display.c`：显示链接起不来时改为到帧即画（`paced = 0`，记一行），之后某次起来了再恢复节拍；没有节拍时的兜底等待从固定 50 ms 改为 1.5 个刷新周期；窗口换到另一块显示器（`SDL_WINDOWEVENT_DISPLAY_CHANGED`）时显示链接跟着换 | 评审 2026-10-22：`CVDisplayLinkStart` 失败时仍按节拍等永远不来的刷新，每帧多等 50 ms；窗口拖到另一块屏后仍按原屏刷新计数 | 待提 | 1.1.1 |
 | `pwe-1.1.1-receiver`（待合并） | 接收端 `decoder.c`：解码出错的日志（`send_packet`、`recv_frame`、硬件帧转移、软件帧转换）限频：10 秒最多一行，附「之后又有 N 次」，带 FFmpeg 的错误说明 | 评审 2026-10-22：坏流时每帧一行，每秒 60 行，几分钟就把日志轮转掉 | 待提 | 1.1.1 |
+| `pwe-1.1.1-receiver`（待合并） | 接收端 `tb_log.c`/`.h`：轮转后的新 `receiver.log` 第一行写版本、构建号、机型和系统、pid（`tb_log_set_header`），`test_log.c` 加一项；`main.c`：`[main] N fps` 从每秒一行改为每 10 秒一行，给出有画面那几秒的平均、最低、最高 | 评审 2026-10-22：轮转后单看 `receiver.log` 不知道是哪个版本写的；每秒一行的帧率占了日志的大半 | 待提 | 1.1.1 |
 
 打包时的改名（`pwe/rebrand.py`）不改仓库里的文件，所以不在这张表里。它的锚点由脚本自己检查：上游改了对应的文字，脚本就会停下。
 

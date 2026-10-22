@@ -30,6 +30,11 @@
  * leaves stdout and stderr untouched. Call once, before anything is printed. */
 int  tb_log_start(const char *dir, size_t max_bytes);
 
+/* A line that opens every file a rotation starts (the receiver's version,
+ * build, Mac and pid), so receiver.log read alone still says what wrote it.
+ * Call before tb_log_start; empty or NULL: none. */
+void tb_log_set_header(const char *line);
+
 /* Flush, restore stdout and stderr and close the file (also run at exit). */
 void tb_log_stop(void);
 
