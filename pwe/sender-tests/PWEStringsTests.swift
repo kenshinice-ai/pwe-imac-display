@@ -32,4 +32,16 @@ final class PWEStringsTests: XCTestCase {
         let key = TBConfigurationDiagnostics.checks(for: snapshot)[0].titleKey
         XCTAssertNotEqual(TBDisplaySenderL10n.text(key, .german), TBDisplaySenderL10n.text(key, .english))
     }
+
+    /// The menu's line while the picture is up: size, then frames sent in the
+    /// last second; a still screen shows the size alone, never "0 fps".
+    func testTheLiveLine() {
+        let en = PWEStrings(language: .english), zh = PWEStrings(language: .chinese)
+        XCTAssertEqual(en.liveLine(.native5k60Experimental, fps: 60), "5K · 60 fps")
+        XCTAssertEqual(en.liveLine(.native5k, fps: 48), "5K · 48 fps")
+        XCTAssertEqual(en.liveLine(.retina4k60, fps: 59), "4K · 59 fps")
+        XCTAssertEqual(en.liveLine(.standard1440p, fps: 30), "1440p · 30 fps")
+        XCTAssertEqual(en.liveLine(.native5k60Experimental, fps: 0), "5K")
+        XCTAssertEqual(zh.liveLine(.native5k60Experimental, fps: 60), "5K · 60 帧/秒")
+    }
 }

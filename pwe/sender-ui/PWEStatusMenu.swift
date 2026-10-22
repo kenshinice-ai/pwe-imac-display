@@ -24,6 +24,10 @@ final class PWEStatusMenu: NSObject {
     private var sliderTargets: [TBMenuSliderTarget] = []
     /// The menu's first line, kept current while the menu is open.
     private weak var statusLine: NSMenuItem?
+    /// "5K · 60 fps" under it while the picture is up, kept current the same
+    /// way from the engine's once-a-second count while the menu is open.
+    private weak var liveLine: NSMenuItem?
+    private var liveUpdates: AnyCancellable?
     /// The top menu while it is open, and which items it was built with.
     private weak var openMenu: NSMenu?
     private var builtShape: Shape?
@@ -168,6 +172,15 @@ final class PWEStatusMenu: NSObject {
         let line = disabled(statusText(model.phase))
         statusLine = line
         menu.addItem(line)
+        liveUpdates = nil
+        if model.isShowing {
+            let preset = model.showingPreset
+            let live = disabled(strings.liveLine(preset, fps: model.framesPerSecond))
+            liveLine = live
+            menu.addItem(live)
+            liveUpdates = model.framesPerSecondUpdates?
+                .sink { [weak self] fps in self?.liveLine?.title = self?.strings.liveLine(preset, fps: fps) ?? "" }
+        }
         if let version = updates?.available?.version {
             menu.addItem(action(strings.updateAvailableMenu(version)) { NSWorkspace.shared.open(UpdateCheck.downloadPage) })
         }
@@ -198,9 +211,12 @@ final class PWEStatusMenu: NSObject {
 
         var connection: [NSMenuItem] = []
         if model.canDisconnect {
-            connection.append(action(model.isShowing ? strings.disconnect : strings.cancel) { [weak model] in
+            let disconnect = action(model.isShowing ? strings.disconnect : strings.cancel) { [weak model] in
                 model?.disconnect()
-            })
+            }
+            // ⌘D while the menu is open, as Disconnect only: Cancel keeps none.
+            if model.isShowing { disconnect.keyEquivalent = "d" }
+            connection.append(disconnect)
         } else if let receiver = model.connectableReceiver {
             connection.append(action(strings.menuConnectTo(receiver.name)) { [weak model] in
                 model?.connect(to: receiver)
@@ -342,6 +358,7 @@ extension PWEStatusMenu: NSMenuDelegate {
     func menuDidClose(_ menu: NSMenu) {
         guard menu === statusItem?.menu else { return }
         openMenu = nil
+        liveUpdates = nil
         actions.menuDidClose()
     }
 }
@@ -423,7 +440,11 @@ final class PWEWindows {
         }
     }
 
-    func showSettings() {
+    /// Settings, at `tab` when one is given; `checkSetup` also runs Check
+    /// Setup in Advanced (the interrupted phase's Check Setup…).
+    func showSettings(tab: PWESettingsNavigation.Tab? = nil, checkSetup: Bool = false) {
+        if let tab { PWESettingsNavigation.shared.tab = tab }
+        if checkSetup { PWESettingsNavigation.shared.checkSetup = true }
         NSApp.activate(ignoringOtherApps: true)
         if let openSettings {
             openSettings()

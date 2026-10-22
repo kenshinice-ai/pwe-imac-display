@@ -109,6 +109,21 @@ struct PWEStrings {
     }
     var arrange: String { t("Arrange Displays…", "排列显示器…") }
     var disconnect: String { t("Disconnect", "断开") }
+    /// The menu's line under the status while the picture is up: the picture's
+    /// size and the frames this Mac sent in the last second (the engine's
+    /// `senderFPS`). A still screen sends no frames; then only the size shows,
+    /// never "0 fps" (PWEStringsTests).
+    func liveLine(_ preset: TBDisplayCapturePreset, fps: Int) -> String {
+        let size: String
+        switch preset {
+        case .native5k, .native5k60Experimental: size = "5K"
+        case .retina4k60: size = "4K"
+        case .standard1440p: size = "1440p"
+        default: size = preset.title
+        }
+        guard fps > 0 else { return size }
+        return "\(size) · " + t("\(fps) fps", "\(fps) 帧/秒")
+    }
 
     // Interrupted
     func interruptedTitle(_ reason: PWEReason) -> String {
@@ -353,6 +368,8 @@ struct PWEStrings {
     }
     var diagnostics: String { t("Diagnostics", "诊断") }
     var checkSetup: String { t("Check Setup", "检查配置") }
+    /// The interrupted phase's way to the same checks, in Settings › Advanced.
+    var checkSetupEllipsis: String { t("Check Setup…", "检查配置…") }
     var checkSetupLabel: String { t("This Mac, the link and permissions", "这台 Mac、连接和权限") }
     var reportLabel: String { t("Report for support", "求助报告") }
     var passed: String { t("Passed", "通过") }

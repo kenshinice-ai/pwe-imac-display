@@ -496,6 +496,16 @@ final class PWESenderModel: ObservableObject {
 
     private var session: TBDisplaySenderSession? { service?.sessions.first }
 
+    /// The picture on the iMac while it is a display, for the menu's live line.
+    var showingPreset: TBDisplayCapturePreset { session?.capturePreset ?? picture }
+
+    /// Frames sent in the last second (the engine's `senderFPS`), and its
+    /// once-a-second updates. Snapshots have no engine and show a steady 60.
+    var framesPerSecond: Int { service == nil ? 60 : session?.liveMetrics.senderFPS ?? 0 }
+    var framesPerSecondUpdates: AnyPublisher<Int, Never>? {
+        session?.liveMetrics.$senderFPS.removeDuplicates().eraseToAnyPublisher()
+    }
+
     /// Whether the session dials over Network Link rather than the cable.
     var connectsOverNetwork: Bool { session?.transportKind == .networkLink }
 

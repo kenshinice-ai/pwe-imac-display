@@ -19,18 +19,22 @@ struct PWESettingsView: View {
 
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
+    @ObservedObject private var navigation = PWESettingsNavigation.shared
 
     var body: some View {
-        TabView {
+        TabView(selection: $navigation.tab) {
             PWEGeneralSettings(model: model, updates: updates, strings: strings)
                 .tabItem { Label(strings.general, systemImage: "gearshape") }
+                .tag(PWESettingsNavigation.Tab.general)
             PWEInputSettings(model: model, strings: strings)
                 .tabItem { Label(strings.keyboardMouse, systemImage: "keyboard") }
+                .tag(PWESettingsNavigation.Tab.input)
             PWEAdvancedSettings(model: model, strings: strings, openConsole: {
                 NSApp.activate(ignoringOtherApps: true)
                 openWindow(id: "advanced")
             })
                 .tabItem { Label(strings.advancedTab, systemImage: "gearshape.2") }
+                .tag(PWESettingsNavigation.Tab.advanced)
         }
         .frame(width: PWESettingsLayout.width)
         .overlay(alignment: .bottom) { PWEReconnectNotice(model: model, strings: strings) }
@@ -39,6 +43,18 @@ struct PWESettingsView: View {
             PWEWindows.shared.openSettings = openSettings
         }
     }
+}
+
+/// Which Settings tab shows, shared so a button outside Settings can open it
+/// at a tab (PWEWindows.showSettings): the interrupted phase's Check Setup…
+/// and the unencrypted refusal's Settings… both go to Advanced.
+@MainActor
+final class PWESettingsNavigation: ObservableObject {
+    enum Tab: Hashable { case general, input, advanced }
+    static let shared = PWESettingsNavigation()
+    @Published var tab: Tab = .general
+    /// Advanced runs Check Setup when it next shows, then clears this.
+    @Published var checkSetup = false
 }
 
 enum PWESettingsLayout {
@@ -232,6 +248,7 @@ struct PWEAdvancedSettings: View {
     @State private var checks: [PWESenderModel.Check] = []
     /// Check Setup was pressed: from then on the list follows the connection.
     @State private var checking = false
+    @ObservedObject private var navigation = PWESettingsNavigation.shared
     @State private var forgetting: PWEPairedReceiver?
 
     var body: some View {
@@ -289,10 +306,7 @@ struct PWEAdvancedSettings: View {
             }
             Section(strings.diagnostics) {
                 LabeledContent {
-                    Button(strings.checkSetup) {
-                        checking = true
-                        checks = model.configurationChecks()
-                    }
+                    Button(strings.checkSetup, action: checkSetup)
                 } label: {
                     Text(strings.checkSetupLabel)
                 }
@@ -328,7 +342,14 @@ struct PWEAdvancedSettings: View {
         }
         .formStyle(.grouped)
         .frame(height: 640)
-        .onAppear { model.refreshPairedIMacs() }
+        .onAppear {
+            model.refreshPairedIMacs()
+            if navigation.checkSetup { checkSetup() }
+        }
+        // Asked from the main window while Advanced is already showing.
+        .onChange(of: navigation.checkSetup) { _, asked in
+            if asked { checkSetup() }
+        }
         // A list taken before connecting says "after connecting" for half its
         // lines: once shown, it is taken again whenever the connection moves.
         .onChange(of: model.phase) {
@@ -345,5 +366,11 @@ struct PWEAdvancedSettings: View {
             Button(strings.forget, role: .destructive) { model.forget(paired) }
             Button(strings.cancel, role: .cancel) {}
         }
+    }
+
+    private func checkSetup() {
+        navigation.checkSetup = false
+        checking = true
+        checks = model.configurationChecks()
     }
 }
