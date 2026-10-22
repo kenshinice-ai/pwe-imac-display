@@ -40,6 +40,8 @@
 
 ## 等 Lee
 
+- **[动手] 打开仓库的 Issues，关掉 Actions** — 2026-10-22 核实：`has_issues: false`，而测试者说明、读我、支持页都指向 `/issues`，现在是死路；Actions `enabled: true`，10-28 推 main 可能触发上游 CI。Issues 可授权 Claude `gh repo edit --enable-issues`，Actions 只能在网页 Settings › Actions 关 · 不做则测试者反馈发不出去 · 自 2026-10-22
+- **[决定] 打磨方案清单** — 三份只读评审合成一份，分「现在（10-28 前，零风险）/ 1.1.1 / 1.2」：https://claude.ai/artifact/TVduMSotx4napQXPrUZgth 。推荐「现在」九条全做（不碰 App 代码）；1.1.1 约两周，11 月中旬和 T+14 同天出 · 不定则 1.1.1 没有范围 · 自 2026-10-22
 - **[给料] 测试者名单** — Lee 2026-10-22 已把测试版发给第一批人；请把发给了谁（称呼、联系方式、iMac 年份）记进 `docs/pwe/BETA-testers-roster.md`，终身免费要靠这份名单兑现 · 不记则以后核对不了谁该免费 · 自 2026-10-22
 - **[动手] GitHub Sponsors 审核通过后打开仓库的 Sponsorships 开关** — 资料已提交，2026-10-22 状态 Pending（GitHub 审核中）；通过后 GitHub 会发邮件，Lee 到仓库 Settings › General › Features 勾选 Sponsorships · 不开则仓库页没有赞助入口（支持页另由工具站会话放出按钮）· 自 2026-10-21
 - **[动手] 小红书主页简介写上 pwestudio.site/screenencore（纯文字）** — 10-29 发帖前；帖子里不放网址，评论区有人问就回「主页简介里有」· 不写则问下载的人找不到 · 自 2026-10-22
