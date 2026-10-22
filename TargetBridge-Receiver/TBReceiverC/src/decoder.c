@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "tb_loopwatch.h"
 #include "tb_sysinfo.h"
@@ -373,6 +374,30 @@ static int avcc_to_annexb(struct tb_decoder *d,
     return 0;
 }
 
+/* PWE (1.1.1): a decode error on every frame of a bad stretch (60 a second)
+ * would flood the log and rotate it away within minutes. One line every 10 s,
+ * with how many more there were since the last one, as main.c does for
+ * refused senders. `r`: FFmpeg's error code, or 0 when there is none. */
+static void tb_dec_log_error(const char *what, int r) {
+    static uint64_t last_ms;
+    static unsigned long quiet;
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    const uint64_t t = (uint64_t)ts.tv_sec * 1000ull + (uint64_t)ts.tv_nsec / 1000000ull;
+    if (last_ms && t - last_ms < 10000) { quiet++; return; }
+    if (r) {
+        char why[AV_ERROR_MAX_STRING_SIZE];
+        av_strerror(r, why, sizeof(why));
+        fprintf(stderr, "[dec] %s=%d (%s)", what, r, why);
+    } else {
+        fprintf(stderr, "[dec] %s", what);
+    }
+    if (quiet) fprintf(stderr, "; %lu more decode errors since the last report", quiet);
+    fputc('\n', stderr);
+    last_ms = t;
+    quiet = 0;
+}
+
 static uint32_t frame_trace_id(const AVFrame *f) {
     return (f->pts != AV_NOPTS_VALUE && f->pts > 0 && f->pts <= UINT32_MAX) ? (uint32_t)f->pts : 0;
 }
@@ -392,14 +417,14 @@ int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len, uin
     int r = avcodec_send_packet(d->ctx, d->pkt);
     TB_LOOP_LEAVE(outer);
     if (r < 0 && r != AVERROR(EAGAIN)) {
-        fprintf(stderr, "[dec] send_packet=%d\n", r);
+        tb_dec_log_error("send_packet", r);
         return -1;
     }
 
     while (1) {
         r = avcodec_receive_frame(d->ctx, d->hw_frame);
         if (r == AVERROR(EAGAIN) || r == AVERROR_EOF) return 0;
-        if (r < 0) { fprintf(stderr, "[dec] recv_frame=%d\n", r); return -1; }
+        if (r < 0) { tb_dec_log_error("recv_frame", r); return -1; }
 
 #if defined(__APPLE__)
         /* VideoToolbox frames carry their CVPixelBufferRef in data[3]: pass it
@@ -423,7 +448,7 @@ int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len, uin
         if (d->hw_frame->format == d->hw_pix_fmt) {
             d->sw_frame->format = AV_PIX_FMT_NV12;
             if (av_hwframe_transfer_data(d->sw_frame, d->hw_frame, 0) < 0) {
-                fprintf(stderr, "[dec] hwframe_transfer failed\n");
+                tb_dec_log_error("hwframe_transfer failed", 0);
                 av_frame_unref(d->hw_frame);
                 continue;
             }
@@ -448,10 +473,10 @@ int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len, uin
             d->nv12_frame->width = out->width;
             d->nv12_frame->height = out->height;
             if (!d->sws || av_frame_get_buffer(d->nv12_frame, 32) < 0) {
-                fprintf(stderr, "[dec] could not allocate NV12 software frame\n");
+                tb_dec_log_error("could not allocate NV12 software frame", 0);
             } else if (sws_scale(d->sws, (const uint8_t * const *)out->data, out->linesize,
                                  0, out->height, d->nv12_frame->data, d->nv12_frame->linesize) <= 0) {
-                fprintf(stderr, "[dec] software frame conversion failed\n");
+                tb_dec_log_error("software frame conversion failed", 0);
             } else {
                 struct tb_frame f = {
                     .y = d->nv12_frame->data[0], .y_stride = d->nv12_frame->linesize[0],
