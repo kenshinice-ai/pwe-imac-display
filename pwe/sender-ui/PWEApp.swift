@@ -14,7 +14,7 @@ struct PWEApp: App {
     @NSApplicationDelegateAdaptor(PWEAppDelegate.self) private var appDelegate
     @StateObject private var service: TBDisplaySenderService
     @StateObject private var model: PWESenderModel
-    @StateObject private var updates = UpdateCheck()
+    @StateObject private var updates: UpdateCheck
     private let statusMenu: PWEStatusMenu
 
     @MainActor
@@ -45,9 +45,17 @@ struct PWEApp: App {
         // every launch starts from its default (on), whatever was stored before.
         if !shared.preventDisplaySleep { shared.preventDisplaySleep = true }
         let model = PWESenderModel(service: shared)
+        let updates = UpdateCheck()
         _service = StateObject(wrappedValue: shared)
         _model = StateObject(wrappedValue: model)
-        statusMenu = PWEStatusMenu(model: model)
+        _updates = StateObject(wrappedValue: updates)
+        statusMenu = PWEStatusMenu(model: model, updates: updates)
+        // What a launch starts: the remembered iMac's connection and the daily
+        // update check. From the app delegate, so neither waits for a window.
+        PWELaunch.shared.work = {
+            model.startIfDue()
+            updates.startDailyChecks()
+        }
         // The iMac's brightness keys and HUD; it also takes the app's URLs from
         // Apple events, so a background URL never opens a window (PWEBrightnessKeys).
         PWEBrightness.shared.start()
@@ -60,7 +68,7 @@ struct PWEApp: App {
         let strings = PWEStrings(language: service.language)
 
         WindowGroup(strings.appName, id: "main") {
-            PWEWindowContent(model: model, service: service, updates: updates)
+            PWEWindowContent(model: model, service: service)
         }
         .windowResizability(.contentSize)
         .commands {
@@ -100,6 +108,10 @@ struct PWEApp: App {
 /// SwiftUI does that only when no window is visible: with Settings or About
 /// open, the click did nothing and the main window stayed closed.
 final class PWEAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        MainActor.assumeIsolated { PWELaunch.shared.runOnce() }
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         MainActor.assumeIsolated {
             guard PWEWindows.shared.openWindow != nil, !PWEWindows.shared.isMainShown else {
@@ -110,6 +122,23 @@ final class PWEAppDelegate: NSObject, NSApplicationDelegate {
             PWEWindows.shared.showMain()
             return false
         }
+    }
+}
+
+/// The work a launch does once, wherever the first call comes from: the app
+/// delegate's `applicationDidFinishLaunching`, or the main window's task when
+/// a window opens first. Before 1.1.1 only the window's task started the
+/// remembered connection, so a launch with no window connected nothing.
+@MainActor
+final class PWELaunch {
+    static let shared = PWELaunch()
+    var work: (() -> Void)?
+    private var ran = false
+
+    func runOnce() {
+        guard !ran, let work else { return }
+        ran = true
+        work()
     }
 }
 
@@ -130,11 +159,9 @@ private struct PWEOpenWindowButton: View {
 private struct PWEWindowContent: View {
     @ObservedObject var model: PWESenderModel
     @ObservedObject var service: TBDisplaySenderService
-    @ObservedObject var updates: UpdateCheck
 
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
-    @AppStorage("pwe.updateChecks") private var dailyChecks = false
 
     var body: some View {
         PWEMainView(model: model, strings: PWEStrings(language: service.language),
@@ -143,10 +170,7 @@ private struct PWEWindowContent: View {
             .onAppear {
                 PWEWindows.shared.openWindow = openWindow
                 PWEWindows.shared.openSettings = openSettings
-            }
-            .task {
-                model.startIfDue()
-                await updates.checkIfDue(enabled: dailyChecks)
+                PWELaunch.shared.runOnce()
             }
             .onOpenURL { TBSenderAutomation.handle(url: $0) }
             // A pweimacdisplay:// URL goes to the open window instead of opening another.

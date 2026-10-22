@@ -16,6 +16,8 @@ import SwiftUI
 @MainActor
 final class PWEStatusMenu: NSObject {
     private let model: PWESenderModel
+    /// The daily check's finding, for one line under the status; nil in snapshots.
+    private let updates: UpdateCheck?
     private var statusItem: NSStatusItem?
     private var cancellables = Set<AnyCancellable>()
     private let actions = PWEMenuActionQueue()
@@ -28,11 +30,16 @@ final class PWEStatusMenu: NSObject {
     /// Snapshots: the words without an engine to ask.
     private let previewLanguage: TBDisplaySenderLanguage?
 
-    init(model: PWESenderModel) {
+    init(model: PWESenderModel, updates: UpdateCheck) {
         self.model = model
+        self.updates = updates
         self.previewLanguage = nil
         super.init()
         installItem()
+        updates.$available
+            .removeDuplicates()
+            .sink { [weak self] _ in DispatchQueue.main.async { [weak self] in self?.refreshOpenMenu() } }
+            .store(in: &cancellables)
         model.$phase
             .removeDuplicates()
             .sink { [weak self] phase in
@@ -65,6 +72,7 @@ final class PWEStatusMenu: NSObject {
     /// The menu as it would open, for `--pwe-snapshot`: no status item, nothing on screen.
     init(preview model: PWESenderModel, language: TBDisplaySenderLanguage) {
         self.model = model
+        self.updates = nil
         self.previewLanguage = language
         super.init()
     }
@@ -117,11 +125,13 @@ final class PWEStatusMenu: NSObject {
     private struct Shape: Equatable {
         var showing, unencrypted, canDisconnect, volume: Bool
         var connectable: String?
+        var update: String?
     }
 
     private var shape: Shape {
         Shape(showing: model.isShowing, unencrypted: model.isUnencrypted, canDisconnect: model.canDisconnect,
-              volume: model.sound != .onlyThisMac, connectable: model.connectableReceiver?.id)
+              volume: model.sound != .onlyThisMac, connectable: model.connectableReceiver?.id,
+              update: updates?.available?.version)
     }
 
     private func refreshOpenMenu() {
@@ -138,6 +148,9 @@ final class PWEStatusMenu: NSObject {
         let line = disabled(strings.status(model.phase))
         statusLine = line
         menu.addItem(line)
+        if let version = updates?.available?.version {
+            menu.addItem(action(strings.updateAvailableMenu(version)) { NSWorkspace.shared.open(UpdateCheck.downloadPage) })
+        }
         if model.isUnencrypted {
             let warning = disabled(strings.notEncrypted)
             warning.image = NSImage(systemSymbolName: "lock.open.fill", accessibilityDescription: nil)

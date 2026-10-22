@@ -389,7 +389,11 @@ struct PWEStrings {
     var couldNotCheck: String { t("Could not check right now.", "暂时无法检查。") }
     var latestUnknown: String { t("Could not confirm the latest version.", "无法确认最新版本。") }
     func updateAvailable(_ version: String) -> String { t("Version \(version) is available.", "有新版本 \(version)。") }
+    /// The menu bar's line for it: choosing it opens the download page.
+    func updateAvailableMenu(_ version: String) -> String { t("Version \(version) is available…", "有新版本 \(version)…") }
     var download: String { t("Download", "下载") }
+    /// Quiets the daily reminder for this version (UpdateCheck.dismiss).
+    var later: String { t("Later", "以后再说") }
     var done: String { t("Done", "完成") }
 }
 

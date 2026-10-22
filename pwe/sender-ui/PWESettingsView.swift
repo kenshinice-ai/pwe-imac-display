@@ -98,7 +98,7 @@ struct PWEGeneralSettings: View {
     @ObservedObject var updates: UpdateCheck
     let strings: PWEStrings
 
-    @AppStorage("pwe.updateChecks") private var dailyChecks = false
+    @AppStorage(UpdateCheck.dailyKey) private var dailyChecks = false
 
     var body: some View {
         Form {
@@ -124,7 +124,10 @@ struct PWEGeneralSettings: View {
                 // What the daily check found; checking by hand is in About.
                 if let available = updates.available {
                     LabeledContent(strings.updateAvailable(available.version)) {
-                        Link(strings.download, destination: UpdateCheck.downloadPage)
+                        HStack(spacing: 12) {
+                            Link(strings.download, destination: UpdateCheck.downloadPage)
+                            Button(strings.later) { updates.dismiss() }
+                        }
                     }
                 }
             }

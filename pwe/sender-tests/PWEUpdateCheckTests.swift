@@ -21,8 +21,14 @@ final class PWEUpdateCheckTests: XCTestCase {
     private static let ok = HTTPURLResponse(url: URL(string: "https://pwestudio.site/app/check")!,
                                             statusCode: 200, httpVersion: nil, headerFields: nil)!
 
-    private func updates(answering json: String) -> UpdateCheck {
-        UpdateCheck(defaults: defaults, now: { Date() }, fetch: { _ in (Data(json.utf8), Self.ok) })
+    /// How many round trips a check made.
+    private final class Calls: @unchecked Sendable { var count = 0 }
+
+    private func updates(answering json: String, counting calls: Calls? = nil) -> UpdateCheck {
+        UpdateCheck(defaults: defaults, now: { Date() }, fetch: { _ in
+            calls?.count += 1
+            return (Data(json.utf8), Self.ok)
+        })
     }
 
     /// As the site announces a release: a date and a download page with every entry.
@@ -65,5 +71,32 @@ final class PWEUpdateCheckTests: XCTestCase {
                                   fetch: { _ in throw URLError(.notConnectedToInternet) })
         let outcome = await updates.check(version: "1.1.0", manual: true)
         XCTAssertEqual(outcome, .unreachable)
+    }
+
+    // MARK: - The daily timer (1.1.1)
+
+    /// The timer fires the check from launch, with no window involved, and only
+    /// when Settings › General's switch is on.
+    func testTheDailyTimerChecksWhenTheSwitchIsOn() async throws {
+        let calls = Calls()
+        let updates = updates(answering: Self.announced("1.2.0"), counting: calls)
+        defaults.set(true, forKey: UpdateCheck.dailyKey)
+        updates.startDailyChecks(firstAfter: 0)
+        try await Task.sleep(nanoseconds: 500_000_000)
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertEqual(updates.available?.version, "1.2.0", "the menu's line reads it from here")
+        // A second start (the window's task after the delegate) adds no timer.
+        updates.startDailyChecks(firstAfter: 0)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(calls.count, 1)
+    }
+
+    func testTheDailyTimerDoesNothingWithTheSwitchOff() async throws {
+        let calls = Calls()
+        let updates = updates(answering: Self.announced("1.2.0"), counting: calls)
+        updates.startDailyChecks(firstAfter: 0)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(calls.count, 0)
+        XCTAssertNil(updates.available)
     }
 }
