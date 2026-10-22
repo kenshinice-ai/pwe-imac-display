@@ -230,6 +230,8 @@ struct PWEAdvancedSettings: View {
     var openConsole: () -> Void = {}
 
     @State private var checks: [PWESenderModel.Check] = []
+    /// Check Setup was pressed: from then on the list follows the connection.
+    @State private var checking = false
     @State private var forgetting: PWEPairedReceiver?
 
     var body: some View {
@@ -287,7 +289,10 @@ struct PWEAdvancedSettings: View {
             }
             Section(strings.diagnostics) {
                 LabeledContent {
-                    Button(strings.checkSetup) { checks = model.configurationChecks() }
+                    Button(strings.checkSetup) {
+                        checking = true
+                        checks = model.configurationChecks()
+                    }
                 } label: {
                     Text(strings.checkSetupLabel)
                 }
@@ -324,6 +329,11 @@ struct PWEAdvancedSettings: View {
         .formStyle(.grouped)
         .frame(height: 640)
         .onAppear { model.refreshPairedIMacs() }
+        // A list taken before connecting says "after connecting" for half its
+        // lines: once shown, it is taken again whenever the connection moves.
+        .onChange(of: model.phase) {
+            if checking { checks = model.configurationChecks() }
+        }
         // The iMac travels with the alert (`presenting:`). Dismissing sets the
         // binding to false before a button's action runs, and the setter clears
         // `forgetting`: an action reading `forgetting` saw nil and forgot
