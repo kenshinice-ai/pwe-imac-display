@@ -103,9 +103,13 @@ struct PWEGeneralSettings: View {
     var body: some View {
         Form {
             Section {
-                Toggle(strings.launchAtLogin, isOn: Binding(
+                Toggle(isOn: Binding(
                     get: { model.launchAtLogin },
-                    set: { model.setLaunchAtLogin($0) }))
+                    set: { model.setLaunchAtLogin($0) })) {
+                    Text(strings.launchAtLogin)
+                    if model.launchAtLoginUnavailable { Text(strings.launchAtLoginMove) }
+                }
+                .disabled(model.launchAtLoginUnavailable)
                 if model.launchAtLoginNeedsApproval {
                     Button(strings.launchAtLoginApproval) { model.openLoginItemsSettings() }
                         .buttonStyle(.link)

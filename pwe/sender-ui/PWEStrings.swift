@@ -158,6 +158,8 @@ struct PWEStrings {
     var autoConnect: String { t("Connect automatically when the cable goes in", "接上线就自动连接") }
     var launchAtLogin: String { t("Open at login", "登录时打开") }
     var launchAtLoginApproval: String { t("Allow in Login Items…", "在「登录项」里允许…") }
+    /// The copy runs from a disk image or a download folder (PWELoginItemRules).
+    var launchAtLoginMove: String { t("Move the app to Applications to open it at login.", "移到「应用程序」后可登录时打开。") }
 
     // Menu bar
     func menuConnectTo(_ name: String) -> String { t("Use \(name) as Display", "把 \(name) 用作显示器") }

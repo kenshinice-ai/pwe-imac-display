@@ -327,6 +327,9 @@ final class PWESenderModel: ObservableObject {
     }
     @Published private(set) var launchAtLogin = false
     @Published private(set) var launchAtLoginNeedsApproval = false
+    /// This copy runs from a place it may not be at the next login (a disk
+    /// image, a download), so Open at login is not offered (PWELoginItemRules).
+    let launchAtLoginUnavailable: Bool
 
     let service: TBDisplaySenderService?
     private let defaults: UserDefaults
@@ -423,6 +426,7 @@ final class PWESenderModel: ObservableObject {
         self.setupFinished = defaults.object(forKey: Keys.setupFinished) as? Bool
             ?? (defaults.object(forKey: Keys.pictures) != nil)
         self.inputRole = PWEInputRole(rawValue: defaults.string(forKey: Keys.inputRole) ?? "") ?? .off
+        self.launchAtLoginUnavailable = !PWELoginItemRules.canRegister(bundlePath: Bundle.main.bundlePath)
         self.localMute = PWELocalAudioMute(defaults: defaults)
         refreshLaunchAtLogin()
         resetNetworkLinkOnce()
@@ -483,6 +487,7 @@ final class PWESenderModel: ObservableObject {
         self.firstConnection = firstConnection
         // As the first connection leaves it: Open at login on.
         self.launchAtLogin = true
+        self.launchAtLoginUnavailable = false
         self.inputRole = inputRole
         self.phase = phase
     }
@@ -521,7 +526,8 @@ final class PWESenderModel: ObservableObject {
     }
 
     /// The first time an iMac becomes a display: show the extra lines, and turn
-    /// on Open at login, which the window's tick box shows and undoes.
+    /// on Open at login, which the window's tick box shows and undoes. A copy
+    /// that cannot be registered leaves the box off and says why.
     /// Connecting automatically is already on by default and is not asked.
     private func updateFirstConnection() {
         let shows = PWEFirstConnectionRules.showsTips(previously: firstConnection, setupFinished: setupFinished,
@@ -529,7 +535,7 @@ final class PWESenderModel: ObservableObject {
         if shows != firstConnection { firstConnection = shows }
         guard shows, !setupFinished else { return }
         setupFinished = true
-        if !launchAtLogin, !launchAtLoginNeedsApproval { setLaunchAtLogin(true) }
+        if !launchAtLogin, !launchAtLoginNeedsApproval, !launchAtLoginUnavailable { setLaunchAtLogin(true) }
     }
 
     /// The picture is up with sound relayed: the iMac is playing this Mac's audio.
@@ -978,6 +984,11 @@ final class PWESenderModel: ObservableObject {
 
     func setLaunchAtLogin(_ on: Bool) {
         guard service != nil else { launchAtLogin = on; return }
+        if on, launchAtLoginUnavailable {
+            PWELog.note("[pwe] launch at login: not registering a copy outside Applications (\(Bundle.main.bundlePath))")
+            refreshLaunchAtLogin()
+            return
+        }
         do {
             if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
         } catch {

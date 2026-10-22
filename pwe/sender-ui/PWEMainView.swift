@@ -239,10 +239,17 @@ struct PWEMainView: View {
                 get: { model.launchAtLogin },
                 set: { model.setLaunchAtLogin($0) }))
                 .toggleStyle(.checkbox)
+                .disabled(model.launchAtLoginUnavailable)
             if model.launchAtLoginNeedsApproval {
                 Button(strings.launchAtLoginApproval) { model.openLoginItemsSettings() }
                     .buttonStyle(.link)
                     .font(.callout)
+            }
+            if model.launchAtLoginUnavailable {
+                Text(strings.launchAtLoginMove)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
