@@ -669,7 +669,9 @@ static void on_bonjour_register(DNSServiceRef sdRef,
 static void bonjour_update(struct app *a, uint16_t port) {
     /* Tests on a Mac whose own sender is running (loopback_smoke.sh): stay
      * out of discovery; TB_RECEIVER_TEST_PORT also moves the listener. */
+#if TB_RECEIVER_TEST_HOOKS
     if (getenv("TB_RECEIVER_NO_BONJOUR")) { bonjour_deinit(a); return; }
+#endif
 
     const int have_ipv4 = a->ip_text[0] != '\0' &&
         strcmp(a->ip_text, tb_i18n_get("receiver.network.not_detected")) != 0;
@@ -2502,11 +2504,13 @@ int main(int argc, char **argv) {
     /* Tests only: another port, so a sender running on the same Mac that
      * remembers this Mac's address cannot take the single client slot. */
     uint16_t listen_port = TB_PORT;
+#if TB_RECEIVER_TEST_HOOKS
     {
         const char *p = getenv("TB_RECEIVER_TEST_PORT");
         long v = p ? strtol(p, NULL, 10) : 0;
         if (v > 1024 && v < 65536) listen_port = (uint16_t)v;
     }
+#endif
     a.server_fd = tb_net_listen(listen_port);
     if (a.server_fd < 0) { fprintf(stderr, "tb_net_listen failed\n"); return 1; }
     /* PWE (T34): IPv6 too, for the Thunderbolt Bridge's link-local address. */
