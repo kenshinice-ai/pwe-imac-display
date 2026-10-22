@@ -2562,6 +2562,57 @@ int main(int argc, char **argv) {
     tb_gesture_bridge_install(tb_receiver_space_switch_callback, &a);
     tb_gesture_bridge_set_active(0);
 
+    /* PWE (1.1.1): the listeners first: a second copy finds the port taken
+     * before it opens a window or starts a thread. */
+    /* Tests only: another port, so a sender running on the same Mac that
+     * remembers this Mac's address cannot take the single client slot. */
+    uint16_t listen_port = TB_PORT;
+#if TB_RECEIVER_TEST_HOOKS
+    {
+        const char *p = getenv("TB_RECEIVER_TEST_PORT");
+        long v = p ? strtol(p, NULL, 10) : 0;
+        if (v > 1024 && v < 65536) listen_port = (uint16_t)v;
+    }
+#endif
+    a.server_fd = tb_net_listen(listen_port);
+    if (a.server_fd < 0) {
+        if (errno == EADDRINUSE) {
+            /* PWE (1.1.1): another receiver holds the port. Say so, bring the
+             * running copy to the front and leave quietly: this is the second
+             * copy, not a failure. Listening comes before the window and the
+             * worker threads, so there is nothing to tear down and no second
+             * window flashes. */
+            fprintf(stderr, "[net] port %u is in use: another receiver is running; leaving\n",
+                    (unsigned)listen_port);
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION,
+                                     tb_i18n_get("receiver.already_running.title"),
+                                     tb_i18n_get("receiver.already_running.body"), NULL);
+            char bundle_id[128] = "";
+            CFStringGetCString(a.app_id, bundle_id, sizeof(bundle_id), kCFStringEncodingUTF8);
+            if (tb_running_app_activate(bundle_id)) {
+                fprintf(stderr, "[main] brought the running receiver to the front\n");
+            } else {
+                fprintf(stderr, "[main] no other receiver found: another program holds the port\n");
+            }
+            fprintf(stderr, "[main] bye (another receiver is running)\n");
+            return 0;
+        }
+        const int listen_errno = errno;
+        fprintf(stderr, "tb_net_listen failed\n");
+        char reason[96];
+        snprintf(reason, sizeof(reason), "port %u: %s", (unsigned)listen_port, strerror(listen_errno));
+        tb_receiver_fatal("receiver.fatal.network", reason);
+        return 1;
+    }
+    /* PWE (T34): IPv6 too, for the Thunderbolt Bridge's link-local address. */
+    a.server6_fd = tb_net_listen6(listen_port);
+    fprintf(stderr, "[net] listening on port %u over IPv4%s\n", (unsigned)listen_port,
+            a.server6_fd >= 0 ? " and IPv6" : " only (no IPv6 listener)");
+    if (previous_run_unclean) {
+        fprintf(stderr, "[main] the previous run did not end normally (its last line: \"%s\"); "
+                        "if it crashed, the report is in ~/Library/DiagnosticReports\n", previous_last_line);
+    }
+
     a.disp = tb_disp_create(fullscreen);
     if (!a.disp) {
         fprintf(stderr, "tb_disp_create failed\n");
@@ -2615,49 +2666,6 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* Tests only: another port, so a sender running on the same Mac that
-     * remembers this Mac's address cannot take the single client slot. */
-    uint16_t listen_port = TB_PORT;
-#if TB_RECEIVER_TEST_HOOKS
-    {
-        const char *p = getenv("TB_RECEIVER_TEST_PORT");
-        long v = p ? strtol(p, NULL, 10) : 0;
-        if (v > 1024 && v < 65536) listen_port = (uint16_t)v;
-    }
-#endif
-    a.server_fd = tb_net_listen(listen_port);
-    if (a.server_fd < 0) {
-        if (errno == EADDRINUSE) {
-            /* PWE (1.1.1): another receiver holds the port. Say so, bring the
-             * running copy to the front and leave quietly: this is the second
-             * copy, not a failure. */
-            fprintf(stderr, "[net] port %u is in use: another receiver is running; leaving\n",
-                    (unsigned)listen_port);
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION,
-                                     tb_i18n_get("receiver.already_running.title"),
-                                     tb_i18n_get("receiver.already_running.body"), NULL);
-            char bundle_id[128] = "";
-            CFStringGetCString(a.app_id, bundle_id, sizeof(bundle_id), kCFStringEncodingUTF8);
-            if (tb_running_app_activate(bundle_id)) {
-                fprintf(stderr, "[main] brought the running receiver to the front\n");
-            }
-            return 0;
-        }
-        const int listen_errno = errno;
-        fprintf(stderr, "tb_net_listen failed\n");
-        char reason[96];
-        snprintf(reason, sizeof(reason), "port %u: %s", (unsigned)listen_port, strerror(listen_errno));
-        tb_receiver_fatal("receiver.fatal.network", reason);
-        return 1;
-    }
-    /* PWE (T34): IPv6 too, for the Thunderbolt Bridge's link-local address. */
-    a.server6_fd = tb_net_listen6(listen_port);
-    fprintf(stderr, "[net] listening on port %u over IPv4%s\n", (unsigned)listen_port,
-            a.server6_fd >= 0 ? " and IPv6" : " only (no IPv6 listener)");
-    if (previous_run_unclean) {
-        fprintf(stderr, "[main] the previous run did not end normally (its last line: \"%s\"); "
-                        "if it crashed, the report is in ~/Library/DiagnosticReports\n", previous_last_line);
-    }
     /* Announce only once both listeners are up (PWE). */
     bonjour_update(&a, TB_PORT);
 

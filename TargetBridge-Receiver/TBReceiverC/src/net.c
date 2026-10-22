@@ -119,7 +119,8 @@ int tb_net_listen(uint16_t port) {
         perror("[net] bind"); close(fd); errno = saved; return -1;
     }
     if (listen(fd, 1) < 0) {
-        perror("[net] listen"); close(fd); return -1;
+        const int saved = errno;
+        perror("[net] listen"); close(fd); errno = saved; return -1;
     }
 
     int fl = fcntl(fd, F_GETFL, 0);
@@ -151,7 +152,8 @@ int tb_net_listen6(uint16_t port) {
         perror("[net] bind (IPv6)"); close(fd); errno = saved; return -1;
     }
     if (listen(fd, 1) < 0) {
-        perror("[net] listen (IPv6)"); close(fd); return -1;
+        const int saved = errno;
+        perror("[net] listen (IPv6)"); close(fd); errno = saved; return -1;
     }
 
     int fl = fcntl(fd, F_GETFL, 0);

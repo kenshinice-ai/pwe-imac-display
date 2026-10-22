@@ -76,6 +76,7 @@
 | `pwe-1.1.1-receiver`（待合并） | 接收端 `display.c`：`tb_disp_refresh_window_mode` 只在离开全屏时把窗口恢复成 980×620、居中；不在全屏时不再动窗口 | 评审 2026-10-22：它在每次会话变化、切语言、换渲染器、输入接管时都跑，用户挪过或拉大的窗口每次都被弹回原样 | 待提 | 1.1.1 |
 | `pwe-1.1.1-receiver`（待合并） | 接收端 `main.c`：显示配置 JSON 加 `receiverVersion`；Bonjour TXT 加 `model`（如 `iMac18,3`）和 `os`（如 `13.7.8`），注册日志带 TXT 字节数；`tb_sysinfo.c`/`.h` 加 `tb_sysinfo_model`、`tb_sysinfo_os_version`，`test_sysinfo.c` 加检查 | 评审 2026-10-22：发送端（`pwe-1.1.1` 发送端分支读这三个键）要知道对面是哪个版本、哪台 Mac、哪个系统，才能给出对症的提示 | 待提 | 1.1.1 |
 | `pwe-1.1.1-receiver`（待合并） | 接收端 `main.c`：启动时读上一次日志的最后一行，不是 `[main] bye` 就在拿到端口后记一行，指向 `~/Library/DiagnosticReports`；SIGHUP 和 SIGINT/SIGTERM 一样正常退出。`tb_log.c`/`.h` 加 `tb_log_read_last_line`、`tb_log_line_is_clean_exit`，`test_log.c` 加检查 | 评审 2026-10-22：测试者发来的日志看不出上一次是崩溃还是正常退出；从终端启动后关掉终端窗口不走正常退出 | 待提 | 1.1.1 |
+| `pwe-1.1.1-receiver`（待合并） | 接收端 `display.c`、`main.c`：等待和连接中画面只在变化时或每 100 / 33 ms 呈现一次（原来每圈都呈现）；没有会话时主循环每圈睡 10 ms（原 1 ms，有会话仍 1 ms） | 评审 2026-10-22：待机时约 700–1000 次/秒重画，老 iMac 待机发热的第一嫌疑 | 待提 | 1.1.1；改前后要在真机量待机 CPU |
 
 打包时的改名（`pwe/rebrand.py`）不改仓库里的文件，所以不在这张表里。它的锚点由脚本自己检查：上游改了对应的文字，脚本就会停下。
 

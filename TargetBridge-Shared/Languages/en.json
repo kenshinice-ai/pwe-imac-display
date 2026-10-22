@@ -183,7 +183,7 @@
   "receiver.login.toggle_hint": "press A to change",
   "receiver.login.unavailable": "Move it to Applications first",
   "receiver.already_running.title": "TargetBridge Receiver is already running",
-  "receiver.already_running.body": "Only one receiver can run at a time. This copy will close, and the one already open comes to the front.",
+  "receiver.already_running.body": "Only one receiver can run at a time. This copy will close, and the one already open comes to the front. To use this copy instead, quit the other one first.",
   "receiver.fatal.title": "TargetBridge Receiver could not start",
   "receiver.fatal.display": "The receiver could not open its window on this display.",
   "receiver.fatal.decoder": "The receiver could not start its video decoder.",

@@ -183,7 +183,7 @@
   "receiver.login.toggle_hint": "按 A 切换",
   "receiver.login.unavailable": "请先移到“应用程序”文件夹",
   "receiver.already_running.title": "TargetBridge 接收端已在运行",
-  "receiver.already_running.body": "同时只能运行一个接收端。这个会关闭，已打开的那个会回到前台。",
+  "receiver.already_running.body": "同时只能运行一个接收端。这一份会关闭，已经打开的那份回到前台。要改用这一份，请先退出那一份。",
   "receiver.fatal.title": "TargetBridge 接收端无法启动",
   "receiver.fatal.display": "接收端无法在这台显示器上打开窗口。",
   "receiver.fatal.decoder": "接收端无法启动视频解码器。",
