@@ -8,6 +8,7 @@
 > **RC8**（2026-10-22 17:30，`pwe-1.1` d00ee1b，构建号 20261022173038，sha256 `2fb9f9b3…`，未公证）在 `pwe/dist/local/`：RC7 加 1.1.1 的全部 27 项修复（发送端 15、接收端 12；Lee 2026-10-22 定全部进 1.1），每项过了独立评审，评审提出的问题已修。验证：源码全套通过（发送端 390 个测试、接收端单元测试、两种架构冒烟）；成品检查通过（check-bundle、无测试钩子、两端版本一致、签名有效）。另：`test_audio_out` 的退出计时检查在一次带负载的运行里超出 280–1000 ms 窗口，单独重跑 5 次全过，是负载下的计时抖动，1.1.1 放宽上限。RC7 移到 `pwe/dist/local/rc7-20261022085717/`。真机测试按 `TEST-1.1-rc-2026-10-21.md`「RC8」W0–W12，10-25 晚前做完；不过就发 5a568d2（RC7 + 文档），修复留 1.1.1。
 > **RC8 真机结果（2026-10-22 18:00–22:31，测试机）：定为发布候选。** W0–W6、W8、W10–W12 通过；W9 部分通过是判据写错（T48，设计如此，判据已改）；W7 登录时打开还没测。待机 CPU 从约 20% 降到约 5%，内存 104 → 41 MB。30 分钟办公三道门 PASS，但内存趋势 49.8 MB/h 擦着 50 的门槛，发布前再跑一次 2 h。新问题 T49（接收端权限何时请求）交 Lee 定；其余观察放 1.1.1。5K 60 下 testufo 实测约 48 fps、40 s 后约 21 fps（OpenGL 和 Metal 一样，不是新问题）：对外不写「实测 60 Hz」。结果在 BASELINE「RC8」，问题在 ISSUES「RC8」。
 > Lee 2026-10-22 23:30 定：RC8 不再加测（2 h 办公不跑，发布后汇总 bug 修完再一起测）；T49 维持现状，使用说明补了一句（`pwe-1.1` 1cd46c7 只改文档，在 RC8 源码 d00ee1b 之上；网页版使用说明两个语言页也补了）；对外去掉「实测 60 Hz」：本仓库草稿已改，小红书第 6 张图已改（bc65031，Claude 看过新图）；工具站源码已改（分支 site-encore-5k fd05d29，未部署，等 Lee 在工具站会话说「部署」，可随 10-23 19:05 后那次部署一起上）；产品片已改四处（旁白第 10 条重录、F2 画面大字、YouTube 和 B 站说明、方案文档）；旧说法只留在没对外的 G2 r3 审片稿里，G3 成片合成时用新文字。W7 登录时打开没测：方便时注销登录一次看看，不卡发布。
+> **发布前就绪（2026-10-22 深夜）：** `pwe-1.1` 现在是 7b5b5c0，RC8 源码之上只改了文档（使用说明补键鼠一节；发布说明补进 1.1.1 并入的改动、去掉 60 Hz 的流畅说法、「已知」加一条 5K 快速动画帧率）。cask 草稿和 10-26、10-28 的顺序在 `docs/pwe/release-day-2026-10-28/`（不入库）。
 > 打磨（Lee 2026-10-22 定：按清单 https://claude.ai/artifact/TVduMSotx4napQXPrUZgth 执行）。已做：仓库 Issues 打开、两个 issue 模板推到 main（41795e7）、Actions 关掉（API）、描述/主页/wiki 改好；`pwe-1.1` 上文档扫过一遍、加「更新」一节、`docs/pwe/COMPATIBILITY.md`、`docs/pwe/releases/1.1.0.md`（74d86c0）；上游 maint-3.6 合并干跑：18 个文件，4 个冲突（`display.c` 11 处最重），见 `docs/pwe/UPSTREAM-DRYRUN-2026-10-22.md`。`pwe-1.1` 现在是 5a568d2：74d86c0 之上加了 verify.sh 四项检查（贴票据、两端版本一致、成品无测试钩子字符串、标签在 HEAD；3049f99）和一处两行的接收端修正（`TB_RECEIVER_TEST_PORT`、`TB_RECEIVER_NO_BONJOUR` 只在测试构建里读，06de21a——新的钩子扫描发现的，正式版不会再认这两个环境变量）；2026-10-22 全套 verify 通过（376 个发送端测试、接收端单元测试、两种架构冒烟）。这两行没有重新上真机：改动只是让正式版不读两个没人设置的环境变量。进行中（本地分支，发布后再合）：`pwe-1.1.1-sender`、`pwe-1.1.1-receiver`。1.1.1 目标 11 月中旬，和 T+14 同天。
 > Lee 2026-10-22 按推荐定：1.1 完全免费（不注册、不试用、不锁功能，收入靠赞助，收费推到 2.0、T+60 约 2026-12-27 复盘）；新 cask 叫 `pwe-screen-encore`；仓库 Sponsor 按钮指向 pwestudio.site/support；10-26 晚的 go/no-go 推荐 go，到时只核对门槛。
 > 宣发（Lee 2026-10-21 定，按宣发简报的推荐）：发布和推广拆开，英文推广等第二款机型的结果和第一周 issue 处理得过来；10-26 晚按门槛定 go/no-go，推迟就整个日历顺延；首波只开微信、小红书、V2EX；T+14 前推广不提配对和加密；仓库 `pwe-imac-display` 发布周不改名，1.1.x 再议。简报 `docs/pwe/LAUNCH-BRIEF-1.1-2026-10-21.md`，网页版 https://claude.ai/artifact/DVXRmqViPuUQFGeBgR5oFS 。
@@ -65,7 +66,7 @@
 3. 打标签 `git tag pwe-1.1.0`（测试版用过的同名本地标签已于 10-22 删掉，重新打即可），在解锁的屏幕上运行 `pwe/package.sh --notarize`。成功判据：DMG 和两个 App 都是 `source=Notarized Developer ID`，`bundle checks passed`。
 4. 推送：`git push origin main pwe-1.1.0`，只推这一个标签。
 5. 发 release：`gh release create pwe-1.1.0 --notes-file docs/pwe/releases/1.1.0.md`，上传 `pwe/dist/` 的三个文件；说明只写一般说法，不写复现细节。成功判据：`gh release download` 回来的文件通过 `shasum -c`。
-6. 在 `homebrew-tap` 加新 cask `pwe-screen-encore`（Lee 2026-10-22 定）。`zap` 要列全：`~/Library/Application Support/PWE Screen Encore*`、`~/Library/Preferences/com.pwegroup.pweimacdisplay*.plist`、`~/Library/LaunchAgents/com.pwegroup.pweimacdisplay.receiver.plist`、`~/Library/Logs/PWE Screen Encore Receiver/`、`~/Library/Saved Application State/com.pwegroup.pweimacdisplay.savedState`、`~/Library/HTTPStorages/com.pwegroup.pweimacdisplay`；`caveats` 写「接收端要拷到 iMac 上：在 iMac 上打开同一个磁盘映像」。成功判据：`brew fetch --cask` 显示 ✔。
+6. 在 `homebrew-tap` 加新 cask `pwe-screen-encore`（Lee 2026-10-22 定）。先在 `homebrew-tap` 运行 `git pull --ff-only`。再复制草稿 `docs/pwe/release-day-2026-10-28/pwe-screen-encore.rb`，填 sha256。数据目录仍是旧名「PWE iMac Display」「PWE iMac Display Receiver」，草稿的 zap 已按这个写（2026-10-22 对着 RC8 核过）。成功判据：`brew fetch --cask` 显示 ✔。
 7. README 第一段改回下载说明。
 7a. 更新工具站（iCloud 里 `PWE Loan Bar` 的 checkout；做法见那边 `site/README.md`「A new product」）。
     1. 在 `site/functions/_release.js` 加 `screenencore`（version、published、notes_en、notes_cn）。成功判据：产品页「Latest」不再显示 `No release yet.`。
@@ -95,8 +96,6 @@
 
 ## 1.1 发版前（Claude 做，不等 Lee）
 
-- `package.sh` 的接收端 make 行合并后要同时带 `DIRECT_LINK_ONLY=1 COMPACT_IDLE=1 OFFER_LOGIN_ITEM=1`。
-- cask 的 `zap` 加上 `~/Library/LaunchAgents/com.pwegroup.pweimacdisplay.receiver.plist`。
 - 给上游提 PR：发送端「重新打开」按钮只退出不重开（PWE 已在 `rebrand.py` 里修）。
 - 基线里发送端的问题已在 `pwe-1.1` 修完（2026-10-19），新 2017 款 iMac 默认 5K 60。等真机复测。
 - Lumen Bar 的交接在它自己仓库的分支 `claude/imac-display-handoff-8e14dc`（e27f28a），未合并。和 1.1 一起发。
