@@ -6,8 +6,9 @@ for a newer Mac. No firmware hacks, no teardown, one Thunderbolt cable. [中文]
 Formerly PWE iMac Display; renamed with 1.1.
 
 > **Get the latest version**: [download the disk image](https://github.com/kenshinice-ai/pwe-imac-display/releases/latest),
-> or `brew install --cask kenshinice-ai/tap/pwe-imac-display`. As of 2026-10-16 it has not
-> yet run on a real Intel iMac; if it misbehaves on yours, please open an issue.
+> or `brew install --cask kenshinice-ai/tap/pwe-screen-encore`. Fully tested on the 2017
+> 27-inch 5K iMac; other 2014–2020 models should work by design — a "Model report" issue
+> with your result helps everyone.
 
 ## What it is
 

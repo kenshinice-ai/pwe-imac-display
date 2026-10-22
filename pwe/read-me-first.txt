@@ -10,6 +10,7 @@ PWE Screen Encore（用于 iMac）— 读我
 1. 在新 Mac 上：把「PWE Screen Encore」拖进「应用程序」并打开。
    第一次打开时，按提示在「隐私与安全性」里允许录屏。
 2. 在 iMac 上：把「PWE Screen Encore Receiver」拷进 iMac 的「应用程序」并打开。
+   最简单的办法：在 iMac 上也下载并打开这个磁盘映像，把 Receiver 拖进「应用程序」。
    屏幕中间显示「等待 Mac 连接」。iMac 需要 macOS 11 或更新。
    如果 iMac 问是否允许它查找本地网络上的设备，点「允许」。
 3. 用雷雳线连接两台电脑。
@@ -41,7 +42,8 @@ these. Settings and pairing are kept.
 1. On the newer Mac: drag "PWE Screen Encore" to Applications and open it.
    The first time, allow Screen Recording in Privacy & Security when asked.
 2. On the iMac: copy "PWE Screen Encore Receiver" to the iMac's Applications and
-   open it. It shows "Waiting for your Mac" in the middle of the screen.
+   open it. Easiest: download and open this same disk image on the iMac, and drag
+   Receiver to Applications there. It shows "Waiting for your Mac" in the middle of the screen.
    The iMac needs macOS 11 or later.
    If the iMac asks whether it may find devices on your local network,
    click Allow.

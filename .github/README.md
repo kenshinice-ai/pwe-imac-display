@@ -13,8 +13,8 @@
 
 ---
 
-> **下载最新版本**：[下载 DMG](https://github.com/kenshinice-ai/pwe-imac-display/releases/latest)，或 `brew install --cask kenshinice-ai/tap/pwe-imac-display`。
-> 安装和连接步骤见 [安装指南](../docs/pwe/安装指南.md)。截至 2026-10-16 还没在真实的 Intel iMac 上运行过，遇到问题请开 issue。
+> **下载最新版本**：[下载 DMG](https://github.com/kenshinice-ai/pwe-imac-display/releases/latest)，或 `brew install --cask kenshinice-ai/tap/pwe-screen-encore`。
+> 安装和连接步骤见 [安装指南](../docs/pwe/安装指南.md)。适用 2014–2020 年的 27 吋 5K iMac；我们在 2017 款上完整测过，其他年份按设计应当可用，欢迎用「机型回报」issue 告诉我们你的结果。
 
 ## 这是什么
 

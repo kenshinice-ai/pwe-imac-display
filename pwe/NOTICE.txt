@@ -38,7 +38,7 @@ receiver. The exact configure command is in "FFmpeg configuration.txt".
 
 To relink the receiver with your own or a modified FFmpeg (needs Xcode,
 XcodeGen and pkg-config, e.g. "brew install xcodegen pkg-config"; no Apple
-account or signing identity). This works from release 1.0.1 on:
+account or signing identity). This works from release 1.1.0 on:
 
   1. git clone https://github.com/kenshinice-ai/pwe-imac-display.git
      cd pwe-imac-display
