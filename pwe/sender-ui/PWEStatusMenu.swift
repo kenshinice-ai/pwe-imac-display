@@ -132,6 +132,10 @@ final class PWEStatusMenu: NSObject {
         button.image = image
         button.appearsDisabled = !showing
         button.toolTip = "\(strings.appName) — \(strings.status(phase))"
+        // VoiceOver: the app's name, then where things stand, as the tooltip
+        // reads. Called on every phase change, so the value never goes stale.
+        button.setAccessibilityLabel(strings.appName)
+        button.setAccessibilityValue(strings.status(phase))
     }
 
     // MARK: - Building the menu
