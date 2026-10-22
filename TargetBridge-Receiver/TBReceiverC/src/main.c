@@ -54,6 +54,7 @@
 
 #include <SDL.h>
 #include <ApplicationServices/ApplicationServices.h>
+#include <IOKit/pwr_mgt/IOPMLib.h>
 #include <dns_sd.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreGraphics/CoreGraphics.h>
@@ -1062,9 +1063,24 @@ static void tb_receiver_apply_input_control_mode(struct app *a, const uint8_t *p
 
 /* ---- Callbacks: decoder → display ------------------------------------ */
 
+/* PWE (1.1.1): a session's first picture wakes the iMac's screen, as a key
+ * press would. A Mac that connects to an iMac whose display has gone to sleep
+ * otherwise streams to a dark panel until someone touches the iMac. Declared
+ * on the first frame, not on accept: only a session that got through the
+ * handshake and is sending pictures counts. A password-locked iMac wakes to
+ * its lock screen and stays locked. */
+static void tb_receiver_wake_screen_for_session(void) {
+    static IOPMAssertionID activity = kIOPMNullAssertionID;
+    const IOReturn r = IOPMAssertionDeclareUserActivity(CFSTR("PWE Screen Encore session"),
+                                                        kIOPMUserActiveLocal, &activity);
+    if (r == kIOReturnSuccess) fprintf(stderr, "[power] first picture: screen woken\n");
+    else fprintf(stderr, "[power] first picture: could not wake the screen (0x%x)\n", (unsigned)r);
+}
+
 static void on_frame(const struct tb_frame *frame, void *ud) {
     struct app *a = (struct app *)ud;
     tb_trace_mark_now(frame->trace_id, TB_TRACE_DECODED);
+    if (!a->have_video_frame) tb_receiver_wake_screen_for_session();
     a->have_video_frame = 1;
     tb_copy_i18n(a->status_text, sizeof(a->status_text), "receiver.status.stream_active");
     {
@@ -1107,6 +1123,7 @@ static void handle_raw_frame(struct app *a, const uint8_t *p, size_t len) {
     const uint32_t trace_id = tb_trace_frame_arrived();
     tb_trace_mark_now(trace_id, TB_TRACE_DECODED);   /* nothing to decode */
 
+    if (!a->have_video_frame) tb_receiver_wake_screen_for_session();
     a->have_video_frame = 1;
     tb_copy_i18n(a->status_text, sizeof(a->status_text), "receiver.status.stream_active");
     {
