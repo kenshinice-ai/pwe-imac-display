@@ -26,6 +26,11 @@ in a mounted release image, to check what was actually shipped.
    Apple's "iMac"). Checked: the bundle's file name, every string in Info.plist
    and in the bundled language and .strings files. The bundle identifiers keep
    the old spelling on purpose; written in lower case, they do not match.
+5. No test hook may survive in a shipped executable. The receiver's hooks are
+   environment variables named TB_RECEIVER_TEST_* behind `make TEST_HOOKS=1`;
+   the sender's are the pweTest* members of its Debug builds. Every
+   architecture slice is searched for those names: a name that is in the
+   binary is read by the binary, so the hook is live for anyone who sets it.
 """
 import json
 import plistlib
@@ -45,6 +50,10 @@ ADDED_IN = {
 # engine's defaults key prefix and its log subsystem.
 OLD_SCHEME = b"targetbr"
 KEPT_PREFIXES = (b"_", b"com.")
+
+# Names that only test builds may contain, longest first so that one
+# occurrence is reported once.
+TEST_HOOKS = re.compile(rb"TB_RECEIVER_TEST_LOOPBACK_IS_CABLE|TB_RECEIVER_TEST_|TEST_HOOKS|pweTest")
 
 
 SENDER_ID = "com.pwegroup.pweimacdisplay"
@@ -91,21 +100,39 @@ def check_weak_imports(binary, arch):
     return faults
 
 
+def slice_bytes(binary, arch, scratch):
+    thin = scratch / f"{binary.name}.{arch}"
+    subprocess.run(["lipo", "-thin", arch, str(binary), "-output", str(thin)], check=True)
+    data = thin.read_bytes()
+    thin.unlink()
+    return data
+
+
+def shown(data, start, end):
+    return "".join(chr(b) if 32 <= b < 127 else "." for b in data[max(0, start):end])
+
+
 def check_old_scheme(binary, scratch):
     if "x86_64" not in archs(binary):
         return [f"{binary.name}: no x86_64 slice to search for the old URL scheme"]
-    thin = scratch / f"{binary.name}.x86_64"
-    subprocess.run(["lipo", "-thin", "x86_64", str(binary), "-output", str(thin)], check=True)
-    data = thin.read_bytes()
-    thin.unlink()
+    data = slice_bytes(binary, "x86_64", scratch)
     faults = []
     for match in re.finditer(re.escape(OLD_SCHEME), data):
         start = match.start()
         if any(data[start - len(p):start] == p for p in KEPT_PREFIXES):
             continue
-        context = data[max(0, start - 8):start + 16]
-        shown = "".join(chr(b) if 32 <= b < 127 else "." for b in context)
-        faults.append(f"{binary.name} x86_64 @0x{start:x}: old scheme bytes in code: {shown!r}")
+        faults.append(f"{binary.name} x86_64 @0x{start:x}: old scheme bytes in code: "
+                      f"{shown(data, start - 8, start + 16)!r}")
+    return faults
+
+
+def check_test_hooks(binary, arch, scratch):
+    data = slice_bytes(binary, arch, scratch)
+    faults = []
+    for match in TEST_HOOKS.finditer(data):
+        start = match.start()
+        faults.append(f"{binary.name} {arch} @0x{start:x}: test hook in a shipped binary: "
+                      f"{shown(data, start, start + 40)!r}")
     return faults
 
 
@@ -183,6 +210,7 @@ def main(paths):
             for binary in executables(path):
                 for arch in archs(binary):
                     faults += check_weak_imports(binary, arch)
+                    faults += check_test_hooks(binary, arch, scratch)
                 faults += check_old_scheme(binary, scratch)
             faults += check_add_ons(path)
             faults += check_old_name(path)
