@@ -327,6 +327,9 @@ final class PWESenderModel: ObservableObject {
     }
     @Published private(set) var launchAtLogin = false
     @Published private(set) var launchAtLoginNeedsApproval = false
+    /// This copy runs from a place it may not be at the next login (a disk
+    /// image, a download), so Open at login is not offered (PWELoginItemRules).
+    let launchAtLoginUnavailable: Bool
 
     let service: TBDisplaySenderService?
     private let defaults: UserDefaults
@@ -423,6 +426,7 @@ final class PWESenderModel: ObservableObject {
         self.setupFinished = defaults.object(forKey: Keys.setupFinished) as? Bool
             ?? (defaults.object(forKey: Keys.pictures) != nil)
         self.inputRole = PWEInputRole(rawValue: defaults.string(forKey: Keys.inputRole) ?? "") ?? .off
+        self.launchAtLoginUnavailable = !PWELoginItemRules.canRegister(bundlePath: Bundle.main.bundlePath)
         self.localMute = PWELocalAudioMute(defaults: defaults)
         refreshLaunchAtLogin()
         resetNetworkLinkOnce()
@@ -483,6 +487,7 @@ final class PWESenderModel: ObservableObject {
         self.firstConnection = firstConnection
         // As the first connection leaves it: Open at login on.
         self.launchAtLogin = true
+        self.launchAtLoginUnavailable = false
         self.inputRole = inputRole
         self.phase = phase
     }
@@ -490,6 +495,16 @@ final class PWESenderModel: ObservableObject {
     // MARK: - Reading the engine
 
     private var session: TBDisplaySenderSession? { service?.sessions.first }
+
+    /// The picture on the iMac while it is a display, for the menu's live line.
+    var showingPreset: TBDisplayCapturePreset { session?.capturePreset ?? picture }
+
+    /// Frames sent in the last second (the engine's `senderFPS`), and its
+    /// once-a-second updates. Snapshots have no engine and show a steady 60.
+    var framesPerSecond: Int { service == nil ? 60 : session?.liveMetrics.senderFPS ?? 0 }
+    var framesPerSecondUpdates: AnyPublisher<Int, Never>? {
+        session?.liveMetrics.$senderFPS.removeDuplicates().eraseToAnyPublisher()
+    }
 
     /// Whether the session dials over Network Link rather than the cable.
     var connectsOverNetwork: Bool { session?.transportKind == .networkLink }
@@ -511,6 +526,7 @@ final class PWESenderModel: ObservableObject {
         heldFailure = PWEPhaseRules.heldFailure(after: heldFailure, state)
         let next = PWEPhaseRules.phase(state, held: heldFailure)
         if next != phase { phase = next }
+        PWEMainThreadWatch.shared.update(for: next)
         logTransition(state)
         followPairing(state.security)
         updateFirstConnection()
@@ -521,7 +537,8 @@ final class PWESenderModel: ObservableObject {
     }
 
     /// The first time an iMac becomes a display: show the extra lines, and turn
-    /// on Open at login, which the window's tick box shows and undoes.
+    /// on Open at login, which the window's tick box shows and undoes. A copy
+    /// that cannot be registered leaves the box off and says why.
     /// Connecting automatically is already on by default and is not asked.
     private func updateFirstConnection() {
         let shows = PWEFirstConnectionRules.showsTips(previously: firstConnection, setupFinished: setupFinished,
@@ -529,7 +546,7 @@ final class PWESenderModel: ObservableObject {
         if shows != firstConnection { firstConnection = shows }
         guard shows, !setupFinished else { return }
         setupFinished = true
-        if !launchAtLogin, !launchAtLoginNeedsApproval { setLaunchAtLogin(true) }
+        if !launchAtLogin, !launchAtLoginNeedsApproval, !launchAtLoginUnavailable { setLaunchAtLogin(true) }
     }
 
     /// The picture is up with sound relayed: the iMac is playing this Mac's audio.
@@ -751,10 +768,14 @@ final class PWESenderModel: ObservableObject {
     /// The receiver the Picture choice belongs to: the one on screen, or the
     /// session's remembered one while it is briefly out of the list.
     private var receiverKey: String? {
-        if let service, let target = current(service) { return target.id }
-        guard let id = session?.selectedReceiverID, !id.isEmpty else { return nil }
-        return id
+        PWEPictureRules.pictureKey(onScreen: service.flatMap { current($0)?.id }, remembered: session?.selectedReceiverID)
     }
+
+    /// The Picture menu's choices can be set: there is an iMac to remember them
+    /// for. Not `knownReceiverName`, which is nil in an interruption whose iMac
+    /// has left the list, while "The picture did not start" points there.
+    /// Snapshots have no engine and go by the phase's iMac.
+    var canChoosePicture: Bool { service == nil ? knownReceiverName != nil : receiverKey != nil }
 
     private func rememberedPicture(for key: String?) -> TBDisplayCapturePreset? {
         guard let key, let raw = (defaults.dictionary(forKey: Keys.pictures) as? [String: String])?[key] else { return nil }
@@ -915,8 +936,12 @@ final class PWESenderModel: ObservableObject {
                 // Turning relay off (the capture's audio is dropped, not sent), on
                 // again over that capture, or moving between iMac-only and both
                 // takes effect at once.
+                let wasOn = service.audioEnabled
                 session?.audioEnabled = relayOn
                 service.audioEnabled = relayOn
+                // Sound back on the iMac without a reconnect: send the level now,
+                // since the connection-time send was skipped while it was off.
+                if relayOn, !wasOn, let session { session.volume = session.volume }
             }
             refresh()
         }
@@ -978,6 +1003,11 @@ final class PWESenderModel: ObservableObject {
 
     func setLaunchAtLogin(_ on: Bool) {
         guard service != nil else { launchAtLogin = on; return }
+        if on, launchAtLoginUnavailable {
+            PWELog.note("[pwe] launch at login: not registering a copy outside Applications (\(Bundle.main.bundlePath))")
+            refreshLaunchAtLogin()
+            return
+        }
         do {
             if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
         } catch {
@@ -1264,11 +1294,20 @@ final class PWESenderModel: ObservableObject {
 
     func configurationChecks() -> [Check] {
         guard let service, let session else { return [] }
-        return service.configurationChecks(for: session).map {
+        return Self.checks(service.configurationChecks(for: session), language: service.language)
+    }
+
+    /// The engine's checks in PWE's words: Chinese, or English for every other
+    /// language. The engine speaks five, PWE two, so on a German, French or
+    /// Italian Mac the checks under Settings › Advanced's English headings came
+    /// out in that language (PWEStringsTests).
+    nonisolated static func checks(_ engine: [TBConfigurationCheck], language: TBDisplaySenderLanguage) -> [Check] {
+        let language = PWEStrings(language: language).language
+        return engine.map {
             Check(id: $0.id,
                   passed: $0.state == .pending ? nil : $0.state == .passed,
-                  title: TBDisplaySenderL10n.text($0.titleKey, service.language, $0.values),
-                  detail: TBDisplaySenderL10n.text($0.detailKey, service.language, $0.values))
+                  title: TBDisplaySenderL10n.text($0.titleKey, language, $0.values),
+                  detail: TBDisplaySenderL10n.text($0.detailKey, language, $0.values))
         }
     }
 
@@ -1285,12 +1324,13 @@ final class PWESenderModel: ObservableObject {
         let info = Bundle.main.infoDictionary ?? [:]
         lines.append("PWE Screen Encore \(info["CFBundleShortVersionString"] as? String ?? "?") (\(info["CFBundleVersion"] as? String ?? "?"))")
         lines.append("macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
+        lines.append(PWELogExport.thisMacLine())
         lines.append("Date \(ISO8601DateFormatter().string(from: Date()))")
         lines.append("")
         lines.append("Phase: \(phase)")
         if let service {
             for receiver in service.discoveredReceivers {
-                lines.append("Receiver: \(receiver.receiverName) version=\(receiver.version) hevc=\(receiver.supportsHEVCDecode) panel=\(receiver.panelSummary) tb=\(receiver.thunderboltIP.isEmpty ? "no" : "yes")")
+                lines.append(PWELogExport.receiverLine(receiver))
             }
             lines.append("Network Link add-on: \(networkLinkEnabled), audio add-on: \(service.audioRelayAvailable), input add-on: \(service.inputDockstationAvailable)")
         }

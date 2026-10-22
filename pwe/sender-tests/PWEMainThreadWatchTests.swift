@@ -37,4 +37,18 @@ final class PWEMainThreadWatchTests: XCTestCase {
                        "[pwe] main thread running again after 14.3 s")
         XCTAssertTrue(PWEStallTracker.line(.stalled(3), .defaultMode).contains("out of its default mode 3.0 s"))
     }
+
+    /// 1.1.1: the watch runs only while the iMac is being reached, shown, or
+    /// waits for an answer. Idle, its two wake-ups a second were the app's cost.
+    func testTheWatchRunsOnlyWhileASessionIsUnderWay() {
+        let imac = PWEReceiver(id: "imac", name: "iMac", detail: "")
+        XCTAssertTrue(PWEMainThreadWatch.watches(.connecting(imac, .reaching)))
+        XCTAssertTrue(PWEMainThreadWatch.watches(.connected(imac)))
+        XCTAssertTrue(PWEMainThreadWatch.watches(.security(imac, .needsCode(secondsLeft: 60, identityChanged: false))))
+        XCTAssertFalse(PWEMainThreadWatch.watches(.searching))
+        XCTAssertFalse(PWEMainThreadWatch.watches(.ready(imac)))
+        XCTAssertFalse(PWEMainThreadWatch.watches(.choose([imac])))
+        XCTAssertFalse(PWEMainThreadWatch.watches(.needsPermission))
+        XCTAssertFalse(PWEMainThreadWatch.watches(.interrupted(imac, .cableOrReceiverGone, retrying: true)))
+    }
 }

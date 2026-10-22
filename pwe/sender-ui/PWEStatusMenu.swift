@@ -16,34 +16,52 @@ import SwiftUI
 @MainActor
 final class PWEStatusMenu: NSObject {
     private let model: PWESenderModel
+    /// The daily check's finding, for one line under the status; nil in snapshots.
+    private let updates: UpdateCheck?
     private var statusItem: NSStatusItem?
     private var cancellables = Set<AnyCancellable>()
     private let actions = PWEMenuActionQueue()
     private var sliderTargets: [TBMenuSliderTarget] = []
     /// The menu's first line, kept current while the menu is open.
     private weak var statusLine: NSMenuItem?
+    /// "5K · 60 fps" under it while the picture is up, kept current the same
+    /// way from the engine's once-a-second count while the menu is open.
     /// The top menu while it is open, and which items it was built with.
     private weak var openMenu: NSMenu?
     private var builtShape: Shape?
     /// Snapshots: the words without an engine to ask.
     private let previewLanguage: TBDisplaySenderLanguage?
 
-    init(model: PWESenderModel) {
+    init(model: PWESenderModel, updates: UpdateCheck) {
         self.model = model
+        self.updates = updates
         self.previewLanguage = nil
         super.init()
         installItem()
+        updates.$available
+            .removeDuplicates()
+            .sink { [weak self] _ in DispatchQueue.main.async { [weak self] in self?.refreshOpenMenu() } }
+            .store(in: &cancellables)
         model.$phase
             .removeDuplicates()
             .sink { [weak self] phase in
                 self?.updateButton(phase)
                 guard let self else { return }
-                if let line = self.statusLine { line.title = self.strings.status(phase) }
+                if let line = self.statusLine { line.title = self.statusText(phase) }
                 // `$phase` publishes before the model changes. Look again on the
                 // next turn (the main queue also runs while a menu tracks) and
                 // rebuild an open menu whose items no longer fit: open while it
                 // reconnected, it kept Cancel and lost the sliders (T33, RC2).
                 DispatchQueue.main.async { [weak self] in self?.refreshOpenMenu() }
+            }
+            .store(in: &cancellables)
+        // "Reconnecting to apply the change…" for a few seconds after a setting
+        // that reconnects, in place of the phase's words (also in the window).
+        model.$reconnectNotice
+            .removeDuplicates()
+            .sink { [weak self] notice in
+                guard let self, let line = self.statusLine else { return }
+                line.title = self.statusText(self.model.phase, reconnecting: notice)
             }
             .store(in: &cancellables)
         // A code to type or a question to answer needs the window, even when the
@@ -65,6 +83,7 @@ final class PWEStatusMenu: NSObject {
     /// The menu as it would open, for `--pwe-snapshot`: no status item, nothing on screen.
     init(preview model: PWESenderModel, language: TBDisplaySenderLanguage) {
         self.model = model
+        self.updates = nil
         self.previewLanguage = language
         super.init()
     }
@@ -78,6 +97,13 @@ final class PWEStatusMenu: NSObject {
 
     private var strings: PWEStrings {
         PWEStrings(language: previewLanguage ?? model.service?.language ?? .english)
+    }
+
+    /// The first line's words: the phase, or the reconnect notice while it shows.
+    /// `$reconnectNotice` publishes before the model changes, so a sink passes
+    /// the new value in.
+    private func statusText(_ phase: PWEPhase, reconnecting: Bool? = nil) -> String {
+        (reconnecting ?? model.reconnectNotice) ? strings.reconnectNotice : strings.status(phase)
     }
 
     private func installItem() {
@@ -108,6 +134,10 @@ final class PWEStatusMenu: NSObject {
         button.image = image
         button.appearsDisabled = !showing
         button.toolTip = "\(strings.appName) — \(strings.status(phase))"
+        // VoiceOver: the app's name, then where things stand, as the tooltip
+        // reads. Called on every phase change, so the value never goes stale.
+        button.setAccessibilityLabel(strings.appName)
+        button.setAccessibilityValue(strings.status(phase))
     }
 
     // MARK: - Building the menu
@@ -117,11 +147,21 @@ final class PWEStatusMenu: NSObject {
     private struct Shape: Equatable {
         var showing, unencrypted, canDisconnect, volume: Bool
         var connectable: String?
+        var choices: [String]
+        var update: String?
     }
 
     private var shape: Shape {
         Shape(showing: model.isShowing, unencrypted: model.isUnencrypted, canDisconnect: model.canDisconnect,
-              volume: model.sound != .onlyThisMac, connectable: model.connectableReceiver?.id)
+              volume: model.sound != .onlyThisMac, connectable: model.connectableReceiver?.id,
+              choices: choosable.map(\.id), update: updates?.available?.version)
+    }
+
+    /// The iMacs to choose between when more than one is in sight: the menu
+    /// offers each, so choosing needs no trip to the window.
+    private var choosable: [PWEReceiver] {
+        if case .choose(let receivers) = model.phase { return receivers }
+        return []
     }
 
     private func refreshOpenMenu() {
@@ -135,9 +175,18 @@ final class PWEStatusMenu: NSObject {
         sliderTargets.removeAll()
         let strings = strings
 
-        let line = disabled(strings.status(model.phase))
+        let line = disabled(statusText(model.phase))
         statusLine = line
         menu.addItem(line)
+        if model.isShowing {
+            let preset = model.showingPreset
+            // A snapshot when the menu opens: the engine's fps timer does not run
+            // while a menu is tracking, so a live binding would never update here.
+            menu.addItem(disabled(strings.liveLine(preset, fps: model.framesPerSecond)))
+        }
+        if let version = updates?.available?.version {
+            menu.addItem(action(strings.updateAvailableMenu(version)) { NSWorkspace.shared.open(UpdateCheck.downloadPage) })
+        }
         if model.isUnencrypted {
             let warning = disabled(strings.notEncrypted)
             warning.image = NSImage(systemSymbolName: "lock.open.fill", accessibilityDescription: nil)
@@ -165,13 +214,22 @@ final class PWEStatusMenu: NSObject {
 
         var connection: [NSMenuItem] = []
         if model.canDisconnect {
-            connection.append(action(model.isShowing ? strings.disconnect : strings.cancel) { [weak model] in
+            let disconnect = action(model.isShowing ? strings.disconnect : strings.cancel) { [weak model] in
                 model?.disconnect()
-            })
+            }
+            // ⌘D while the menu is open, as Disconnect only: Cancel keeps none.
+            if model.isShowing { disconnect.keyEquivalent = "d" }
+            connection.append(disconnect)
         } else if let receiver = model.connectableReceiver {
             connection.append(action(strings.menuConnectTo(receiver.name)) { [weak model] in
                 model?.connect(to: receiver)
             })
+        } else {
+            for receiver in choosable {
+                connection.append(action(strings.menuConnectTo(receiver.name)) { [weak model] in
+                    model?.connect(to: receiver)
+                })
+            }
         }
         if model.isShowing {
             connection.append(action(strings.arrange) { [weak model] in model?.openDisplaySettings() })
@@ -198,8 +256,10 @@ final class PWEStatusMenu: NSObject {
         let item = NSMenuItem(title: strings.picture, action: nil, keyEquivalent: "")
         let submenu = NSMenu()
         submenu.autoenablesItems = false
-        // The picture is remembered per iMac; with none in sight there is nothing to set.
-        let knowsIMac = model.knownReceiverName != nil
+        // The picture is remembered per iMac; with none known there is nothing to
+        // set. A remembered iMac out of the list still counts: "The picture did
+        // not start" sends people here.
+        let knowsIMac = model.canChoosePicture
         for preset in model.pictureChoices {
             let choice = action(strings.pictureName(preset)) { [weak model] in model?.picture = preset }
             choice.state = knowsIMac && preset == model.picture ? .on : .off
@@ -388,7 +448,11 @@ final class PWEWindows {
         }
     }
 
-    func showSettings() {
+    /// Settings, at `tab` when one is given; `checkSetup` also runs Check
+    /// Setup in Advanced (the interrupted phase's Check Setup…).
+    func showSettings(tab: PWESettingsNavigation.Tab? = nil, checkSetup: Bool = false) {
+        if let tab { PWESettingsNavigation.shared.tab = tab }
+        if checkSetup { PWESettingsNavigation.shared.checkSetup = true }
         NSApp.activate(ignoringOtherApps: true)
         if let openSettings {
             openSettings()

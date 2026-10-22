@@ -134,7 +134,7 @@ final class TBDisplaySenderService: ObservableObject {
         refreshLocalInterfaces()
         addonStore.refresh()
         restorePersistedSessions()
-        startClipboardMonitoring()
+        updateClipboardMonitoring()
         activationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification,
             object: nil,
@@ -736,6 +736,8 @@ final class TBDisplaySenderService: ObservableObject {
             self?.updateInputRelayController()
             self?.schedulePersist()
             self?.objectWillChange.send()
+            // PWE: objectWillChange precedes the change; look again once it is made.
+            DispatchQueue.main.async { [weak self] in self?.updateClipboardMonitoring() }
         }
     }
 
@@ -827,6 +829,7 @@ final class TBDisplaySenderService: ObservableObject {
     }
 
     private func updateInputRelayController() {
+        updateClipboardMonitoring()
         guard inputDockstationAvailable,
               let session = sessions.first(where: { $0.inputControlRole == .senderMaster })
         else {
@@ -852,8 +855,23 @@ final class TBDisplaySenderService: ObservableObject {
         )
     }
 
+    /// PWE: the 10 Hz pasteboard poll runs only while a connected session relays
+    /// this Mac's clipboard (senderMaster). Unconditional, it woke the process
+    /// ten times a second for the whole of the app's life (1.1.1).
+    private func updateClipboardMonitoring() {
+        let wanted = sessions.contains { $0.inputControlRole == .senderMaster && ($0.isConnected || $0.isStreaming) }
+        if wanted, clipboardTimer == nil {
+            startClipboardMonitoring()
+        } else if !wanted, let timer = clipboardTimer {
+            timer.invalidate()
+            clipboardTimer = nil
+        }
+    }
+
     private func startClipboardMonitoring() {
         clipboardTimer?.invalidate()
+        // What is on the pasteboard now was there before the relay: not sent.
+        lastClipboardChangeCount = NSPasteboard.general.changeCount
         clipboardTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.pollClipboardIfNeeded()

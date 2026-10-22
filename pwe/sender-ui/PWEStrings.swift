@@ -37,7 +37,15 @@ struct PWEStrings {
     var aboutApp: String { t("About PWE Screen Encore", "关于 PWE Screen Encore") }
 
     // Permission
-    var permissionTitle: String { t("Allow Screen Recording", "允许录屏") }
+    /// System Settings' name for the permission, under Privacy & Security.
+    /// macOS 15 renamed the pane; read on macOS 27.0.1 (2026-10-22) from System
+    /// Settings' own strings: SCREENANDAUDIOCAPTURE "Screen & System Audio
+    /// Recording" / 「录屏与系统录音」, and the older SCREEN_CAPTURE "Screen
+    /// Recording"; macOS 13 and 14 call that pane 「屏幕录制」 in Chinese.
+    func screenRecording(macOS major: Int = ProcessInfo.processInfo.operatingSystemVersion.majorVersion) -> String {
+        major >= 15 ? t("Screen & System Audio Recording", "录屏与系统录音") : t("Screen Recording", "屏幕录制")
+    }
+    var permissionTitle: String { t("Allow \(screenRecording())", "允许\(screenRecording())") }
     var permissionBody: String {
         t("To show this Mac's screen on your iMac, PWE Screen Encore needs your permission. It records only the screen it shows on your iMac, and sends it nowhere else.",
           "要把这台 Mac 的画面显示到 iMac 上，PWE Screen Encore 需要你的允许。它只录制要显示在 iMac 上的画面，不发往其他任何地方。")
@@ -109,6 +117,24 @@ struct PWEStrings {
     }
     var arrange: String { t("Arrange Displays…", "排列显示器…") }
     var disconnect: String { t("Disconnect", "断开") }
+    /// The menu's line under the status while the picture is up: the picture's
+    /// size and the frames this Mac sent in the last second (the engine's
+    /// `senderFPS`). A still screen sends no frames; then only the size shows,
+    /// never "0 fps" (PWEStringsTests).
+    func liveLine(_ preset: TBDisplayCapturePreset, fps rawFPS: Int) -> String {
+        // The engine's counter catches up after a pause (a menu held open), so a
+        // reading above the panel's refresh is that, not the picture.
+        let fps = min(rawFPS, 60)
+        let size: String
+        switch preset {
+        case .native5k, .native5k60Experimental: size = "5K"
+        case .retina4k60: size = "4K"
+        case .standard1440p: size = "1440p"
+        default: size = preset.title
+        }
+        guard fps > 0 else { return size }
+        return "\(size) · " + t("\(fps) fps", "\(fps) 帧/秒")
+    }
 
     // Interrupted
     func interruptedTitle(_ reason: PWEReason) -> String {
@@ -158,6 +184,8 @@ struct PWEStrings {
     var autoConnect: String { t("Connect automatically when the cable goes in", "接上线就自动连接") }
     var launchAtLogin: String { t("Open at login", "登录时打开") }
     var launchAtLoginApproval: String { t("Allow in Login Items…", "在「登录项」里允许…") }
+    /// The copy runs from a disk image or a download folder (PWELoginItemRules).
+    var launchAtLoginMove: String { t("Move the app to Applications to open it at login.", "移到「应用程序」后可登录时打开。") }
 
     // Menu bar
     func menuConnectTo(_ name: String) -> String { t("Use \(name) as Display", "把 \(name) 用作显示器") }
@@ -165,9 +193,10 @@ struct PWEStrings {
     var quit: String { t("Quit PWE Screen Encore", "退出 PWE Screen Encore") }
     func status(_ phase: PWEPhase) -> String {
         switch phase {
-        case .needsPermission: return t("Needs Screen Recording permission", "需要录屏权限")
+        case .needsPermission: return t("Needs \(screenRecording()) permission", "需要\(screenRecording())权限")
         case .searching: return t("Looking for your iMac…", "正在找你的 iMac…")
-        case .choose: return t("Choose an iMac in the window", "请在窗口里选择 iMac")
+        // The menu lists each iMac under this line, as the window does.
+        case .choose: return t("Choose an iMac", "请选择 iMac")
         case .ready(let receiver): return t("\(receiver.name) is ready", "\(receiver.name) 已就绪")
         case .connecting(let receiver, _): return connectingTitle(receiver?.name) + "…"
         case .connected(let receiver): return connectedTitle(receiver?.name)
@@ -351,6 +380,8 @@ struct PWEStrings {
     }
     var diagnostics: String { t("Diagnostics", "诊断") }
     var checkSetup: String { t("Check Setup", "检查配置") }
+    /// The interrupted phase's way to the same checks, in Settings › Advanced.
+    var checkSetupEllipsis: String { t("Check Setup…", "检查配置…") }
     var checkSetupLabel: String { t("This Mac, the link and permissions", "这台 Mac、连接和权限") }
     var reportLabel: String { t("Report for support", "求助报告") }
     var passed: String { t("Passed", "通过") }
@@ -387,7 +418,11 @@ struct PWEStrings {
     var couldNotCheck: String { t("Could not check right now.", "暂时无法检查。") }
     var latestUnknown: String { t("Could not confirm the latest version.", "无法确认最新版本。") }
     func updateAvailable(_ version: String) -> String { t("Version \(version) is available.", "有新版本 \(version)。") }
+    /// The menu bar's line for it: choosing it opens the download page.
+    func updateAvailableMenu(_ version: String) -> String { t("Version \(version) is available…", "有新版本 \(version)…") }
     var download: String { t("Download", "下载") }
+    /// Quiets the daily reminder for this version (UpdateCheck.dismiss).
+    var later: String { t("Later", "以后再说") }
     var done: String { t("Done", "完成") }
 }
 

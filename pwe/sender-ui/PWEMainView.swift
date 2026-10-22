@@ -199,6 +199,13 @@ struct PWEMainView: View {
             PWESymbol(name: "desktopcomputer")
         } detail: {
             PWEProgressLine(strings.stage(stage))
+            // A setting that reconnects says so here too, not only in Settings.
+            if model.reconnectNotice {
+                Text(strings.reconnectNotice)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         } actions: {
             Button(strings.cancel) { model.disconnect() }
                 .controlSize(.large)
@@ -239,10 +246,17 @@ struct PWEMainView: View {
                 get: { model.launchAtLogin },
                 set: { model.setLaunchAtLogin($0) }))
                 .toggleStyle(.checkbox)
+                .disabled(model.launchAtLoginUnavailable && !model.launchAtLogin)
             if model.launchAtLoginNeedsApproval {
                 Button(strings.launchAtLoginApproval) { model.openLoginItemsSettings() }
                     .buttonStyle(.link)
                     .font(.callout)
+            }
+            if model.launchAtLoginUnavailable {
+                Text(strings.launchAtLoginMove)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -267,16 +281,22 @@ struct PWEMainView: View {
             if retrying { PWEProgressLine(strings.retrying) }
         } actions: {
             // Like Connecting: what is happening above, the way to stop it below.
-            if retrying {
-                Button(strings.stopRetrying) { model.stopRetrying() }
-                    .controlSize(.large)
-                    .keyboardShortcut(.cancelAction)
-            } else if let receiver {
-                Button(strings.tryAgain) { model.connect(to: receiver) }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .keyboardShortcut(.defaultAction)
+            HStack(spacing: 10) {
+                if retrying {
+                    Button(strings.stopRetrying) { model.stopRetrying() }
+                        .keyboardShortcut(.cancelAction)
+                } else if let receiver {
+                    Button(strings.tryAgain) { model.connect(to: receiver) }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
+                }
+                // Settings › Advanced's checks, run on arrival: what to look at
+                // when the hint above has not been enough.
+                Button(strings.checkSetupEllipsis) {
+                    PWEWindows.shared.showSettings(tab: .advanced, checkSetup: true)
+                }
             }
+            .controlSize(.large)
         }
     }
 

@@ -81,10 +81,15 @@ final class UpdateCheck: ObservableObject {
 
     private let lastCheckKey = "updateLastCheck"
     private let dismissedKey = "updateDismissedVersion"
+    /// Settings › General's switch for the daily check (an @AppStorage there).
+    nonisolated static let dailyKey = "pwe.updateChecks"
+    private var dailyTimer: DispatchSourceTimer?
 
     /// Once a day. The app runs for weeks at a time and a release happens a few times a month at
     /// the very most, so anything more frequent spends someone else's bandwidth to learn nothing.
     nonisolated static let interval: TimeInterval = 24 * 60 * 60
+    /// How often the timer looks; the daily gate is `interval`.
+    nonisolated static let timerInterval: TimeInterval = 60 * 60
 
     /// Which product is asking. The endpoint serves every PWE app, so the answer depends on it.
     nonisolated static let product = "screenencore"
@@ -154,6 +159,28 @@ final class UpdateCheck: ObservableObject {
     /// is a test that fails if a key is ever added to it.
     nonisolated static func payload(version: String) -> [String: String] {
         ["product": product, "version": version, "os": osVersion]
+    }
+
+    /// The daily check, from launch and then every 24 h, on a timer of its own:
+    /// a menu-bar app runs for weeks without its window, whose `.task` used to
+    /// be the only trigger. Ten seconds after launch, so the connection the
+    /// launch starts is not competing with it; an hour's leeway lets the system
+    /// coalesce the wake-up. Each firing re-reads the switch, and `checkIfDue`
+    /// still keeps to one round trip a day.
+    func startDailyChecks(firstAfter delay: TimeInterval = 10) {
+        guard dailyTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        // Hourly on the wall clock (`.now()` stops during sleep); `checkIfDue`
+        // still allows one round trip a day, and a failed one is retried an hour later.
+        timer.schedule(wallDeadline: .now() + delay, repeating: Self.timerInterval, leeway: .seconds(600))
+        timer.setEventHandler { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                await self.checkIfDue(enabled: self.defaults.object(forKey: Self.dailyKey) as? Bool)
+            }
+        }
+        dailyTimer = timer
+        timer.resume()
     }
 
     /// Hides the banner for this version only. A later release says so again.

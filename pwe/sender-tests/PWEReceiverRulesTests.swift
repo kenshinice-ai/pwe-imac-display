@@ -75,4 +75,13 @@ final class PWEReceiverRulesTests: XCTestCase {
         XCTAssertTrue(PWEReceiverNaming.isPWE(receiverName: "", serviceName: "PWE iMac Display LL-iMac-2017"))
         XCTAssertFalse(PWEReceiverNaming.isPWE(receiverName: "TargetBridge Den.local", serviceName: "TargetBridge Den.local"))
     }
+
+    /// 1.1.1: "The picture did not start" points at the Picture menu, so its
+    /// choices stay enabled for the remembered iMac while it is out of the list.
+    func testThePictureBelongsToTheRememberedIMacWhileItIsAway() {
+        XCTAssertEqual(PWEPictureRules.pictureKey(onScreen: "imac", remembered: "other"), "imac")
+        XCTAssertEqual(PWEPictureRules.pictureKey(onScreen: nil, remembered: "imac"), "imac")
+        XCTAssertNil(PWEPictureRules.pictureKey(onScreen: nil, remembered: ""))
+        XCTAssertNil(PWEPictureRules.pictureKey(onScreen: nil, remembered: nil))
+    }
 }
