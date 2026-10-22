@@ -83,6 +83,8 @@ LDFLAGS += -framework Metal -framework QuartzCore
 OBJC_SRC = src/tb_gesture_bridge.m src/tb_display_tweaks.m src/tb_login_item.m
 # The iMac's clipboard on its own thread, off the main loop (PWE 1.1, T40).
 OBJC_SRC += src/tb_clipboard.m
+# The copy already running, when a second one starts (PWE 1.1.1).
+OBJC_SRC += src/tb_running_app.m
 OBJC_SRC += $(OBJC_SRC_PWE_RENDER)
 OBJ = $(C_SRC:.c=.o) $(OBJC_SRC:.m=.o) $(SEC_OBJ)
 BIN = tbreceiver

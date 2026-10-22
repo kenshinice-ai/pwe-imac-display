@@ -107,7 +107,6 @@ int tb_net_listen(uint16_t port) {
 
     int yes = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-    setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes));
 
     struct sockaddr_in a;
     memset(&a, 0, sizeof(a));
@@ -115,7 +114,9 @@ int tb_net_listen(uint16_t port) {
     a.sin_port        = htons(port);
     a.sin_addr.s_addr = htonl(INADDR_ANY);
     if (bind(fd, (struct sockaddr *)&a, sizeof(a)) < 0) {
-        perror("[net] bind"); close(fd); return -1;
+        /* The caller reads errno (EADDRINUSE: another receiver); close() must not clobber it. */
+        const int saved = errno;
+        perror("[net] bind"); close(fd); errno = saved; return -1;
     }
     if (listen(fd, 1) < 0) {
         perror("[net] listen"); close(fd); return -1;
@@ -137,7 +138,6 @@ int tb_net_listen6(uint16_t port) {
         perror("[net] IPV6_V6ONLY"); close(fd); return -1;
     }
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-    setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes));
 
     struct sockaddr_in6 a;
     memset(&a, 0, sizeof(a));
@@ -146,7 +146,9 @@ int tb_net_listen6(uint16_t port) {
     a.sin6_port   = htons(port);
     a.sin6_addr   = in6addr_any;
     if (bind(fd, (struct sockaddr *)&a, sizeof(a)) < 0) {
-        perror("[net] bind (IPv6)"); close(fd); return -1;
+        /* The caller reads errno (EADDRINUSE: another receiver); close() must not clobber it. */
+        const int saved = errno;
+        perror("[net] bind (IPv6)"); close(fd); errno = saved; return -1;
     }
     if (listen(fd, 1) < 0) {
         perror("[net] listen (IPv6)"); close(fd); return -1;

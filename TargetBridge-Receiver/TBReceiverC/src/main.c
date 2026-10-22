@@ -29,6 +29,7 @@
 #include "tb_trace.h"
 #include "tb_clipboard.h"
 #include "tb_sysinfo.h"
+#include "tb_running_app.h"
 /* PWE: pairing and encrypted sessions */
 #include "pwe_secure.h"
 #include "pwe_keystore.h"
@@ -2512,7 +2513,26 @@ int main(int argc, char **argv) {
     }
 #endif
     a.server_fd = tb_net_listen(listen_port);
-    if (a.server_fd < 0) { fprintf(stderr, "tb_net_listen failed\n"); return 1; }
+    if (a.server_fd < 0) {
+        if (errno == EADDRINUSE) {
+            /* PWE (1.1.1): another receiver holds the port. Say so, bring the
+             * running copy to the front and leave quietly: this is the second
+             * copy, not a failure. */
+            fprintf(stderr, "[net] port %u is in use: another receiver is running; leaving\n",
+                    (unsigned)listen_port);
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION,
+                                     tb_i18n_get("receiver.already_running.title"),
+                                     tb_i18n_get("receiver.already_running.body"), NULL);
+            char bundle_id[128] = "";
+            CFStringGetCString(a.app_id, bundle_id, sizeof(bundle_id), kCFStringEncodingUTF8);
+            if (tb_running_app_activate(bundle_id)) {
+                fprintf(stderr, "[main] brought the running receiver to the front\n");
+            }
+            return 0;
+        }
+        fprintf(stderr, "tb_net_listen failed\n");
+        return 1;
+    }
     /* PWE (T34): IPv6 too, for the Thunderbolt Bridge's link-local address. */
     a.server6_fd = tb_net_listen6(listen_port);
     fprintf(stderr, "[net] listening on port %u over IPv4%s\n", (unsigned)listen_port,

@@ -182,6 +182,8 @@
   "receiver.login.state_off": "Disattivata",
   "receiver.login.toggle_hint": "premi A per cambiare",
   "receiver.login.unavailable": "Spostalo prima in Applicazioni",
+  "receiver.already_running.title": "TargetBridge Receiver è già in esecuzione",
+  "receiver.already_running.body": "Può essere in esecuzione un solo ricevitore alla volta. Questa copia si chiuderà e quella già aperta torna in primo piano.",
   "receiver.language.auto": "Automatico",
   "receiver.status.waiting_for_sender": "in attesa del sender",
   "receiver.splash.connecting": "Connessione al MacBook in corso",
