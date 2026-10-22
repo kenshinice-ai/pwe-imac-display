@@ -68,6 +68,7 @@
 | `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderService.swift` `sendVolumeUpdate()`：只在声音送到 iMac（`shouldRelayAudio`）时发音量包 | 每次连接都发记住的音量（默认 0.5），声音留在本机时也会改动 iMac 的系统音量 | 待提 | 本地提交，未推 |
 | `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderAutomation.swift`：重连循环的 attempt 日志只记前 3 次和每第 30 次，这些次的「preferred monitor unavailable」也不记；iMac 不在满 60 秒后，两次尝试之间的停顿上限由 2 秒升到 5 秒（`PWERetryPacing`，带测试），网桥重拨到期或 iMac 重新列出时仍立即结束停顿 | 拔线时每 2 秒记两行、唤醒一次进程，Mac 开着就一直如此 | 随 `74ad9ee` 一起提 | 本地提交，未推 |
 | `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderManager.swift`：剪贴板 10 Hz 轮询只在有已连接、角色为 senderMaster 的会话时运行（`updateClipboardMonitoring()`，角色和会话变化时重新判断）；开始轮询时先记下当前的 `changeCount` | 原来从启动起无条件运行，空闲时每秒唤醒进程 10 次 | 待提 | 本地提交，未推 |
+| `pwe-1.1.1-sender`（待合并） | 发送端 `TBReceiverDiscovery.swift`：`TBDiscoveredReceiver` 加 `receiverModel`、`receiverOS`（初始化参数有默认值 `""`），读 TXT 键 `model`、`os`；只供诊断报告 | 远程测试者的报告里没有 iMac 的型号和 macOS 版本；接收端 1.1.1 在 TXT 里发这两个键，没有时报告不写 | 待提（随接收端的 TXT 键） | 本地提交，未推 |
 
 打包时的改名（`pwe/rebrand.py`）不改仓库里的文件，所以不在这张表里。它的锚点由脚本自己检查：上游改了对应的文字，脚本就会停下。
 

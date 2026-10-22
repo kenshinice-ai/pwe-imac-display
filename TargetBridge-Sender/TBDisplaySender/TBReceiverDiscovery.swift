@@ -19,6 +19,11 @@ struct TBDiscoveredReceiver: Identifiable, Equatable {
     let version: String
     let supportsHEVCDecode: Bool
     let hostName: String?
+    /// PWE: the receiver Mac's model ("iMac18,3") and macOS version, from the
+    /// TXT keys `model` and `os`; "" when the receiver does not announce them.
+    /// For the diagnostic report only.
+    let receiverModel: String
+    let receiverOS: String
 
     init(
         serviceName: String,
@@ -35,7 +40,9 @@ struct TBDiscoveredReceiver: Identifiable, Equatable {
         panelSummary: String,
         version: String,
         supportsHEVCDecode: Bool,
-        hostName: String?
+        hostName: String?,
+        receiverModel: String = "",
+        receiverOS: String = ""
     ) {
         self.serviceName = serviceName
         self.receiverName = receiverName
@@ -52,6 +59,8 @@ struct TBDiscoveredReceiver: Identifiable, Equatable {
         self.version = version
         self.supportsHEVCDecode = supportsHEVCDecode
         self.hostName = hostName
+        self.receiverModel = receiverModel
+        self.receiverOS = receiverOS
     }
 
     /// SwiftUI selection and persisted sessions both use this stable identity.
@@ -273,7 +282,9 @@ final class TBReceiverDiscovery: NSObject, ObservableObject {
             panelSummary: panelSummary,
             version: version,
             supportsHEVCDecode: supportsHEVCDecode,
-            hostName: service.hostName
+            hostName: service.hostName,
+            receiverModel: stringValue("model"),
+            receiverOS: stringValue("os")
         )
 
         if let index = receivers.firstIndex(where: {

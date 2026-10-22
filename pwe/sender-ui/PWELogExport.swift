@@ -27,6 +27,53 @@ enum PWELogExport {
         return subsystem.isEmpty && sender == "Foundation"   // NSLog
     }
 
+    // MARK: - The report's header (1.1.1)
+
+    /// This Mac in one line: its model and what the app runs as. "x86_64
+    /// (Rosetta)" is the Intel build translated on Apple silicon, which costs
+    /// encoding speed (PWELogExportTests).
+    static func thisMacLine(model: String, arm64: Bool, translated: Bool) -> String {
+        let arch = arm64 ? "arm64" : "x86_64"
+        return "This Mac: \(model.isEmpty ? "?" : model) \(arch) (\(translated ? "Rosetta" : "native"))"
+    }
+
+    static func thisMacLine() -> String {
+        #if arch(arm64)
+        let arm64 = true
+        #else
+        let arm64 = false
+        #endif
+        return thisMacLine(model: sysctlString("hw.model") ?? "", arm64: arm64,
+                           translated: sysctlInt("sysctl.proc_translated") == 1)
+    }
+
+    /// One iMac in sight. Its model and macOS come from the receiver's
+    /// announcement and are left out when it does not make them (receivers
+    /// before 1.1.1).
+    static func receiverLine(_ receiver: TBDiscoveredReceiver) -> String {
+        var line = "Receiver: \(receiver.receiverName) version=\(receiver.version) hevc=\(receiver.supportsHEVCDecode)"
+            + " panel=\(receiver.panelSummary) tb=\(receiver.thunderboltIP.isEmpty ? "no" : "yes")"
+        if !receiver.receiverModel.isEmpty { line += " model=\(receiver.receiverModel)" }
+        if !receiver.receiverOS.isEmpty { line += " macOS=\(receiver.receiverOS)" }
+        return line
+    }
+
+    private static func sysctlString(_ name: String) -> String? {
+        var size = 0
+        guard sysctlbyname(name, nil, &size, nil, 0) == 0, size > 0 else { return nil }
+        var buffer = [CChar](repeating: 0, count: size)
+        guard sysctlbyname(name, &buffer, &size, nil, 0) == 0 else { return nil }
+        return String(cString: buffer)
+    }
+
+    /// nil when the name does not exist (`sysctl.proc_translated` on an Intel Mac).
+    private static func sysctlInt(_ name: String) -> Int32? {
+        var value: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        guard sysctlbyname(name, &value, &size, nil, 0) == 0 else { return nil }
+        return value
+    }
+
     /// The store filters by subsystem itself, so the frameworks' thousands of
     /// lines are never materialised; reading them all kept the main thread busy
     /// for about 15 s before the save panel appeared (T46, test Mac 2026-10-21).

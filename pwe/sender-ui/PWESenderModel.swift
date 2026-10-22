@@ -1320,12 +1320,13 @@ final class PWESenderModel: ObservableObject {
         let info = Bundle.main.infoDictionary ?? [:]
         lines.append("PWE Screen Encore \(info["CFBundleShortVersionString"] as? String ?? "?") (\(info["CFBundleVersion"] as? String ?? "?"))")
         lines.append("macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
+        lines.append(PWELogExport.thisMacLine())
         lines.append("Date \(ISO8601DateFormatter().string(from: Date()))")
         lines.append("")
         lines.append("Phase: \(phase)")
         if let service {
             for receiver in service.discoveredReceivers {
-                lines.append("Receiver: \(receiver.receiverName) version=\(receiver.version) hevc=\(receiver.supportsHEVCDecode) panel=\(receiver.panelSummary) tb=\(receiver.thunderboltIP.isEmpty ? "no" : "yes")")
+                lines.append(PWELogExport.receiverLine(receiver))
             }
             lines.append("Network Link add-on: \(networkLinkEnabled), audio add-on: \(service.audioRelayAvailable), input add-on: \(service.inputDockstationAvailable)")
         }
