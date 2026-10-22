@@ -13,6 +13,10 @@ import Foundation
 /// One line when a stall is noticed, one every 10 s while it lasts, one when it
 /// ends. No stack walking. Off: `defaults write com.pwegroup.pweimacdisplay
 /// pwe.mainThreadWatch -bool false`, then relaunch.
+///
+/// It runs only while a session is under way (`watches`): a stall matters when
+/// the iMac is waiting on this Mac. Idle, its two wake-ups a second were the
+/// app's main cost (1.1.1).
 final class PWEMainThreadWatch: @unchecked Sendable {
     static let enabledKey = "pwe.mainThreadWatch"
     static let shared = PWEMainThreadWatch()
@@ -24,6 +28,7 @@ final class PWEMainThreadWatch: @unchecked Sendable {
     // Everything below is read and written on `queue` only.
     private var mainQueue = Probe()
     private var defaultMode = Probe()
+    private var saidOff = false
 
     /// One kind of ping: when the unanswered one was posted, and what was reported.
     private struct Probe {
@@ -31,9 +36,24 @@ final class PWEMainThreadWatch: @unchecked Sendable {
         var tracker = PWEStallTracker()
     }
 
+    /// The phases the watch runs in: the iMac is being reached, prepared or shown,
+    /// or waits for an answer (PWEMainThreadWatchTests).
+    static func watches(_ phase: PWEPhase) -> Bool {
+        switch phase {
+        case .connecting, .connected, .security: return true
+        case .needsPermission, .searching, .choose, .ready, .interrupted: return false
+        }
+    }
+
+    /// Starts or stops the watch to match the phase (PWESenderModel.refresh).
+    func update(for phase: PWEPhase, defaults: UserDefaults = .standard) {
+        if Self.watches(phase) { start(defaults: defaults) } else { stop() }
+    }
+
     func start(defaults: UserDefaults = .standard) {
         guard defaults.object(forKey: Self.enabledKey) as? Bool ?? true else {
-            PWELog.note("[pwe] main thread watch is off (\(Self.enabledKey))")
+            if !saidOff { PWELog.note("[pwe] main thread watch is off (\(Self.enabledKey))") }
+            saidOff = true
             return
         }
         queue.async { [self] in
@@ -44,6 +64,18 @@ final class PWEMainThreadWatch: @unchecked Sendable {
             timer.setEventHandler { [weak self] in self?.check() }
             self.timer = timer
             timer.resume()
+        }
+    }
+
+    /// Stops the timer and forgets any ping in flight, so one answered after a
+    /// restart is not read as a stall.
+    func stop() {
+        queue.async { [self] in
+            guard let timer else { return }
+            timer.cancel()
+            self.timer = nil
+            mainQueue = Probe()
+            defaultMode = Probe()
         }
     }
 

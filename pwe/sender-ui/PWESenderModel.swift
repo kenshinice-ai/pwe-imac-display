@@ -516,6 +516,7 @@ final class PWESenderModel: ObservableObject {
         heldFailure = PWEPhaseRules.heldFailure(after: heldFailure, state)
         let next = PWEPhaseRules.phase(state, held: heldFailure)
         if next != phase { phase = next }
+        PWEMainThreadWatch.shared.update(for: next)
         logTransition(state)
         followPairing(state.security)
         updateFirstConnection()
