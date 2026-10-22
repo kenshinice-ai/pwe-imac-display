@@ -936,8 +936,12 @@ final class PWESenderModel: ObservableObject {
                 // Turning relay off (the capture's audio is dropped, not sent), on
                 // again over that capture, or moving between iMac-only and both
                 // takes effect at once.
+                let wasOn = service.audioEnabled
                 session?.audioEnabled = relayOn
                 service.audioEnabled = relayOn
+                // Sound back on the iMac without a reconnect: send the level now,
+                // since the connection-time send was skipped while it was off.
+                if relayOn, !wasOn, let session { session.volume = session.volume }
             }
             refresh()
         }

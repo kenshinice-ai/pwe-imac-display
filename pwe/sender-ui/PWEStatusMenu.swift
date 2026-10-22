@@ -26,8 +26,6 @@ final class PWEStatusMenu: NSObject {
     private weak var statusLine: NSMenuItem?
     /// "5K · 60 fps" under it while the picture is up, kept current the same
     /// way from the engine's once-a-second count while the menu is open.
-    private weak var liveLine: NSMenuItem?
-    private var liveUpdates: AnyCancellable?
     /// The top menu while it is open, and which items it was built with.
     private weak var openMenu: NSMenu?
     private var builtShape: Shape?
@@ -180,14 +178,11 @@ final class PWEStatusMenu: NSObject {
         let line = disabled(statusText(model.phase))
         statusLine = line
         menu.addItem(line)
-        liveUpdates = nil
         if model.isShowing {
             let preset = model.showingPreset
-            let live = disabled(strings.liveLine(preset, fps: model.framesPerSecond))
-            liveLine = live
-            menu.addItem(live)
-            liveUpdates = model.framesPerSecondUpdates?
-                .sink { [weak self] fps in self?.liveLine?.title = self?.strings.liveLine(preset, fps: fps) ?? "" }
+            // A snapshot when the menu opens: the engine's fps timer does not run
+            // while a menu is tracking, so a live binding would never update here.
+            menu.addItem(disabled(strings.liveLine(preset, fps: model.framesPerSecond)))
         }
         if let version = updates?.available?.version {
             menu.addItem(action(strings.updateAvailableMenu(version)) { NSWorkspace.shared.open(UpdateCheck.downloadPage) })
@@ -372,7 +367,6 @@ extension PWEStatusMenu: NSMenuDelegate {
     func menuDidClose(_ menu: NSMenu) {
         guard menu === statusItem?.menu else { return }
         openMenu = nil
-        liveUpdates = nil
         actions.menuDidClose()
     }
 }

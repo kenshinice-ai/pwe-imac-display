@@ -41,9 +41,9 @@ struct PWEStrings {
     /// macOS 15 renamed the pane; read on macOS 27.0.1 (2026-10-22) from System
     /// Settings' own strings: SCREENANDAUDIOCAPTURE "Screen & System Audio
     /// Recording" / 「录屏与系统录音」, and the older SCREEN_CAPTURE "Screen
-    /// Recording" / 「录屏」, taken as macOS 14's (not seen on a macOS 14 Mac).
+    /// Recording"; macOS 13 and 14 call that pane 「屏幕录制」 in Chinese.
     func screenRecording(macOS major: Int = ProcessInfo.processInfo.operatingSystemVersion.majorVersion) -> String {
-        major >= 15 ? t("Screen & System Audio Recording", "录屏与系统录音") : t("Screen Recording", "录屏")
+        major >= 15 ? t("Screen & System Audio Recording", "录屏与系统录音") : t("Screen Recording", "屏幕录制")
     }
     var permissionTitle: String { t("Allow \(screenRecording())", "允许\(screenRecording())") }
     var permissionBody: String {
@@ -121,7 +121,10 @@ struct PWEStrings {
     /// size and the frames this Mac sent in the last second (the engine's
     /// `senderFPS`). A still screen sends no frames; then only the size shows,
     /// never "0 fps" (PWEStringsTests).
-    func liveLine(_ preset: TBDisplayCapturePreset, fps: Int) -> String {
+    func liveLine(_ preset: TBDisplayCapturePreset, fps rawFPS: Int) -> String {
+        // The engine's counter catches up after a pause (a menu held open), so a
+        // reading above the panel's refresh is that, not the picture.
+        let fps = min(rawFPS, 60)
         let size: String
         switch preset {
         case .native5k, .native5k60Experimental: size = "5K"

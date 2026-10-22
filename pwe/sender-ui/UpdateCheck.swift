@@ -88,6 +88,8 @@ final class UpdateCheck: ObservableObject {
     /// Once a day. The app runs for weeks at a time and a release happens a few times a month at
     /// the very most, so anything more frequent spends someone else's bandwidth to learn nothing.
     nonisolated static let interval: TimeInterval = 24 * 60 * 60
+    /// How often the timer looks; the daily gate is `interval`.
+    nonisolated static let timerInterval: TimeInterval = 60 * 60
 
     /// Which product is asking. The endpoint serves every PWE app, so the answer depends on it.
     nonisolated static let product = "screenencore"
@@ -168,7 +170,9 @@ final class UpdateCheck: ObservableObject {
     func startDailyChecks(firstAfter delay: TimeInterval = 10) {
         guard dailyTimer == nil else { return }
         let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + delay, repeating: Self.interval, leeway: .seconds(3600))
+        // Hourly on the wall clock (`.now()` stops during sleep); `checkIfDue`
+        // still allows one round trip a day, and a failed one is retried an hour later.
+        timer.schedule(wallDeadline: .now() + delay, repeating: Self.timerInterval, leeway: .seconds(600))
         timer.setEventHandler { [weak self] in
             Task { @MainActor in
                 guard let self else { return }

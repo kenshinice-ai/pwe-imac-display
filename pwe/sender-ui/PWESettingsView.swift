@@ -125,7 +125,7 @@ struct PWEGeneralSettings: View {
                     Text(strings.launchAtLogin)
                     if model.launchAtLoginUnavailable { Text(strings.launchAtLoginMove) }
                 }
-                .disabled(model.launchAtLoginUnavailable)
+                .disabled(model.launchAtLoginUnavailable && !model.launchAtLogin)
                 if model.launchAtLoginNeedsApproval {
                     Button(strings.launchAtLoginApproval) { model.openLoginItemsSettings() }
                         .buttonStyle(.link)
@@ -137,6 +137,9 @@ struct PWEGeneralSettings: View {
             }
             Section {
                 Toggle(strings.checkUpdatesDaily, isOn: $dailyChecks)
+                    .onChange(of: dailyChecks) { _, on in
+                        if on { Task { await updates.checkIfDue(enabled: true) } }
+                    }
                 // What the daily check found; checking by hand is in About.
                 if let available = updates.available {
                     LabeledContent(strings.updateAvailable(available.version)) {

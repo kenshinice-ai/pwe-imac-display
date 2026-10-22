@@ -50,7 +50,7 @@ final class PWEStringsTests: XCTestCase {
     func testScreenRecordingIsCalledWhatSystemSettingsCallsIt() {
         let en = PWEStrings(language: .english), zh = PWEStrings(language: .chinese)
         XCTAssertEqual(en.screenRecording(macOS: 14), "Screen Recording")
-        XCTAssertEqual(zh.screenRecording(macOS: 14), "录屏")
+        XCTAssertEqual(zh.screenRecording(macOS: 14), "屏幕录制")
         XCTAssertEqual(en.screenRecording(macOS: 15), "Screen & System Audio Recording")
         XCTAssertEqual(zh.screenRecording(macOS: 15), "录屏与系统录音")
         XCTAssertEqual(zh.screenRecording(macOS: 26), "录屏与系统录音")
