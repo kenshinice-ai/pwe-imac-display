@@ -2516,7 +2516,11 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         send(packet)
     }
 
+    /// PWE: the iMac's system volume is set only while this Mac's sound plays
+    /// there. Sent on every connection, the remembered level (0.5 by default)
+    /// moved the iMac's own volume even with sound kept on this Mac (1.1.1).
     private func sendVolumeUpdate() {
+        guard shouldRelayAudio else { return }
         guard let packet = TBMonitorProtocol.makeJSONPacket(
             type: .volume,
             value: TBMonitorVolume(level: volume)
