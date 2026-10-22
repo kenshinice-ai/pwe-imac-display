@@ -91,6 +91,10 @@ struct tb_display {
     int           last_drawable_w;
     int           last_drawable_h;
     int           status_is_connecting;
+    /* PWE (1.1.1): when the idle or connecting screen was last presented. The
+     * main loop asks for it every pass; it is presented when its picture
+     * changed, else at TB_DISP_IDLE_PRESENT_MS / TB_DISP_CONNECTING_PRESENT_MS. */
+    uint64_t      last_status_present_ms;
 
     /* PWE pairing: a notice drawn in place of the calm idle screen's two lines
      * (and, for a warning, on the connecting screen). See tb_disp_set_notice. */
@@ -134,6 +138,21 @@ struct tb_display {
 };
 
 #define TB_DISP_QUIT_CONFIRM_MS 2000u
+
+/* PWE (1.1.1): how often an unchanged idle or connecting screen is presented
+ * again (a covered window gets its picture back; the spinner turns every 83 ms). */
+#define TB_DISP_IDLE_PRESENT_MS       100u
+#define TB_DISP_CONNECTING_PRESENT_MS  33u
+
+/* Whether to present the idle or connecting screen now: when its texture was
+ * rebuilt, or when `interval_ms` passed since the last present. Updates the
+ * stamp when it says yes. */
+static int tb_disp_status_present_due(struct tb_display *d, int rebuilt, uint64_t interval_ms) {
+    const uint64_t now = SDL_GetTicks64();
+    if (!rebuilt && d->last_status_present_ms && now - d->last_status_present_ms < interval_ms) return 0;
+    d->last_status_present_ms = now;
+    return 1;
+}
 
 /* Whether the screen should say "Press Esc again to quit" now (PWE build). */
 static int tb_disp_quit_hint(const struct tb_display *d) {
@@ -2589,6 +2608,7 @@ void tb_disp_render_status(struct tb_display *d,
     }
 
     const int quit_hint = tb_disp_quit_hint(d);
+    int rebuilt = 0;
     if (strcmp(d->last_ip, ip) != 0 ||
         strcmp(d->last_status, status) != 0 ||
         strcmp(d->last_sender, sender) != 0 ||
@@ -2604,6 +2624,7 @@ void tb_disp_render_status(struct tb_display *d,
         d->status_tex == NULL ||
         d->pwe_notice_dirty ||
         d->status_is_connecting) {
+        rebuilt = 1;
         d->pwe_notice_dirty = 0;
         snprintf(d->last_ip, sizeof(d->last_ip), "%s", ip);
         snprintf(d->last_status, sizeof(d->last_status), "%s", status);
@@ -2634,6 +2655,7 @@ void tb_disp_render_status(struct tb_display *d,
 
     /* On the Metal layer a covered window may wait a second for a drawable. */
     if (d->mtl && !tb_mtl_window_visible(d->mtl)) return;
+    if (!tb_disp_status_present_due(d, rebuilt, TB_DISP_IDLE_PRESENT_MS)) return;
     SDL_RenderClear(d->ren);
     if (d->status_tex) SDL_RenderCopy(d->ren, d->status_tex, NULL, NULL);
     const char *outer = TB_LOOP_ENTER("draw: SDL_RenderPresent (idle screen)");
@@ -2655,12 +2677,14 @@ void tb_disp_render_connecting(struct tb_display *d) {
     }
 
     const int quit_hint = tb_disp_quit_hint(d);
+    int rebuilt = 0;
     if (d->status_tex == NULL ||
         !d->status_is_connecting ||
         d->pwe_notice_dirty ||
         d->last_quit_hint != quit_hint ||
         d->last_drawable_w != drawable_w ||
         d->last_drawable_h != drawable_h) {
+        rebuilt = 1;
         d->pwe_notice_dirty = 0;
         d->last_drawable_w = drawable_w;
         d->last_drawable_h = drawable_h;
@@ -2676,6 +2700,7 @@ void tb_disp_render_connecting(struct tb_display *d) {
     tb_disp_set_title(d, "TargetBridge Receiver — Connecting");
 #endif
     if (d->mtl && !tb_mtl_window_visible(d->mtl)) return;
+    if (!tb_disp_status_present_due(d, rebuilt, TB_DISP_CONNECTING_PRESENT_MS)) return;
     SDL_RenderClear(d->ren);
     if (d->status_tex) SDL_RenderCopy(d->ren, d->status_tex, NULL, NULL);
     tb_disp_draw_connecting_spinner(d, drawable_w, drawable_h);

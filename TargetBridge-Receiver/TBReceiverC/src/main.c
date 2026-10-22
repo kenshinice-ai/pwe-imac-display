@@ -3,7 +3,7 @@
  * Single-threaded event loop:
  *   - SDL_PollEvent (non-blocking)  → quit detection
  *   - non-blocking socket read     → packet parser → decoder → renderer
- *   - 1ms sleep when idle           → CPU yield
+ *   - 1ms sleep between packets, 10ms with no sender → CPU yield
  *
  * No ObjC. No Cocoa NSApplication. No autoreleasepool.
  * Crashes from objc_release/__CFAutoreleasePoolPop cannot happen here:
@@ -2822,10 +2822,13 @@ int main(int argc, char **argv) {
         }
 
         /* Yield when idle or when a nonblocking active socket had no data,
-         * otherwise the receiver can busy-spin between incoming frame packets. */
+         * otherwise the receiver can busy-spin between incoming frame packets.
+         * PWE (1.1.1): with no sender at all, nothing needs a 1 kHz loop: the
+         * idle screen is presented every 100 ms and a new connection or key
+         * press may wait 10 ms. A connected sender keeps the 1 ms pass. */
         if (a.client_fd < 0 || !a.have_video_frame || socket_activity == 0) {
             TB_LOOP_PHASE("idle sleep");
-            SDL_Delay(1);
+            SDL_Delay(a.client_fd < 0 ? 10 : 1);
         }
     }
 
