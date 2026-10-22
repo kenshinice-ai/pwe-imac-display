@@ -1276,11 +1276,20 @@ final class PWESenderModel: ObservableObject {
 
     func configurationChecks() -> [Check] {
         guard let service, let session else { return [] }
-        return service.configurationChecks(for: session).map {
+        return Self.checks(service.configurationChecks(for: session), language: service.language)
+    }
+
+    /// The engine's checks in PWE's words: Chinese, or English for every other
+    /// language. The engine speaks five, PWE two, so on a German, French or
+    /// Italian Mac the checks under Settings › Advanced's English headings came
+    /// out in that language (PWEStringsTests).
+    nonisolated static func checks(_ engine: [TBConfigurationCheck], language: TBDisplaySenderLanguage) -> [Check] {
+        let language = PWEStrings(language: language).language
+        return engine.map {
             Check(id: $0.id,
                   passed: $0.state == .pending ? nil : $0.state == .passed,
-                  title: TBDisplaySenderL10n.text($0.titleKey, service.language, $0.values),
-                  detail: TBDisplaySenderL10n.text($0.detailKey, service.language, $0.values))
+                  title: TBDisplaySenderL10n.text($0.titleKey, language, $0.values),
+                  detail: TBDisplaySenderL10n.text($0.detailKey, language, $0.values))
         }
     }
 
