@@ -1,0 +1,53 @@
+name: 机型回报 · Model report
+description: 在你的 iMac 上试过了，不管好坏，告诉我们 · You tried it on your iMac — tell us how it went, good or bad
+labels: ["compatibility"]
+body:
+  - type: input
+    id: imac
+    attributes:
+      label: iMac 型号和年份 · iMac model and year
+      description: 关于本机 › 系统报告里的型号标识符最准 · The model identifier from About This Mac › System Report is best
+      placeholder: "iMac19,1 (27-inch, 2019)"
+    validations:
+      required: true
+  - type: input
+    id: imac_os
+    attributes:
+      label: iMac 的 macOS · The iMac's macOS
+      placeholder: "15.2"
+    validations:
+      required: true
+  - type: input
+    id: mac
+    attributes:
+      label: 新 Mac 和它的 macOS · The newer Mac and its macOS
+      placeholder: "Mac mini M2, macOS 14.7"
+    validations:
+      required: true
+  - type: dropdown
+    id: picture
+    attributes:
+      label: 用的画面档位 · Picture setting used
+      options:
+        - 5K · 60 Hz
+        - 5K · 48 Hz
+        - 标准 · 1440p / Standard
+        - 4K · 60 Hz (21.5-inch)
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: 结果 · Result
+      options:
+        - 能用，顺 · Works, smooth
+        - 能用，有卡顿 · Works, stutters
+        - 出画面但有问题 · Picture, but problems
+        - 连不上 / 没画面 · No connection / no picture
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: 补充 · Notes
+      description: 线和转换器、声音、拔线重连、用了多久 · Cable/adapter, sound, replug, how long you used it

@@ -1,0 +1,40 @@
+name: 问题报告 · Bug report
+description: 连不上、没画面、断线、声音或键鼠的问题 · Can't connect, no picture, drops, sound or keyboard/mouse problems
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        谢谢。最有用的是 Mac 上的求助报告：PWE Screen Encore › 设置 › 高级 › 诊断 › 「保存报告…」，把那个文本文件拖到下面。
+        Thanks. The most useful thing is the report from the Mac: PWE Screen Encore › Settings › Advanced › Diagnostics › "Save Report…"; drop that text file below.
+  - type: input
+    id: mac
+    attributes:
+      label: 新 Mac 和它的 macOS · The newer Mac and its macOS
+      placeholder: "MacBook Pro 14 M3, macOS 15.2"
+    validations:
+      required: true
+  - type: input
+    id: imac
+    attributes:
+      label: iMac 和它的 macOS · The iMac and its macOS
+      placeholder: "iMac 27 5K 2019 (iMac19,1), macOS 15.2"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: PWE Screen Encore 版本和构建号（关于窗口里）· Version and build (in About)
+      placeholder: "1.1.0 (2026…)"
+  - type: textarea
+    id: what
+    attributes:
+      label: 做了什么，看到什么 · What you did and what you saw
+      description: 出问题前做了什么、大概几点几分 · What you did just before, and roughly when
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: 求助报告和 iMac 日志 · Save Report file and the iMac's log
+      description: "iMac 的日志在 ~/Library/Logs/PWE Screen Encore Receiver/receiver.log（访达 › 前往 › 按住 Option 选「资源库」）· The iMac's log is at ~/Library/Logs/PWE Screen Encore Receiver/receiver.log (Finder › Go › hold Option to see Library)"

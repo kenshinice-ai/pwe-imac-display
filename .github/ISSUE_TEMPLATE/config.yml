@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 写信 · Email support
+    url: mailto:support@pwestudio.site
+    about: 不想开 issue 的话，写信到 support@pwestudio.site · If you'd rather not file an issue, email support@pwestudio.site
