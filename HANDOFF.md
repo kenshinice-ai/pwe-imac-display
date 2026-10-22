@@ -9,6 +9,8 @@
 > **RC8 真机结果（2026-10-22 18:00–22:31，测试机）：定为发布候选。** W0–W6、W8、W10–W12 通过；W9 部分通过是判据写错（T48，设计如此，判据已改）；W7 登录时打开还没测。待机 CPU 从约 20% 降到约 5%，内存 104 → 41 MB。30 分钟办公三道门 PASS，但内存趋势 49.8 MB/h 擦着 50 的门槛，发布前再跑一次 2 h。新问题 T49（接收端权限何时请求）交 Lee 定；其余观察放 1.1.1。5K 60 下 testufo 实测约 48 fps、40 s 后约 21 fps（OpenGL 和 Metal 一样，不是新问题）：对外不写「实测 60 Hz」。结果在 BASELINE「RC8」，问题在 ISSUES「RC8」。
 > Lee 2026-10-22 23:30 定：RC8 不再加测（2 h 办公不跑，发布后汇总 bug 修完再一起测）；T49 维持现状，使用说明补了一句（`pwe-1.1` 1cd46c7 只改文档，在 RC8 源码 d00ee1b 之上；网页版使用说明两个语言页也补了）；对外去掉「实测 60 Hz」：本仓库草稿已改，小红书第 6 张图已改（bc65031，Claude 看过新图）；工具站源码已改（分支 site-encore-5k fd05d29，未部署，等 Lee 在工具站会话说「部署」，可随 10-23 19:05 后那次部署一起上）；产品片已改四处（旁白第 10 条重录、F2 画面大字、YouTube 和 B 站说明、方案文档）；旧说法只留在没对外的 G2 r3 审片稿里，G3 成片合成时用新文字。W7 登录时打开：Lee 2026-10-22 告知通过（BASELINE 那一行 2026-10-22 深夜还显示「待测」，等测试机同步）。RC8 的 W0–W12 全部有结果。
 > **发布前就绪（2026-10-22 深夜）：** `pwe-1.1` 现在是 7b5b5c0，RC8 源码之上只改了文档（使用说明补键鼠一节；发布说明补进 1.1.1 并入的改动、去掉 60 Hz 的流畅说法、「已知」加一条 5K 快速动画帧率）。cask 草稿和 10-26、10-28 的顺序在 `docs/pwe/release-day-2026-10-28/`（不入库）。
+> **1.1.0 正式版已打包（2026-10-22 23:24，Lee 同意提前做）：** 本地标签 `pwe-1.1.0` → 7b5b5c0（未推）；构建号 20261022232403；DMG sha256 `32fedba00a2ab670912ede6f28e7dd348698c3c54e163600f60cc0aa4f21b0af`，9,503,562 字节；DMG 和两个 App 都是 Notarized Developer ID、已贴票据。`verify.sh --dmg` 全部 PASS（390 个发送端测试、接收端单元测试、两种架构冒烟、无测试钩子、版本一致）。三个文件在 `pwe/dist/release-1.1.0-20261022232403/`。发布说明已填构建号和 sha256（`pwe-1.1` 0f4f6ae，在标签之后，只改这份说明）。产品片正式批素材已交（`docs/pwe/film-assets-2026-10-28/release-20261022232403/`，含英文一套）。
+> 整理（2026-10-22）：189 个 iCloud「… 2」副本和 RC1–RC5 的包移到废纸篓 `~/.Trash/pwe-imac-display-tidy-20261023/`；`pwe/dist/` 现在是 `release-1.0.0/`、`beta-20261022083325/`、`release-1.1.0-20261022232403/`、`local/rc6–rc8`。复盘在 `docs/pwe/RETRO-1.1-2026-10-23.md`（不入库）。
 > 打磨（Lee 2026-10-22 定：按清单 https://claude.ai/artifact/TVduMSotx4napQXPrUZgth 执行）。已做：仓库 Issues 打开、两个 issue 模板推到 main（41795e7）、Actions 关掉（API）、描述/主页/wiki 改好；`pwe-1.1` 上文档扫过一遍、加「更新」一节、`docs/pwe/COMPATIBILITY.md`、`docs/pwe/releases/1.1.0.md`（74d86c0）；上游 maint-3.6 合并干跑：18 个文件，4 个冲突（`display.c` 11 处最重），见 `docs/pwe/UPSTREAM-DRYRUN-2026-10-22.md`。`pwe-1.1` 现在是 5a568d2：74d86c0 之上加了 verify.sh 四项检查（贴票据、两端版本一致、成品无测试钩子字符串、标签在 HEAD；3049f99）和一处两行的接收端修正（`TB_RECEIVER_TEST_PORT`、`TB_RECEIVER_NO_BONJOUR` 只在测试构建里读，06de21a——新的钩子扫描发现的，正式版不会再认这两个环境变量）；2026-10-22 全套 verify 通过（376 个发送端测试、接收端单元测试、两种架构冒烟）。这两行没有重新上真机：改动只是让正式版不读两个没人设置的环境变量。进行中（本地分支，发布后再合）：`pwe-1.1.1-sender`、`pwe-1.1.1-receiver`。1.1.1 目标 11 月中旬，和 T+14 同天。
 > Lee 2026-10-22 按推荐定：1.1 完全免费（不注册、不试用、不锁功能，收入靠赞助，收费推到 2.0、T+60 约 2026-12-27 复盘）；新 cask 叫 `pwe-screen-encore`；仓库 Sponsor 按钮指向 pwestudio.site/support；10-26 晚的 go/no-go 推荐 go，到时只核对门槛。
 > 宣发（Lee 2026-10-21 定，按宣发简报的推荐）：发布和推广拆开，英文推广等第二款机型的结果和第一周 issue 处理得过来；10-26 晚按门槛定 go/no-go，推迟就整个日历顺延；首波只开微信、小红书、V2EX；T+14 前推广不提配对和加密；仓库 `pwe-imac-display` 发布周不改名，1.1.x 再议。简报 `docs/pwe/LAUNCH-BRIEF-1.1-2026-10-21.md`，网页版 https://claude.ai/artifact/DVXRmqViPuUQFGeBgR5oFS 。
@@ -34,7 +36,7 @@
 
 ## 阶段
 
-- **[阶段] 内测** — 下一步：10-26 在 `pwe-1.1` 上打标签、公证打包，晚上 go/no-go · 负责：本仓库会话（打包、素材）· 卡在：没有 · 自 2026-10-22
+- **[阶段] 内测** — 下一步：10-26 晚 go/no-go（正式版已打包公证）；10-28 发布 · 负责：Lee（go/no-go）、本仓库会话（发布步骤）· 卡在：没有 · 自 2026-10-22
 
 ## 宣发
 
@@ -63,9 +65,9 @@
 1. 把 `pwe-1.1` 合进 `main`（不快进，留合并提交）。`HANDOFF.md` 冲突一律取 main 的（分支上那份停在 10-16）。成功判据：`git merge-base --is-ancestor pwe-1.1 main` 退出码 0。
 1b. 文档扫一遍（2026-10-22 已在 `pwe-1.1` 做过一轮，74d86c0；发布当天再核）：`git grep -n "pwe-imac-display\b" -- '*.md' '*.txt'` 只剩仓库 URL；`git diff origin/main..main -- HANDOFF.md` 里没有不该公开的内容（测试者名单、私下链接、安全细节）；`docs/pwe/releases/1.1.0.md` 填上构建号和 sha256。成功判据：三条都过。
 2. 把 `docs/pwe/` 里还没入库、也不含安全细节的方案文档按需入库；`AUDIT-2026-10-15.md`、`DESIGN-pairing-2026-10-19.md`、`DRAFT-upstream-report-2026-10-19.md` 等含安全细节的继续不入库。
-3. 打标签 `git tag pwe-1.1.0`（测试版用过的同名本地标签已于 10-22 删掉，重新打即可），在解锁的屏幕上运行 `pwe/package.sh --notarize`。成功判据：DMG 和两个 App 都是 `source=Notarized Developer ID`，`bundle checks passed`。
+3. **已做（2026-10-22 23:24）**：标签 `pwe-1.1.0` → 7b5b5c0，`package.sh --notarize` 通过，`verify.sh --dmg` 全 PASS。如果 10-28 前要重打：先把标签移到新提交，再打包；发布说明、cask、工具站的 sha256 跟着换。
 4. 推送：`git push origin main pwe-1.1.0`，只推这一个标签。
-5. 发 release：`gh release create pwe-1.1.0 --notes-file docs/pwe/releases/1.1.0.md`，上传 `pwe/dist/` 的三个文件；说明只写一般说法，不写复现细节。成功判据：`gh release download` 回来的文件通过 `shasum -c`。
+5. 发 release：`gh release create pwe-1.1.0 --notes-file docs/pwe/releases/1.1.0.md`，上传 `pwe/dist/release-1.1.0-20261022232403/` 的三个文件；说明只写一般说法，不写复现细节。成功判据：`gh release download` 回来的文件通过 `shasum -c`。
 6. 在 `homebrew-tap` 加新 cask `pwe-screen-encore`（Lee 2026-10-22 定）。先在 `homebrew-tap` 运行 `git pull --ff-only`。再复制草稿 `docs/pwe/release-day-2026-10-28/pwe-screen-encore.rb`，填 sha256。数据目录仍是旧名「PWE iMac Display」「PWE iMac Display Receiver」，草稿的 zap 已按这个写（2026-10-22 对着 RC8 核过）。成功判据：`brew fetch --cask` 显示 ✔。
 7. README 第一段改回下载说明。
 7a. 更新工具站（iCloud 里 `PWE Loan Bar` 的 checkout；做法见那边 `site/README.md`「A new product」）。
@@ -75,9 +77,24 @@
     4. 运行 `python3 site/chrome.py`，看 `git status`，再运行 `./site/deploy.sh`。成功判据：它核对每个 sitemap 页面和下载校验值，全部通过；`curl 'https://pwestudio.site/app/check?product=screenencore&version=1.0.0'` 返回 1.1.0。
     5. 把新的 pwe-tools 知识提交号发给 PWE Assist 会话（「PWE Assist 项目总规划」）。号码看 `deploy.sh` 的输出，或 `https://pwestudio.site/_pwe/status.json`。成功判据：那边回复已按新的 Screen Encore 事实重跑问题集。
 7c. 发布后马上给「小红书 文案 图文 创意 总监」会话发一条：go 了没有、正式版截图目录名（`docs/pwe/film-assets-2026-10-28/release-<构建号>/`）；推迟就给新日期。它 10-28 19:17（墨尔本）换图、核价、设 10-29 12:00 的定时。成功判据：那边回复已设定时。
-7b. 给「Screen Encore 全 3D 产品片制作」会话交正式版素材（10-30 前），放进 `docs/pwe/film-assets-2026-10-28/`，按它 README 的状态表填，每批交完发消息给那个会话。发送端截图用 `PWE_SNAPSHOT_SCALE=3`（`pwe-1.1` c9f5398 起）。内容：用正式构建跑 `--pwe-snapshot`（发送端 01、02、04、05、07，浅色和深色，中文）；接收端等待画面（中文，5120 × 2880，用素材目录 `tools/` 里的离屏渲染工具）；菜单栏图标（浅色、深色栏）；一张合成的「扩展桌面」图（PWE 壁纸加一个 PWE 窗口，不出现 Apple 标志和别家 App）。再用正式版实测插线到出画面 3–5 次，把秒数和日期发过去。成功判据：那边回复已收到，片子里没有测试版号。
+7b. **素材已交（2026-10-22）**：正式批在 `docs/pwe/film-assets-2026-10-28/release-20261022232403/`，含英文一套；05 菜单去掉了截图模式的示意帧率行。还差：正式版装上测试机后实测插线到出画面 3–5 次，补进那份 README 并发消息给产品片会话（现在暂用 RC8 数据，代码相同）。
 8. 回信告诉 Marco 已发布（10-14 那封的线程）。
 9. 删除本地分支 `security-1.0.1`（已全部并进 1.1）。
+
+## 接下来（2026-10-23 写）
+
+| 时间 | 做什么 | 谁 | 成功判据 |
+|---|---|---|---|
+| 10-23 | 把正式版 DMG 装到测试机，看一遍首次打开（Gatekeeper、权限），再插拔 3 次计时 | Lee（装、插拔）、测试机会话（记录） | 打开不报「无法验证」；秒数补进产品片正式批 README |
+| 10-23 19:05 后 | 工具站部署，「真 5K」措辞上线 | 工具站会话 | /screenencore/ 不再有「48 Hz 和 60 Hz 下都是真 5K」 |
+| 10-23～25 | 收测试者反馈；Lee 发测试者名单，Claude 记进 roster | Lee、Claude | roster 有人名和机型 |
+| 10-26 晚 | go/no-go，只核对门槛；必须修的问题出现才重打包 | Lee | Lee 说 go 或给新日期 |
+| 10-28 | 发布步骤 1–9；7a 给工具站发 go、sha256、DMG 大小；7c 通知小红书会话 | Claude；Lee 在工具站说「部署」 | `brew fetch --cask` ✔；产品页显示 1.1.0 |
+| 10-29 12:00 | 小红书 T+1 图文 | 小红书会话（定时） | 已发 |
+| 10-28～11-04 | 第一周：看 issue 和 support 邮件，填 COMPATIBILITY.md；先攒 bug，不逐个发版 | Claude | 每个 issue 48 小时内有回复 |
+| 约 11-11（T+14） | 宣传可以提配对和加密；上游 PR 一周一个，先提不涉及安全的 | Claude，Lee 定 | — |
+| 11 月中 | 1.1.1：汇总 bug 一次修完，再测一轮（ISSUES「RC8」、复盘里的清单；加上菜单实时帧率显示发送端帧数、不是 iMac 实际帧数的问题） | Claude | 一轮真机测试通过 |
+| 约 12-27（T+60） | 定价复盘；Windows 版要不要做（2.0） | Lee 定 | — |
 
 ## 1.1.0 发出去不行怎么撤（2026-10-22 写，未演练）
 
