@@ -4,10 +4,11 @@
 > 1.1 候选版（产品改名 **PWE Screen Encore**，Lee 2026-10-20 定；bundle ID、`pweimacdisplay://`、数据路径不变）在本地分支 `pwe-1.1`（未推送），已含 1.0.1 的全部修复。**RC3**（2026-10-21，源码 `b770bd7`，构建号 20261021100614，sha256 `23abf70f…`）在 `pwe/dist/local/PWE-Screen-Encore-1.1.0.dmg`：在 RC2 上加了 T33 菜单开着时整体刷新、T38 日志进系统日志、T34 插线后走雷雳网桥的 IPv6 本地地址（IPv4 照旧作后备），并收紧了「哪个网桥算线缆」。RC2 移到 `pwe/dist/local/rc2-20261021012201/`，RC1 在 `rc1-20261020225620/`。**计划 2026-10-28（周三）发布**，Marco 2026-10-20 已收到一周通知。
 > 2026-10-20 给 Marco 发了补充报告（回在 10-14 那封的线程里）。他 10-16 把 #212–#216 合进了 `maint-3.6`，3.6.1 候选版是上游 PR #218。
 > 渲染方式（Lee 2026-10-22 定）：iMac 默认 OpenGL；用户可在设置 › 高级改成「占用更少（Metal）」。测试里两种都通过。
+> Lee 2026-10-22 按推荐定：1.1 完全免费（不注册、不试用、不锁功能，收入靠赞助，收费推到 2.0、T+60 约 2026-12-27 复盘）；新 cask 叫 `pwe-screen-encore`；仓库 Sponsor 按钮指向 pwestudio.site/support；10-26 晚的 go/no-go 推荐 go，到时只核对门槛。
 > 宣发（Lee 2026-10-21 定，按宣发简报的推荐）：发布和推广拆开，英文推广等第二款机型的结果和第一周 issue 处理得过来；10-26 晚按门槛定 go/no-go，推迟就整个日历顺延；首波只开微信、小红书、V2EX；T+14 前推广不提配对和加密；仓库 `pwe-imac-display` 发布周不改名，1.1.x 再议。简报 `docs/pwe/LAUNCH-BRIEF-1.1-2026-10-21.md`，网页版 https://claude.ai/artifact/DVXRmqViPuUQFGeBgR5oFS 。
 > 测试版（Lee 2026-10-21 定）：等 RC5（含 T40 剪贴板的真正修复）真机测过后，10-23～24 公证、用私下链接发给第一批测试者（不放 GitHub release，`pwe-1.1` 不推）。反馈走 GitHub issue 或 support@pwestudio.site。给测试者的说明 `docs/pwe/BETA-1.1-testers.md`（不入库，两处「发前核对」等 RC4 结果）。
 > **公证测试版**（2026-10-22，`pwe-1.1` c9f5398 = RC6 加截图倍数开关 `PWE_SNAPSHOT_SCALE`，构建号 20261022083325，sha256 `8d250a67…`，Gatekeeper：Notarized Developer ID）在 `pwe/dist/beta-20261022083325/`（DMG、ffmpeg 源码包、SHA256SUMS）。本地标签 `pwe-1.1.0` 指向它，未推；正式版前标签会移。RC6 真机全部通过（U0–U3、2 小时办公、网络边界 N1–N3）。测试者说明已定稿。
-> T47（P2，网络边界测试发现，详情不入库）：**真机通过（RC7，2026-10-22），已并进 `pwe-1.1`（e7104e3，本地，未推）**，进 1.1 正式版。RC7（构建号 20261022085717，sha256 `bd9acb25…`，未公证）在 `pwe/dist/local/`：V1 会话中 Wi‑Fi 连接 8–96 ms 内被拒、V3 换画面 9 次 1.9–2.7 秒、V2 快速重插只测到 1 次（1.6 秒），另 2 次发布前顺带做。结果见 `docs/pwe/BASELINE-iMac18,3.md`「RC7（T47）」。RC6 在 `pwe/dist/local/rc6-20261021234804/`。
+> T47（P2，网络边界测试发现，详情不入库）：**真机通过（RC7，2026-10-22），已并进 `pwe-1.1`（e7104e3，本地，未推）**，进 1.1 正式版。RC7（构建号 20261022085717，sha256 `bd9acb25…`，未公证）在 `pwe/dist/local/`：V1 会话中 Wi‑Fi 连接 8–96 ms 内被拒、V3 换画面 9 次 1.9–2.7 秒、V2 快速重插 3 次 2.1–3.5 秒（测试机 11:44 全部通过）。结果见 `docs/pwe/BASELINE-iMac18,3.md`「RC7（T47）」。RC6 在 `pwe/dist/local/rc6-20261021234804/`。
 > 使用说明（中英双语，带截图）：https://claude.ai/artifact/3aYZkUhTKifqsYKJJYSZ7V （私有，要分享从页面里点；可导出 PDF/Word）。现在只给测试者；以后上自己网站（Lee 2026-10-22 定）：上网站前换成正式版截图，T+14 前去掉配对码那张图，由工具站会话做成 pwestudio.site 的页面。
 > **测试者回报（Lee 2026-10-22 定，对外承诺）：参加测试的朋友，PWE Screen Encore 以后所有版本终身免费，含更新——包括将来如果出收费版。** 已写进测试者说明和朋友圈邀请；名单记在 `docs/pwe/BETA-testers-roster.md`（不入库）。以后定价、做授权时必须兑现。
 > 测试版分享包（2026-10-22）：iCloud Drive `PWE/Screen Encore 测试版 1.1/`（DMG、ffmpeg 源码包、SHA256SUMS、去掉内部说明的测试者说明），Lee 从访达共享链接发给测试者。
@@ -37,13 +38,10 @@
 
 ## 等 Lee
 
-- **[动手] 把测试版发给第一批测试者** — 分享包已备好：iCloud Drive `PWE/Screen Encore 测试版 1.1/`，在访达里共享这个文件夹的链接；使用说明页也要从页面里点分享 · 不发则 10-26 前没有第二款机型的结果 · 自 2026-10-22
-- **[决定] Homebrew cask 改名** — 推荐新 cask `pwe-screen-encore`，旧的 `pwe-imac-display` 已删，不再恢复 · 不定则 1.1 用旧名字的 cask · 自 2026-10-20
-- **[给料] 真机照片** — 桌面全景、iMac 亮屏正面、一根线的特写，推荐 10-24 前后拍 · 不拍则小红书只能用截图 · 自 2026-10-21
-- **[动手] 10-26 前把英文公告和致谢句发给 Marco 看** — 推荐发；草稿在简报附录 A · 不发也照期发布，但 Show HN 要等他不反对 · 自 2026-10-21
-- **[决定] 收费方式** — 推荐 1.1 完全免费（不注册、不试用、不锁功能），收入先靠赞助；收费推到 2.0，发布后 60 天（约 2026-12-27）复盘，收费前先和 Marco 谈。方案 `docs/pwe/PRICING-OPTIONS-2026-10-21.md`（不入库）· 不定则按免费发布 · 自 2026-10-21
-- **[动手] 开通 `kenshinice-ai` 的 GitHub Sponsors** — 推荐 10-28 前开，要你本人填收款和税务资料 · 不开则支持页的赞助按钮点了没有去处 · 自 2026-10-21
-- **[决定] 本仓库 Sponsor 按钮** — 组规矩 §0.9 要求放 `custom: [pwestudio.site/support]`，并由 Lee 同意打开 Sponsorships 开关 · 不定则仓库页没有支持入口 · 自 2026-10-15
+- **[动手] 把测试版发给第一批测试者** — Lee 自己发（2026-10-22）：共享 iCloud Drive `PWE/Screen Encore 测试版 1.1/` 的链接，使用说明页从页面里点分享；朋友圈测评邀请 4 张图和文案已备好；发出后把测试者记进 `docs/pwe/BETA-testers-roster.md` · 不发则 10-26 前没有第二款机型的结果 · 自 2026-10-22
+- **[动手] 发给 Marco 的英文公告** — Gmail 草稿已备好（回在 10-14「a signed build of TargetBridge, before we publish」那条线程里，只有公告和致谢句，不提安全），Lee 看一眼后发送 · 不发也照期发布，但 Show HN 要等他不反对 · 自 2026-10-21
+- **[动手] 开通 `kenshinice-ai` 的 GitHub Sponsors，发布后打开本仓库的 Sponsorships 开关** — 要你本人填收款和税务资料；`.github/FUNDING.yml` 已在 `pwe-1.1`（d87021f），随发布进 `main` · 不开则支持页和仓库页的赞助按钮没有去处 · 自 2026-10-21
+- **[给料] 更多真机照片** — 10-22 已给一张（朋友圈用了）；小红书还缺 iMac 亮屏正面、一根线的特写，推荐 10-24 前后拍，关掉屏幕共享、用中文界面 · 不拍则小红书只能用效果图和截图 · 自 2026-10-21
 
 ## 1.1 发布步骤（2026-10-28，Claude 做，候选版测试的 P1 修完之后）
 
@@ -52,7 +50,7 @@
 3. 打标签 `git tag pwe-1.1.0`，在解锁的屏幕上运行 `pwe/package.sh --notarize`。成功判据：DMG 和两个 App 都是 `source=Notarized Developer ID`，`bundle checks passed`。
 4. 推送：`git push origin main pwe-1.1.0`，只推这一个标签。
 5. 发 release，上传 `pwe/dist/` 的三个文件；说明只写一般说法，不写复现细节。成功判据：`gh release download` 回来的文件通过 `shasum -c`。
-6. 在 `homebrew-tap` 加新 cask（按上面的决定）。成功判据：`brew fetch --cask` 显示 ✔。
+6. 在 `homebrew-tap` 加新 cask `pwe-screen-encore`（Lee 2026-10-22 定）。成功判据：`brew fetch --cask` 显示 ✔。
 7. README 第一段改回下载说明。
 7a. 更新工具站（iCloud 里 `PWE Loan Bar` 的 checkout；做法见那边 `site/README.md`「A new product」）。
     1. 在 `site/functions/_release.js` 加 `screenencore`（version、published、notes_en、notes_cn）。成功判据：产品页「Latest」不再显示 `No release yet.`。
@@ -99,7 +97,7 @@
 - 发版：
   1. 只推这一个标签：`git push origin pwe-<版本>`（不用 `v`）。
   2. release 上传 `pwe/dist/` 里的三个文件：`PWE-Screen-Encore-<版本>.dmg`、`ffmpeg-9.0.2.tar.xz`（LGPL 要求在同一处提供源代码）、`SHA256SUMS.txt`。
-  3. 改 cask 的 `version` 和 `sha256`（1.1 起是新 cask，名字按「等 Lee」的决定，推荐 `pwe-screen-encore`）。
+  3. 改 cask 的 `version` 和 `sha256`（1.1 起是新 cask `pwe-screen-encore`）。
   成功判据：`gh release download` 回来的文件通过 `shasum -c`，`brew fetch --cask kenshinice-ai/tap/<cask>` 显示 ✔。
 - 如果合并上游后 `pwe/rebrand.py` 报 `upstream text changed`，就按报错改脚本里对应的锚点，不要改上游文件。
 
