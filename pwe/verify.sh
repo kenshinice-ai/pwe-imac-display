@@ -4,9 +4,12 @@
 # every candidate build and before a release.
 #
 #   pwe/verify.sh                   the source: sender tests, receiver tests,
-#                                   end-to-end receiver smoke on arm64 and x86_64
+#                                   end-to-end receiver smoke on arm64 and x86_64,
+#                                   and that the release tag pwe-<VERSION>, if cut, is HEAD
 #   pwe/verify.sh --dmg <image>     also checks the apps inside a built image
-#                                   (pwe/check-bundle.py, signatures)
+#                                   (pwe/check-bundle.py including the test-hook scan,
+#                                   versions against pwe/VERSION, signatures, Gatekeeper,
+#                                   stapled notarisation tickets)
 #   pwe/verify.sh --skip-smoke      leave out the smoke runs (they open windows)
 #
 # Like pwe/package.sh it works on a renamed scratch copy in $TMPDIR, so what is
@@ -57,6 +60,21 @@ else
 fi
 
 have_deps() { [[ -f "$DEPS/$1/lib/pkgconfig/libsodium.pc" ]]; }
+
+# ---------------------------------------------------------------- release tag
+
+# package.sh --notarize refuses to build unless pwe-<VERSION> is HEAD, so a tag
+# that has fallen behind means the next release would ship untagged commits.
+TAG="pwe-$VERSION"
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+  record "release tag" SKIP "not a git tree"
+elif ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+  record "release tag" SKIP "no release tag yet ($TAG)"
+elif git tag --points-at HEAD | grep -qx "$TAG"; then
+  record "release tag" PASS "$TAG is HEAD"
+else
+  record "release tag" FAIL "$TAG is $(git rev-parse --short "$TAG^{commit}"), HEAD is $(git rev-parse --short HEAD)"
+fi
 
 # ---------------------------------------------------------------- sender
 
@@ -137,6 +155,30 @@ else
     else
       record "built apps: check-bundle" FAIL "see check-bundle.log"
     fi
+    # The test-hook scan is one of check-bundle's checks; it gets its own line
+    # because a hook that ships is a release stopper on its own.
+    hooks="$(grep -c 'test hook in a shipped binary' "$LOGS/check-bundle.log")"
+    if ! grep -q -e '^✗' -e 'bundle checks passed' "$LOGS/check-bundle.log"; then
+      record "built apps: no test hooks" SKIP "check-bundle did not finish — see check-bundle.log"
+    elif (( hooks == 0 )); then
+      record "built apps: no test hooks" PASS "all slices of ${#apps} executables"
+    else
+      record "built apps: no test hooks" FAIL "$hooks found — see check-bundle.log"
+    fi
+
+    # Both apps carry the tree's version and one build number.
+    shorts=() builds=() versions_ok=1
+    for a in "${apps[@]}"; do
+      shorts+=("$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$a/Contents/Info.plist" 2>/dev/null)")
+      builds+=("$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$a/Contents/Info.plist" 2>/dev/null)")
+      [[ "${shorts[-1]}" == "$VERSION" && -n "${builds[-1]}" && "${builds[-1]}" == "${builds[1]}" ]] || versions_ok=0
+    done
+    if (( versions_ok )); then
+      record "built apps: versions" PASS "$VERSION (${builds[1]}) in all ${#apps}"
+    else
+      record "built apps: versions" FAIL "pwe/VERSION $VERSION; apps ${(j:, :)shorts}; builds ${(j:, :)builds}"
+    fi
+
     sig_ok=1 notarised=0 unnotarised=0
     for a in "${apps[@]}"; do
       codesign --verify --deep --strict "$a" >> "$LOGS/signatures.log" 2>&1 || sig_ok=0
@@ -155,6 +197,19 @@ else
       # A local candidate (package.sh without --notarize): signed, not yet notarised.
       record "built apps: signatures" PASS "Developer ID, valid"
       record "built apps: Gatekeeper" SKIP "$unnotarised of ${#apps} not notarised: a local build"
+    fi
+    # The ticket must be stapled to the image and to each app, or a Mac that is
+    # offline on first launch cannot see the notarisation.
+    stapled=1
+    for t in "$DMG" "${apps[@]}"; do
+      xcrun stapler validate "$t" >> "$LOGS/staple.log" 2>&1 || stapled=0
+    done
+    if (( stapled )); then
+      record "built apps: stapled tickets" PASS "image and ${#apps} apps"
+    elif (( unnotarised == ${#apps} )); then
+      record "built apps: stapled tickets" SKIP "not notarised: a local build"
+    else
+      record "built apps: stapled tickets" FAIL "see staple.log"
     fi
     hdiutil detach "$MNT" >/dev/null 2>&1
   fi
