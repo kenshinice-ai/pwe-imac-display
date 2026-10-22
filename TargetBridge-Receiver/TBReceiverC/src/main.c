@@ -733,6 +733,17 @@ static void bonjour_update(struct app *a, uint16_t port) {
     TXTRecordSetValue(&txt, "version", (uint8_t)strlen(TB_RECEIVER_VERSION), TB_RECEIVER_VERSION);
     TXTRecordSetValue(&txt, "supportsHEVCDecode", 1, tb_dec_supports_hevc_hwdecode() ? "1" : "0");
     TXTRecordSetValue(&txt, "supportsRawNV12", 1, "1");
+    {
+        /* PWE (1.1.1): which Mac and macOS the sender is talking to, for its
+         * diagnostics. Nothing personal: no host or user name. */
+        char model[64], os[32];
+        if (tb_sysinfo_model(model, sizeof(model))[0]) {
+            TXTRecordSetValue(&txt, "model", (uint8_t)strlen(model), model);
+        }
+        if (tb_sysinfo_os_version(os, sizeof(os))[0]) {
+            TXTRecordSetValue(&txt, "os", (uint8_t)strlen(os), os);
+        }
+    }
 
     struct tb_display_info info;
     if (tb_disp_get_info(a->disp, &info) == 0) {
@@ -787,7 +798,8 @@ static void bonjour_update(struct app *a, uint16_t port) {
     {
         char ifn[IFNAMSIZ] = "";
         if (if1) if_indextoname(if1, ifn);
-        fprintf(stderr, "[bonjour] registering on %s: %s\n", if1 ? (ifn[0] ? ifn : "?") : "every interface", addrs);
+        fprintf(stderr, "[bonjour] registering on %s: %s (TXT %u bytes)\n", if1 ? (ifn[0] ? ifn : "?") : "every interface",
+                addrs, (unsigned)TXTRecordGetLength(&txt));
     }
 
     DNSServiceErrorType err = DNSServiceRegister(
@@ -1940,7 +1952,7 @@ static void send_receiver_info(struct app *a) {
         "\"modeWidth\":%u,\"modeHeight\":%u,\"refreshRate\":60,"
         "\"hiDPI\":%s,\"captureWidth\":%u,\"captureHeight\":%u,"
         "\"supportsHEVCDecode\":%s,\"supportsRawNV12\":true,\"inputMonitoringTrusted\":%s,\"accessibilityTrusted\":%s,"
-        "\"supportsNightShift\":%s,\"supportsTrueTone\":%s,\"cursorImage\":%s}",
+        "\"supportsNightShift\":%s,\"supportsTrueTone\":%s,\"cursorImage\":%s,\"receiverVersion\":\"%s\"}",
         escaped_name,
         profile.panel_w,
         profile.panel_h,
@@ -1954,7 +1966,8 @@ static void send_receiver_info(struct app *a) {
         tb_receiver_accessibility_trusted() ? "true" : "false",
         tb_night_shift_supported() ? "true" : "false",
         tb_true_tone_supported() ? "true" : "false",
-        tb_receiver_draws_pointer() ? "true" : "false");
+        tb_receiver_draws_pointer() ? "true" : "false",
+        TB_RECEIVER_VERSION);   /* PWE (1.1.1) */
     if (json_len <= 0 || (size_t)json_len >= sizeof(json)) return;
 
     const size_t packet_len = 4 + 1 + (size_t)json_len;

@@ -28,4 +28,10 @@ int tb_sysinfo_advertise_hevc(int ffmpeg_hw_ok, int vt_hw_decode);
  * Returns `buf`. */
 char *tb_sysinfo_describe(char *buf, size_t size);
 
+/* PWE (1.1.1): the hardware model ("iMac18,3") and the macOS version
+ * ("13.7.8") alone, for the Bonjour record a sender reads. Empty when unknown
+ * (and off Apple platforms). Return `buf`. */
+char *tb_sysinfo_model(char *buf, size_t size);
+char *tb_sysinfo_os_version(char *buf, size_t size);
+
 #endif
