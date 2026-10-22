@@ -44,4 +44,15 @@ final class PWEStringsTests: XCTestCase {
         XCTAssertEqual(en.liveLine(.native5k60Experimental, fps: 0), "5K")
         XCTAssertEqual(zh.liveLine(.native5k60Experimental, fps: 60), "5K · 60 帧/秒")
     }
+
+    /// The permission goes by System Settings' name for it, which macOS 15
+    /// changed (Privacy & Security).
+    func testScreenRecordingIsCalledWhatSystemSettingsCallsIt() {
+        let en = PWEStrings(language: .english), zh = PWEStrings(language: .chinese)
+        XCTAssertEqual(en.screenRecording(macOS: 14), "Screen Recording")
+        XCTAssertEqual(zh.screenRecording(macOS: 14), "录屏")
+        XCTAssertEqual(en.screenRecording(macOS: 15), "Screen & System Audio Recording")
+        XCTAssertEqual(zh.screenRecording(macOS: 15), "录屏与系统录音")
+        XCTAssertEqual(zh.screenRecording(macOS: 26), "录屏与系统录音")
+    }
 }

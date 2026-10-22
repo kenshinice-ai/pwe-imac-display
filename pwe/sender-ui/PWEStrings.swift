@@ -37,7 +37,15 @@ struct PWEStrings {
     var aboutApp: String { t("About PWE Screen Encore", "关于 PWE Screen Encore") }
 
     // Permission
-    var permissionTitle: String { t("Allow Screen Recording", "允许录屏") }
+    /// System Settings' name for the permission, under Privacy & Security.
+    /// macOS 15 renamed the pane; read on macOS 27.0.1 (2026-10-22) from System
+    /// Settings' own strings: SCREENANDAUDIOCAPTURE "Screen & System Audio
+    /// Recording" / 「录屏与系统录音」, and the older SCREEN_CAPTURE "Screen
+    /// Recording" / 「录屏」, taken as macOS 14's (not seen on a macOS 14 Mac).
+    func screenRecording(macOS major: Int = ProcessInfo.processInfo.operatingSystemVersion.majorVersion) -> String {
+        major >= 15 ? t("Screen & System Audio Recording", "录屏与系统录音") : t("Screen Recording", "录屏")
+    }
+    var permissionTitle: String { t("Allow \(screenRecording())", "允许\(screenRecording())") }
     var permissionBody: String {
         t("To show this Mac's screen on your iMac, PWE Screen Encore needs your permission. It records only the screen it shows on your iMac, and sends it nowhere else.",
           "要把这台 Mac 的画面显示到 iMac 上，PWE Screen Encore 需要你的允许。它只录制要显示在 iMac 上的画面，不发往其他任何地方。")
@@ -182,9 +190,10 @@ struct PWEStrings {
     var quit: String { t("Quit PWE Screen Encore", "退出 PWE Screen Encore") }
     func status(_ phase: PWEPhase) -> String {
         switch phase {
-        case .needsPermission: return t("Needs Screen Recording permission", "需要录屏权限")
+        case .needsPermission: return t("Needs \(screenRecording()) permission", "需要\(screenRecording())权限")
         case .searching: return t("Looking for your iMac…", "正在找你的 iMac…")
-        case .choose: return t("Choose an iMac in the window", "请在窗口里选择 iMac")
+        // The menu lists each iMac under this line, as the window does.
+        case .choose: return t("Choose an iMac", "请选择 iMac")
         case .ready(let receiver): return t("\(receiver.name) is ready", "\(receiver.name) 已就绪")
         case .connecting(let receiver, _): return connectingTitle(receiver?.name) + "…"
         case .connected(let receiver): return connectedTitle(receiver?.name)

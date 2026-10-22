@@ -149,13 +149,21 @@ final class PWEStatusMenu: NSObject {
     private struct Shape: Equatable {
         var showing, unencrypted, canDisconnect, volume: Bool
         var connectable: String?
+        var choices: [String]
         var update: String?
     }
 
     private var shape: Shape {
         Shape(showing: model.isShowing, unencrypted: model.isUnencrypted, canDisconnect: model.canDisconnect,
               volume: model.sound != .onlyThisMac, connectable: model.connectableReceiver?.id,
-              update: updates?.available?.version)
+              choices: choosable.map(\.id), update: updates?.available?.version)
+    }
+
+    /// The iMacs to choose between when more than one is in sight: the menu
+    /// offers each, so choosing needs no trip to the window.
+    private var choosable: [PWEReceiver] {
+        if case .choose(let receivers) = model.phase { return receivers }
+        return []
     }
 
     private func refreshOpenMenu() {
@@ -221,6 +229,12 @@ final class PWEStatusMenu: NSObject {
             connection.append(action(strings.menuConnectTo(receiver.name)) { [weak model] in
                 model?.connect(to: receiver)
             })
+        } else {
+            for receiver in choosable {
+                connection.append(action(strings.menuConnectTo(receiver.name)) { [weak model] in
+                    model?.connect(to: receiver)
+                })
+            }
         }
         if model.isShowing {
             connection.append(action(strings.arrange) { [weak model] in model?.openDisplaySettings() })

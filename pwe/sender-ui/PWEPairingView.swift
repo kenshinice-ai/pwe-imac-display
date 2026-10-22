@@ -52,6 +52,11 @@ struct PWEPairingView: View {
                 if reason == .version {
                     Link(strings.download, destination: UpdateCheck.downloadPage)
                 }
+                // The switch that turned unencrypted connections off is in
+                // Settings › Advanced: the way forward, not only Cancel.
+                if reason == .unencryptedNotAllowed {
+                    Button(strings.settingsMenu) { PWEWindows.shared.showSettings(tab: .advanced) }
+                }
             }
         case .none, .negotiating, .encrypted, .unencrypted:
             EmptyView()

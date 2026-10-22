@@ -247,6 +247,7 @@ enum PWESnapshot {
             ("m2-menu-connected-unencrypted", PWESenderModel(preview: .connected(upstream), security: .unencrypted), false),
             ("m3-menu-ready", PWESenderModel(preview: .ready(imac)), false),
             ("m4-menu-searching", PWESenderModel(preview: .searching), true),
+            ("m5-menu-choose", PWESenderModel(preview: .choose([imac, other])), false),
         ]
         for language in [TBDisplaySenderLanguage.english, .chinese] {
             let strings = PWEStrings(language: language)
