@@ -48,6 +48,10 @@ struct PWEPairingView: View {
                         .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.defaultAction)
                 }
+                // "Update both to the same version": the way to the download.
+                if reason == .version {
+                    Link(strings.download, destination: UpdateCheck.downloadPage)
+                }
             }
         case .none, .negotiating, .encrypted, .unencrypted:
             EmptyView()
