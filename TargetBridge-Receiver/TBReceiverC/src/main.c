@@ -130,6 +130,7 @@ struct app {
     int      last_input_monitoring_trusted;
     int      last_accessibility_trusted;
     uint64_t last_permissions_poll_ms;
+    int      input_permissions_requested;   /* PWE (1.1.1): asked macOS once this launch */
 
     DNSServiceRef bonjour_ref;
     char     bonjour_name[128];
@@ -1804,6 +1805,37 @@ static void tb_receiver_start_input_tap(struct app *a) {
                           can_consume ? "true" : "false");
 }
 
+/* PWE (1.1.1): the first time a Mac hands control to this iMac
+ * (receiverMaster) in a launch, ask macOS for what the global event tap needs:
+ * Input Monitoring to see keys and the pointer, Accessibility to keep them from
+ * the iMac's own apps. macOS shows its own prompt for whichever is missing and
+ * lists the receiver in Privacy & Security; the 250 ms poll picks up a grant
+ * and restarts the tap. Once per launch, and only from a session: an idle
+ * receiver never prompts. Without this, the receiver appeared in neither list
+ * and the person had to add it by hand. */
+static void tb_receiver_request_input_permissions_once(struct app *a) {
+    if (a->input_permissions_requested) return;
+    a->input_permissions_requested = 1;
+    const int input_monitoring = tb_receiver_input_monitoring_trusted();
+    const int accessibility = tb_receiver_accessibility_trusted();
+    if (input_monitoring && accessibility) return;
+    tb_receiver_input_log("[input] receiverMaster: asking macOS for %s%s%s",
+                          input_monitoring ? "" : "Input Monitoring",
+                          !input_monitoring && !accessibility ? " and " : "",
+                          accessibility ? "" : "Accessibility");
+    if (!input_monitoring) (void)CGRequestListenEventAccess();
+    if (!accessibility) {
+        const void *keys[] = { kAXTrustedCheckOptionPrompt };
+        const void *values[] = { kCFBooleanTrue };
+        CFDictionaryRef options = CFDictionaryCreate(NULL, keys, values, 1, &kCFTypeDictionaryKeyCallBacks,
+                                                     &kCFTypeDictionaryValueCallBacks);
+        if (options) {
+            (void)AXIsProcessTrustedWithOptions(options);
+            CFRelease(options);
+        }
+    }
+}
+
 static void tb_receiver_refresh_input_capture(struct app *a) {
     if (!a) return;
     int capture = strcmp(a->input_control_mode, "receiverMaster") == 0 && a->client_fd >= 0;
@@ -1815,6 +1847,7 @@ static void tb_receiver_refresh_input_capture(struct app *a) {
     }
 #endif
     if (capture) {
+        tb_receiver_request_input_permissions_once(a);
         const int wants_global_tap = tb_receiver_input_monitoring_trusted() ? 1 : 0;
         const int wants_consume = tb_receiver_accessibility_trusted() ? 1 : 0;
         if (a->input_tap && (!wants_global_tap || a->input_tap_consumes_events != wants_consume)) {

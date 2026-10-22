@@ -68,6 +68,7 @@
 | `pwe-1.1.1-receiver`（待合并） | 接收端 `net.c`：监听口去掉 `SO_REUSEPORT`（两份接收端不再各收一半连接），bind 失败保留 errno；`main.c`：端口被占时弹窗说明、把已在运行的那份带到前台（新文件 `tb_running_app.m`）后退出 | 评审 2026-10-22：开机启动 + 再双击一次，或 DMG 里一份、Applications 一份，两份都在跑 | 待提 | 1.1.1 |
 | `pwe-1.1.1-receiver`（待合并） | 接收端 `main.c`：开不了显示窗口、起不了解码器、监听口出错（端口被占以外）时，先弹出错误框（原因、系统给的说明、日志路径）再退出；`tb_log.c` 加 `tb_log_path()`；新键 `receiver.fatal.*`（五种语言，de/fr/it 暂用英文） | 评审 2026-10-22：这三种失败只写日志就 `return 1`，从访达或开机打开时接收端一声不响地消失 | 待提 | 1.1.1 |
 | `pwe-1.1.1-receiver`（待合并） | 接收端 `main.c`：每个会话的第一帧画面（解码帧或 RAW 帧）调用 `IOPMAssertionDeclareUserActivity`，像按一下键那样唤醒 iMac 的屏幕；`Makefile` 链接 IOKit。设了密码的 iMac 醒到锁屏，不解锁 | 评审 2026-10-22：iMac 屏幕已睡时 Mac 接上来，画面推到黑屏上，要有人碰一下 iMac 才亮 | 待提 | 1.1.1 |
+| `pwe-1.1.1-receiver`（待合并） | 接收端 `main.c`：每次启动后第一次进入 receiverMaster（Mac 把控制交给 iMac）时，缺哪个权限就请求哪个：`CGRequestListenEventAccess()`（输入监控）、`AXIsProcessTrustedWithOptions(prompt)`（辅助功能）。只在会话里、只一次；空闲时从不弹 | 评审 2026-10-22：接收端只查询（`CGPreflightListenEventAccess`、`AXIsProcessTrusted`）从不请求，系统设置的两个列表里都没有它，只能手动添加 | 待提 | 1.1.1 |
 
 打包时的改名（`pwe/rebrand.py`）不改仓库里的文件，所以不在这张表里。它的锚点由脚本自己检查：上游改了对应的文字，脚本就会停下。
 
