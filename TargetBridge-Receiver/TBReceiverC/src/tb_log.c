@@ -34,6 +34,7 @@ static struct {
     char      old_path[PATH_MAX];
     pthread_t reader;
     atomic_int reader_done;
+    int       started;   /* tb_log_start succeeded once: `path` names the file */
 } g_log = { .pipe_read = -1, .saved_stdout = -1, .saved_stderr = -1, .file = -1, .at_line_start = 1 };
 
 size_t tb_log_stamp(const char *in, size_t len, const char *stamp, int *at_line_start,
@@ -147,6 +148,10 @@ int tb_log_default_dir(const char *app_name, char *out, size_t size) {
     return 1;
 }
 
+const char *tb_log_path(void) {
+    return g_log.started ? g_log.path : NULL;
+}
+
 int tb_log_start(const char *dir, size_t max_bytes) {
     if (g_log.running || !dir || !*dir) return -1;
     if (mkdir(dir, 0755) != 0 && errno != EEXIST) return -1;
@@ -187,6 +192,7 @@ int tb_log_start(const char *dir, size_t max_bytes) {
     /* stdout now goes to a pipe, which stdio would buffer in full. */
     setvbuf(stdout, NULL, _IOLBF, 0);
     atexit(tb_log_stop);
+    g_log.started = 1;
     return 0;
 }
 

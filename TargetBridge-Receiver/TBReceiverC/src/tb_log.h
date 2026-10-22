@@ -33,6 +33,10 @@ int  tb_log_start(const char *dir, size_t max_bytes);
 /* Flush, restore stdout and stderr and close the file (also run at exit). */
 void tb_log_stop(void);
 
+/* The file tb_log_start opened (<dir>/receiver.log), for a message that points
+ * at it; NULL when the log was never started. Still valid after tb_log_stop. */
+const char *tb_log_path(void);
+
 /* The directory tb_log_start is given by main(): TB_RECEIVER_LOG_DIR, else
  * ~/Library/Logs/<app_name>. 0 when there is none (no home, or TB_RECEIVER_LOG=0). */
 int  tb_log_default_dir(const char *app_name, char *out, size_t size);

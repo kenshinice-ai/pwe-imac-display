@@ -2333,6 +2333,28 @@ static void build_display_host(char *buf, size_t bufsz, const char *ip_fallback,
 
 /* ---- Main ------------------------------------------------------------ */
 
+/* PWE (1.1.1): a receiver that cannot start says so. Opened from Finder or at
+ * login it has no terminal, and before this it simply vanished. The message
+ * gives the reason, the system's own words for it when there are any, and
+ * where the log is. SDL_ShowSimpleMessageBox may be called before SDL_Init,
+ * so this works even when the display itself could not be opened. */
+static void tb_receiver_fatal(const char *reason_key, const char *detail) {
+    char title[160], body[1024];
+    snprintf(title, sizeof(title), "%s", tb_i18n_get("receiver.fatal.title"));
+    size_t n = (size_t)snprintf(body, sizeof(body), "%s", tb_i18n_get(reason_key));
+    if (detail && *detail && n < sizeof(body)) {
+        n += (size_t)snprintf(body + n, sizeof(body) - n, "\n\n(%s)", detail);
+    }
+    const char *log_path = tb_log_path();
+    if (log_path && n < sizeof(body)) {
+        (void)snprintf(body + n, sizeof(body) - n, "\n\n%s\n%s", tb_i18n_get("receiver.fatal.log"), log_path);
+    }
+    fprintf(stderr, "[main] cannot start (%s)%s%s\n", reason_key, detail && *detail ? ": " : "",
+            detail ? detail : "");
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title, body, NULL);
+    fprintf(stderr, "[main] bye (could not start)\n");
+}
+
 int main(int argc, char **argv) {
     int fullscreen = 1;
     for (int i = 1; i < argc; i++) {
@@ -2459,7 +2481,11 @@ int main(int argc, char **argv) {
     tb_gesture_bridge_set_active(0);
 
     a.disp = tb_disp_create(fullscreen);
-    if (!a.disp) { fprintf(stderr, "tb_disp_create failed\n"); return 1; }
+    if (!a.disp) {
+        fprintf(stderr, "tb_disp_create failed\n");
+        tb_receiver_fatal("receiver.fatal.display", SDL_GetError());
+        return 1;
+    }
     /* PWE: pairing keys, and the menu items for unencrypted connections and forgetting. */
     tb_pwe_load_keys(&a);
     tb_pairing_menu_install(tb_pwe_toggle_unencrypted, tb_pwe_forget_all, &a);
@@ -2500,7 +2526,12 @@ int main(int argc, char **argv) {
         if (!a.clipboard) fprintf(stderr, "[clipboard] warning: no clipboard thread; the clipboard is not shared\n");
     }
     a.dec = tb_dec_create(on_frame, &a);
-    if (!a.dec) { fprintf(stderr, "tb_dec_create failed\n"); tb_disp_destroy(a.disp); return 1; }
+    if (!a.dec) {
+        fprintf(stderr, "tb_dec_create failed\n");
+        tb_receiver_fatal("receiver.fatal.decoder", NULL);
+        tb_disp_destroy(a.disp);
+        return 1;
+    }
 
     /* Tests only: another port, so a sender running on the same Mac that
      * remembers this Mac's address cannot take the single client slot. */
@@ -2530,7 +2561,11 @@ int main(int argc, char **argv) {
             }
             return 0;
         }
+        const int listen_errno = errno;
         fprintf(stderr, "tb_net_listen failed\n");
+        char reason[96];
+        snprintf(reason, sizeof(reason), "port %u: %s", (unsigned)listen_port, strerror(listen_errno));
+        tb_receiver_fatal("receiver.fatal.network", reason);
         return 1;
     }
     /* PWE (T34): IPv6 too, for the Thunderbolt Bridge's link-local address. */
