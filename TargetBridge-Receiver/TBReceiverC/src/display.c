@@ -1060,7 +1060,10 @@ static void tb_disp_refresh_window_mode(struct tb_display *d) {
 
     if (monitor_shield_active) {
         SDL_SetWindowFullscreen(d->win, SDL_WINDOW_FULLSCREEN_DESKTOP);
-    } else {
+    } else if (SDL_GetWindowFlags(d->win) & SDL_WINDOW_FULLSCREEN) {
+        /* PWE (1.1.1): back to the window's size and place only when leaving
+         * fullscreen. This runs on every session change, language switch and
+         * renderer rebuild; a window the person moved or resized stays put. */
         SDL_SetWindowFullscreen(d->win, 0);
         SDL_SetWindowSize(d->win, 980, 620);
         SDL_SetWindowPosition(d->win, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
