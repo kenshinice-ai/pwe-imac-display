@@ -57,6 +57,12 @@ struct tb_decoder {
     void             *ud;
 
     int               opened;
+
+    /* PWE (1.1.1): after a decode error or a (re)open, frames that are not a
+     * keyframe would decode against missing references into smeared blocks.
+     * They are dropped instead, and the screen keeps the last good picture. */
+    int               await_keyframe;
+    unsigned long     dropped_awaiting;
 };
 
 /* Detect available HW device type (platform-specific). */
@@ -307,6 +313,8 @@ static int open_decoder(struct tb_decoder *d) {
         return -1;
     }
     d->opened = 1;
+    d->await_keyframe = 1;
+    d->dropped_awaiting = 0;
     return 0;
 }
 
@@ -342,9 +350,20 @@ int tb_dec_set_param_sets(struct tb_decoder *d, const uint8_t *payload, size_t l
 }
 
 /* Convert AVCC (length-prefixed) frame to Annex B (start codes) in scratch. */
+/* Whether a NAL unit header starts a picture a decoder can begin from: an
+ * H.264 IDR slice (type 5), or an HEVC IRAP picture (BLA, IDR, CRA: 16-21). */
+static int nal_is_keyframe(enum AVCodecID codec, uint8_t header) {
+    if (codec == AV_CODEC_ID_HEVC) {
+        const int type = (header >> 1) & 0x3F;
+        return type >= 16 && type <= 21;
+    }
+    return (header & 0x1F) == 5;
+}
+
 static int avcc_to_annexb(struct tb_decoder *d,
                           const uint8_t *in, size_t in_len,
-                          uint8_t **out, size_t *out_len) {
+                          uint8_t **out, size_t *out_len, int *is_keyframe) {
+    *is_keyframe = 0;
     if (d->scratch_cap < in_len + AV_INPUT_BUFFER_PADDING_SIZE) {
         size_t nc = in_len + AV_INPUT_BUFFER_PADDING_SIZE;
         uint8_t *nb = (uint8_t *)realloc(d->scratch, nc);
@@ -362,6 +381,7 @@ static int avcc_to_annexb(struct tb_decoder *d,
         off += 4;
         if (off + nal > in_len) return -1;
         if (dst + 4 + nal > d->scratch_cap) return -1;
+        if (nal > 0 && nal_is_keyframe(d->codec_id, in[off])) *is_keyframe = 1;
         memcpy(d->scratch + dst, ANNEXB_START, ANNEXB_START_N);
         dst += ANNEXB_START_N;
         memcpy(d->scratch + dst, in + off, nal);
@@ -398,6 +418,14 @@ static void tb_dec_log_error(const char *what, int r) {
     quiet = 0;
 }
 
+/* PWE (1.1.1): after a decode error, forget the broken references and hold
+ * the last good picture until the next keyframe. */
+static void tb_dec_hold_until_keyframe(struct tb_decoder *d) {
+    if (d->ctx) avcodec_flush_buffers(d->ctx);
+    if (!d->await_keyframe) d->dropped_awaiting = 0;
+    d->await_keyframe = 1;
+}
+
 static uint32_t frame_trace_id(const AVFrame *f) {
     return (f->pts != AV_NOPTS_VALUE && f->pts > 0 && f->pts <= UINT32_MAX) ? (uint32_t)f->pts : 0;
 }
@@ -407,7 +435,21 @@ int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len, uin
 
     uint8_t *anb = NULL;
     size_t   anb_len = 0;
-    if (avcc_to_annexb(d, avcc, len, &anb, &anb_len) < 0) return -1;
+    int      keyframe = 0;
+    if (avcc_to_annexb(d, avcc, len, &anb, &anb_len, &keyframe) < 0) return -1;
+
+    if (d->await_keyframe) {
+        if (!keyframe) {
+            d->dropped_awaiting++;
+            tb_trace_frame_replaced(trace_id);
+            return 0;
+        }
+        if (d->dropped_awaiting) {
+            fprintf(stderr, "[dec] keyframe: decoding again after %lu dropped frames\n", d->dropped_awaiting);
+        }
+        d->await_keyframe = 0;
+        d->dropped_awaiting = 0;
+    }
 
     d->pkt->data = anb;
     d->pkt->size = (int)anb_len;
@@ -418,13 +460,18 @@ int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len, uin
     TB_LOOP_LEAVE(outer);
     if (r < 0 && r != AVERROR(EAGAIN)) {
         tb_dec_log_error("send_packet", r);
+        tb_dec_hold_until_keyframe(d);
         return -1;
     }
 
     while (1) {
         r = avcodec_receive_frame(d->ctx, d->hw_frame);
         if (r == AVERROR(EAGAIN) || r == AVERROR_EOF) return 0;
-        if (r < 0) { tb_dec_log_error("recv_frame", r); return -1; }
+        if (r < 0) {
+            tb_dec_log_error("recv_frame", r);
+            tb_dec_hold_until_keyframe(d);
+            return -1;
+        }
 
 #if defined(__APPLE__)
         /* VideoToolbox frames carry their CVPixelBufferRef in data[3]: pass it
