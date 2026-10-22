@@ -3,7 +3,7 @@
  * Single-threaded event loop:
  *   - SDL_PollEvent (non-blocking)  → quit detection
  *   - non-blocking socket read     → packet parser → decoder → renderer
- *   - 1ms sleep when idle           → CPU yield
+ *   - 1ms sleep between packets, 10ms with no sender → CPU yield
  *
  * No ObjC. No Cocoa NSApplication. No autoreleasepool.
  * Crashes from objc_release/__CFAutoreleasePoolPop cannot happen here:
@@ -29,6 +29,7 @@
 #include "tb_trace.h"
 #include "tb_clipboard.h"
 #include "tb_sysinfo.h"
+#include "tb_running_app.h"
 /* PWE: pairing and encrypted sessions */
 #include "pwe_secure.h"
 #include "pwe_keystore.h"
@@ -53,6 +54,7 @@
 
 #include <SDL.h>
 #include <ApplicationServices/ApplicationServices.h>
+#include <IOKit/pwr_mgt/IOPMLib.h>
 #include <dns_sd.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreGraphics/CoreGraphics.h>
@@ -90,6 +92,10 @@ struct app {
     uint64_t frames;
     uint64_t last_fps_tick_ms;
     uint64_t last_fps_count;
+    /* PWE (1.1.1): per-second counts gathered into one line every 10 s. */
+    uint64_t fps_report_ms;
+    unsigned fps_seconds, fps_min, fps_max;
+    uint64_t fps_sum;
     uint64_t last_ip_check_ms;
     /* Last display-tweak state reported to the sender, so changes made on this
      * Mac (Control Center, System Settings) propagate back and the sender's
@@ -128,6 +134,7 @@ struct app {
     int      last_input_monitoring_trusted;
     int      last_accessibility_trusted;
     uint64_t last_permissions_poll_ms;
+    int      input_permissions_requested;   /* PWE (1.1.1): asked macOS once this launch */
 
     DNSServiceRef bonjour_ref;
     char     bonjour_name[128];
@@ -726,6 +733,17 @@ static void bonjour_update(struct app *a, uint16_t port) {
     TXTRecordSetValue(&txt, "version", (uint8_t)strlen(TB_RECEIVER_VERSION), TB_RECEIVER_VERSION);
     TXTRecordSetValue(&txt, "supportsHEVCDecode", 1, tb_dec_supports_hevc_hwdecode() ? "1" : "0");
     TXTRecordSetValue(&txt, "supportsRawNV12", 1, "1");
+    {
+        /* PWE (1.1.1): which Mac and macOS the sender is talking to, for its
+         * diagnostics. Nothing personal: no host or user name. */
+        char model[64], os[32];
+        if (tb_sysinfo_model(model, sizeof(model))[0]) {
+            TXTRecordSetValue(&txt, "model", (uint8_t)strlen(model), model);
+        }
+        if (tb_sysinfo_os_version(os, sizeof(os))[0]) {
+            TXTRecordSetValue(&txt, "os", (uint8_t)strlen(os), os);
+        }
+    }
 
     struct tb_display_info info;
     if (tb_disp_get_info(a->disp, &info) == 0) {
@@ -780,7 +798,8 @@ static void bonjour_update(struct app *a, uint16_t port) {
     {
         char ifn[IFNAMSIZ] = "";
         if (if1) if_indextoname(if1, ifn);
-        fprintf(stderr, "[bonjour] registering on %s: %s\n", if1 ? (ifn[0] ? ifn : "?") : "every interface", addrs);
+        fprintf(stderr, "[bonjour] registering on %s: %s (TXT %u bytes)\n", if1 ? (ifn[0] ? ifn : "?") : "every interface",
+                addrs, (unsigned)TXTRecordGetLength(&txt));
     }
 
     DNSServiceErrorType err = DNSServiceRegister(
@@ -1061,9 +1080,24 @@ static void tb_receiver_apply_input_control_mode(struct app *a, const uint8_t *p
 
 /* ---- Callbacks: decoder → display ------------------------------------ */
 
+/* PWE (1.1.1): a session's first picture wakes the iMac's screen, as a key
+ * press would. A Mac that connects to an iMac whose display has gone to sleep
+ * otherwise streams to a dark panel until someone touches the iMac. Declared
+ * on the first frame, not on accept: only a session that got through the
+ * handshake and is sending pictures counts. A password-locked iMac wakes to
+ * its lock screen and stays locked. */
+static void tb_receiver_wake_screen_for_session(void) {
+    static IOPMAssertionID activity = kIOPMNullAssertionID;
+    const IOReturn r = IOPMAssertionDeclareUserActivity(CFSTR("PWE Screen Encore session"),
+                                                        kIOPMUserActiveLocal, &activity);
+    if (r == kIOReturnSuccess) fprintf(stderr, "[power] first picture: screen woken\n");
+    else fprintf(stderr, "[power] first picture: could not wake the screen (0x%x)\n", (unsigned)r);
+}
+
 static void on_frame(const struct tb_frame *frame, void *ud) {
     struct app *a = (struct app *)ud;
     tb_trace_mark_now(frame->trace_id, TB_TRACE_DECODED);
+    if (!a->have_video_frame) tb_receiver_wake_screen_for_session();
     a->have_video_frame = 1;
     tb_copy_i18n(a->status_text, sizeof(a->status_text), "receiver.status.stream_active");
     {
@@ -1106,6 +1140,7 @@ static void handle_raw_frame(struct app *a, const uint8_t *p, size_t len) {
     const uint32_t trace_id = tb_trace_frame_arrived();
     tb_trace_mark_now(trace_id, TB_TRACE_DECODED);   /* nothing to decode */
 
+    if (!a->have_video_frame) tb_receiver_wake_screen_for_session();
     a->have_video_frame = 1;
     tb_copy_i18n(a->status_text, sizeof(a->status_text), "receiver.status.stream_active");
     {
@@ -1786,6 +1821,37 @@ static void tb_receiver_start_input_tap(struct app *a) {
                           can_consume ? "true" : "false");
 }
 
+/* PWE (1.1.1): the first time a Mac hands control to this iMac
+ * (receiverMaster) in a launch, ask macOS for what the global event tap needs:
+ * Input Monitoring to see keys and the pointer, Accessibility to keep them from
+ * the iMac's own apps. macOS shows its own prompt for whichever is missing and
+ * lists the receiver in Privacy & Security; the 250 ms poll picks up a grant
+ * and restarts the tap. Once per launch, and only from a session: an idle
+ * receiver never prompts. Without this, the receiver appeared in neither list
+ * and the person had to add it by hand. */
+static void tb_receiver_request_input_permissions_once(struct app *a) {
+    if (a->input_permissions_requested) return;
+    a->input_permissions_requested = 1;
+    const int input_monitoring = tb_receiver_input_monitoring_trusted();
+    const int accessibility = tb_receiver_accessibility_trusted();
+    if (input_monitoring && accessibility) return;
+    tb_receiver_input_log("[input] receiverMaster: asking macOS for %s%s%s",
+                          input_monitoring ? "" : "Input Monitoring",
+                          !input_monitoring && !accessibility ? " and " : "",
+                          accessibility ? "" : "Accessibility");
+    if (!input_monitoring) (void)CGRequestListenEventAccess();
+    if (!accessibility) {
+        const void *keys[] = { kAXTrustedCheckOptionPrompt };
+        const void *values[] = { kCFBooleanTrue };
+        CFDictionaryRef options = CFDictionaryCreate(NULL, keys, values, 1, &kCFTypeDictionaryKeyCallBacks,
+                                                     &kCFTypeDictionaryValueCallBacks);
+        if (options) {
+            (void)AXIsProcessTrustedWithOptions(options);
+            CFRelease(options);
+        }
+    }
+}
+
 static void tb_receiver_refresh_input_capture(struct app *a) {
     if (!a) return;
     int capture = strcmp(a->input_control_mode, "receiverMaster") == 0 && a->client_fd >= 0;
@@ -1797,6 +1863,7 @@ static void tb_receiver_refresh_input_capture(struct app *a) {
     }
 #endif
     if (capture) {
+        tb_receiver_request_input_permissions_once(a);
         const int wants_global_tap = tb_receiver_input_monitoring_trusted() ? 1 : 0;
         const int wants_consume = tb_receiver_accessibility_trusted() ? 1 : 0;
         if (a->input_tap && (!wants_global_tap || a->input_tap_consumes_events != wants_consume)) {
@@ -1885,7 +1952,7 @@ static void send_receiver_info(struct app *a) {
         "\"modeWidth\":%u,\"modeHeight\":%u,\"refreshRate\":60,"
         "\"hiDPI\":%s,\"captureWidth\":%u,\"captureHeight\":%u,"
         "\"supportsHEVCDecode\":%s,\"supportsRawNV12\":true,\"inputMonitoringTrusted\":%s,\"accessibilityTrusted\":%s,"
-        "\"supportsNightShift\":%s,\"supportsTrueTone\":%s,\"cursorImage\":%s}",
+        "\"supportsNightShift\":%s,\"supportsTrueTone\":%s,\"cursorImage\":%s,\"receiverVersion\":\"%s\"}",
         escaped_name,
         profile.panel_w,
         profile.panel_h,
@@ -1899,7 +1966,8 @@ static void send_receiver_info(struct app *a) {
         tb_receiver_accessibility_trusted() ? "true" : "false",
         tb_night_shift_supported() ? "true" : "false",
         tb_true_tone_supported() ? "true" : "false",
-        tb_receiver_draws_pointer() ? "true" : "false");
+        tb_receiver_draws_pointer() ? "true" : "false",
+        TB_RECEIVER_VERSION);   /* PWE (1.1.1) */
     if (json_len <= 0 || (size_t)json_len >= sizeof(json)) return;
 
     const size_t packet_len = 4 + 1 + (size_t)json_len;
@@ -2332,6 +2400,28 @@ static void build_display_host(char *buf, size_t bufsz, const char *ip_fallback,
 
 /* ---- Main ------------------------------------------------------------ */
 
+/* PWE (1.1.1): a receiver that cannot start says so. Opened from Finder or at
+ * login it has no terminal, and before this it simply vanished. The message
+ * gives the reason, the system's own words for it when there are any, and
+ * where the log is. SDL_ShowSimpleMessageBox may be called before SDL_Init,
+ * so this works even when the display itself could not be opened. */
+static void tb_receiver_fatal(const char *reason_key, const char *detail) {
+    char title[160], body[1024];
+    snprintf(title, sizeof(title), "%s", tb_i18n_get("receiver.fatal.title"));
+    size_t n = (size_t)snprintf(body, sizeof(body), "%s", tb_i18n_get(reason_key));
+    if (detail && *detail && n < sizeof(body)) {
+        n += (size_t)snprintf(body + n, sizeof(body) - n, "\n\n(%s)", detail);
+    }
+    const char *log_path = tb_log_path();
+    if (log_path && n < sizeof(body)) {
+        (void)snprintf(body + n, sizeof(body) - n, "\n\n%s\n%s", tb_i18n_get("receiver.fatal.log"), log_path);
+    }
+    fprintf(stderr, "[main] cannot start (%s)%s%s\n", reason_key, detail && *detail ? ": " : "",
+            detail ? detail : "");
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title, body, NULL);
+    fprintf(stderr, "[main] bye (could not start)\n");
+}
+
 int main(int argc, char **argv) {
     int fullscreen = 1;
     for (int i = 1; i < argc; i++) {
@@ -2346,19 +2436,33 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "--windowed") == 0) fullscreen = 0;
     }
 
-    /* PWE: the log file, also when opened from Finder or at login (tb_log.h). */
+    /* PWE (1.1.1): whether the previous run ended without "[main] bye" (a
+     * crash, a force quit, a power cut). Read before this run appends to the
+     * file; said once this copy has its port, so a second copy, whose log
+     * ends with the running receiver's latest line, never says it. */
+    char previous_last_line[160] = "";
+    int previous_run_unclean = 0;
+    /* PWE: the log file, also when opened from Finder or at login (tb_log.h),
+     * and the facts a remote tester's log needs (nothing personal). Each file
+     * a rotation starts opens with the same facts (1.1.1). */
     {
+        char sys[192];
+        tb_sysinfo_describe(sys, sizeof(sys));
+        char header[320];
+        snprintf(header, sizeof(header), "receiver %s (%s), pid %d; %s",
+                 TB_RECEIVER_VERSION, TB_RECEIVER_BUILD, (int)getpid(), sys);
+        tb_log_set_header(header);
         char log_dir[PATH_MAX];
         if (tb_log_default_dir("TargetBridge Receiver", log_dir, sizeof(log_dir)) &&
-            tb_log_start(log_dir, TB_LOG_MAX_BYTES) == 0) {
+            tb_log_read_last_line(log_dir, previous_last_line, sizeof(previous_last_line)) &&
+            !tb_log_line_is_clean_exit(previous_last_line)) {
+            previous_run_unclean = 1;
+        }
+        if (log_dir[0] && tb_log_start(log_dir, TB_LOG_MAX_BYTES) == 0) {
             fprintf(stderr, "[log] receiver %s (%s) started, pid %d\n",
                     TB_RECEIVER_VERSION, TB_RECEIVER_BUILD, (int)getpid());
         }
-    }
-    {
-        /* PWE: the facts a remote tester's log needs; nothing personal. */
-        char sys[192];
-        fprintf(stderr, "[sys] %s\n", tb_sysinfo_describe(sys, sizeof(sys)));
+        fprintf(stderr, "[sys] %s\n", sys);
     }
 
     char startup_language_pref[8];
@@ -2370,6 +2474,7 @@ int main(int argc, char **argv) {
 
     signal(SIGINT,  on_sigint);
     signal(SIGTERM, on_sigint);
+    signal(SIGHUP,  on_sigint);   /* PWE (1.1.1): a closed Terminal ends it cleanly too */
     signal(SIGPIPE, SIG_IGN);
 
     char tb_ip[64] = {0};
@@ -2457,8 +2562,63 @@ int main(int argc, char **argv) {
     tb_gesture_bridge_install(tb_receiver_space_switch_callback, &a);
     tb_gesture_bridge_set_active(0);
 
+    /* PWE (1.1.1): the listeners first: a second copy finds the port taken
+     * before it opens a window or starts a thread. */
+    /* Tests only: another port, so a sender running on the same Mac that
+     * remembers this Mac's address cannot take the single client slot. */
+    uint16_t listen_port = TB_PORT;
+#if TB_RECEIVER_TEST_HOOKS
+    {
+        const char *p = getenv("TB_RECEIVER_TEST_PORT");
+        long v = p ? strtol(p, NULL, 10) : 0;
+        if (v > 1024 && v < 65536) listen_port = (uint16_t)v;
+    }
+#endif
+    a.server_fd = tb_net_listen(listen_port);
+    if (a.server_fd < 0) {
+        if (errno == EADDRINUSE) {
+            /* PWE (1.1.1): another receiver holds the port. Say so, bring the
+             * running copy to the front and leave quietly: this is the second
+             * copy, not a failure. Listening comes before the window and the
+             * worker threads, so there is nothing to tear down and no second
+             * window flashes. */
+            fprintf(stderr, "[net] port %u is in use: another receiver is running; leaving\n",
+                    (unsigned)listen_port);
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION,
+                                     tb_i18n_get("receiver.already_running.title"),
+                                     tb_i18n_get("receiver.already_running.body"), NULL);
+            char bundle_id[128] = "";
+            CFStringGetCString(a.app_id, bundle_id, sizeof(bundle_id), kCFStringEncodingUTF8);
+            if (tb_running_app_activate(bundle_id)) {
+                fprintf(stderr, "[main] brought the running receiver to the front\n");
+            } else {
+                fprintf(stderr, "[main] no other receiver found: another program holds the port\n");
+            }
+            fprintf(stderr, "[main] bye (another receiver is running)\n");
+            return 0;
+        }
+        const int listen_errno = errno;
+        fprintf(stderr, "tb_net_listen failed\n");
+        char reason[96];
+        snprintf(reason, sizeof(reason), "port %u: %s", (unsigned)listen_port, strerror(listen_errno));
+        tb_receiver_fatal("receiver.fatal.network", reason);
+        return 1;
+    }
+    /* PWE (T34): IPv6 too, for the Thunderbolt Bridge's link-local address. */
+    a.server6_fd = tb_net_listen6(listen_port);
+    fprintf(stderr, "[net] listening on port %u over IPv4%s\n", (unsigned)listen_port,
+            a.server6_fd >= 0 ? " and IPv6" : " only (no IPv6 listener)");
+    if (previous_run_unclean) {
+        fprintf(stderr, "[main] the previous run did not end normally (its last line: \"%s\"); "
+                        "if it crashed, the report is in ~/Library/DiagnosticReports\n", previous_last_line);
+    }
+
     a.disp = tb_disp_create(fullscreen);
-    if (!a.disp) { fprintf(stderr, "tb_disp_create failed\n"); return 1; }
+    if (!a.disp) {
+        fprintf(stderr, "tb_disp_create failed\n");
+        tb_receiver_fatal("receiver.fatal.display", SDL_GetError());
+        return 1;
+    }
     /* PWE: pairing keys, and the menu items for unencrypted connections and forgetting. */
     tb_pwe_load_keys(&a);
     tb_pairing_menu_install(tb_pwe_toggle_unencrypted, tb_pwe_forget_all, &a);
@@ -2499,24 +2659,13 @@ int main(int argc, char **argv) {
         if (!a.clipboard) fprintf(stderr, "[clipboard] warning: no clipboard thread; the clipboard is not shared\n");
     }
     a.dec = tb_dec_create(on_frame, &a);
-    if (!a.dec) { fprintf(stderr, "tb_dec_create failed\n"); tb_disp_destroy(a.disp); return 1; }
-
-    /* Tests only: another port, so a sender running on the same Mac that
-     * remembers this Mac's address cannot take the single client slot. */
-    uint16_t listen_port = TB_PORT;
-#if TB_RECEIVER_TEST_HOOKS
-    {
-        const char *p = getenv("TB_RECEIVER_TEST_PORT");
-        long v = p ? strtol(p, NULL, 10) : 0;
-        if (v > 1024 && v < 65536) listen_port = (uint16_t)v;
+    if (!a.dec) {
+        fprintf(stderr, "tb_dec_create failed\n");
+        tb_receiver_fatal("receiver.fatal.decoder", NULL);
+        tb_disp_destroy(a.disp);
+        return 1;
     }
-#endif
-    a.server_fd = tb_net_listen(listen_port);
-    if (a.server_fd < 0) { fprintf(stderr, "tb_net_listen failed\n"); return 1; }
-    /* PWE (T34): IPv6 too, for the Thunderbolt Bridge's link-local address. */
-    a.server6_fd = tb_net_listen6(listen_port);
-    fprintf(stderr, "[net] listening on port %u over IPv4%s\n", (unsigned)listen_port,
-            a.server6_fd >= 0 ? " and IPv6" : " only (no IPv6 listener)");
+
     /* Announce only once both listeners are up (PWE). */
     bonjour_update(&a, TB_PORT);
 
@@ -2813,19 +2962,40 @@ int main(int argc, char **argv) {
         TB_LOOP_PHASE("trace and fps lines");
         tb_trace_tick(tb_trace_now_ns());
 
-        /* FPS log */
+        /* FPS log. PWE (1.1.1): counted every second, logged every 10 s as
+         * average, lowest and highest over the seconds that had frames (a still
+         * desktop sends none), instead of one line a second. */
         if (t - a.last_fps_tick_ms >= 1000) {
-            uint64_t df = a.frames - a.last_fps_count;
+            const uint64_t df = a.frames - a.last_fps_count;
             a.last_fps_count   = a.frames;
             a.last_fps_tick_ms = t;
-            if (df > 0) fprintf(stderr, "[main] %llu fps\n", (unsigned long long)df);
+            if (df > 0) {
+                const unsigned fps = df > UINT_MAX ? UINT_MAX : (unsigned)df;
+                if (a.fps_seconds == 0 || fps < a.fps_min) a.fps_min = fps;
+                if (fps > a.fps_max) a.fps_max = fps;
+                a.fps_sum += df;
+                a.fps_seconds++;
+            }
+            if (a.fps_report_ms == 0) a.fps_report_ms = t;
+            if (t - a.fps_report_ms >= 10000) {
+                if (a.fps_seconds > 0) {
+                    fprintf(stderr, "[main] fps over %u s with frames: avg %.1f, min %u, max %u\n",
+                            a.fps_seconds, (double)a.fps_sum / a.fps_seconds, a.fps_min, a.fps_max);
+                }
+                a.fps_report_ms = t;
+                a.fps_seconds = a.fps_min = a.fps_max = 0;
+                a.fps_sum = 0;
+            }
         }
 
         /* Yield when idle or when a nonblocking active socket had no data,
-         * otherwise the receiver can busy-spin between incoming frame packets. */
+         * otherwise the receiver can busy-spin between incoming frame packets.
+         * PWE (1.1.1): with no sender at all, nothing needs a 1 kHz loop: the
+         * idle screen is presented every 100 ms and a new connection or key
+         * press may wait 10 ms. A connected sender keeps the 1 ms pass. */
         if (a.client_fd < 0 || !a.have_video_frame || socket_activity == 0) {
             TB_LOOP_PHASE("idle sleep");
-            SDL_Delay(1);
+            SDL_Delay(a.client_fd < 0 ? 10 : 1);
         }
     }
 

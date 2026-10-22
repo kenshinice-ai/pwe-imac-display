@@ -34,6 +34,8 @@ static struct {
     char      old_path[PATH_MAX];
     pthread_t reader;
     atomic_int reader_done;
+    int       started;   /* tb_log_start succeeded once: `path` names the file */
+    char      header[512];
 } g_log = { .pipe_read = -1, .saved_stdout = -1, .saved_stderr = -1, .file = -1, .at_line_start = 1 };
 
 size_t tb_log_stamp(const char *in, size_t len, const char *stamp, int *at_line_start,
@@ -62,15 +64,6 @@ static int tb_log_open_file(void) {
     return 0;
 }
 
-/* Between lines only, so no line is ever split across the two files. */
-static void tb_log_rotate_if_full(void) {
-    if (!g_log.at_line_start || g_log.file_bytes < g_log.max_bytes) return;
-    close(g_log.file);
-    g_log.file = -1;
-    (void)rename(g_log.path, g_log.old_path);
-    (void)tb_log_open_file();
-}
-
 static void tb_log_write_all(int fd, const char *buf, size_t len) {
     while (len > 0) {
         ssize_t w = write(fd, buf, len);
@@ -79,6 +72,27 @@ static void tb_log_write_all(int fd, const char *buf, size_t len) {
         buf += w;
         len -= (size_t)w;
     }
+}
+
+void tb_log_set_header(const char *line) {
+    snprintf(g_log.header, sizeof(g_log.header), "%s", line ? line : "");
+}
+
+/* Between lines only, so no line is ever split across the two files. The new
+ * file opens with the header (PWE 1.1.1). */
+static void tb_log_rotate_if_full(const char *stamp) {
+    if (!g_log.at_line_start || g_log.file_bytes < g_log.max_bytes) return;
+    close(g_log.file);
+    g_log.file = -1;
+    (void)rename(g_log.path, g_log.old_path);
+    if (tb_log_open_file() < 0 || !g_log.header[0]) return;
+    char line[sizeof(g_log.header) + 128];
+    const int n = snprintf(line, sizeof(line), "%s[log] %s (continued; earlier lines in receiver.old.log)\n",
+                           stamp, g_log.header);
+    if (n <= 0) return;
+    const size_t len = (size_t)n < sizeof(line) ? (size_t)n : sizeof(line) - 1;
+    tb_log_write_all(g_log.file, line, len);
+    g_log.file_bytes += len;
 }
 
 /* Appends `len` bytes to the file, a line at a time so rotation can fall in between. */
@@ -92,7 +106,7 @@ static void tb_log_append(const char *buf, size_t len) {
     snprintf(stamp + s, sizeof(stamp) - s, ".%03d ", (int)(tv.tv_usec / 1000));
 
     while (len > 0) {
-        tb_log_rotate_if_full();
+        tb_log_rotate_if_full(stamp);
         if (g_log.file < 0) return;
         const char *nl = memchr(buf, '\n', len);
         const size_t line = nl ? (size_t)(nl - buf) + 1 : len;
@@ -147,6 +161,41 @@ int tb_log_default_dir(const char *app_name, char *out, size_t size) {
     return 1;
 }
 
+const char *tb_log_path(void) {
+    return g_log.started ? g_log.path : NULL;
+}
+
+int tb_log_read_last_line(const char *dir, char *out, size_t size) {
+    if (!out || size == 0) return 0;
+    out[0] = '\0';
+    if (!dir || !*dir) return 0;
+    char path[PATH_MAX];
+    snprintf(path, sizeof(path), "%s/receiver.log", dir);
+    const int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    char tail[2048];
+    struct stat st;
+    const off_t from = fstat(fd, &st) == 0 && st.st_size > (off_t)sizeof(tail) ? st.st_size - (off_t)sizeof(tail) : 0;
+    const ssize_t n = pread(fd, tail, sizeof(tail), from);
+    close(fd);
+    if (n <= 0) return 0;
+    size_t end = (size_t)n;
+    while (end > 0 && (tail[end - 1] == '\n' || tail[end - 1] == '\r')) end--;
+    if (end == 0) return 0;
+    size_t start = end;
+    while (start > 0 && tail[start - 1] != '\n') start--;
+    const size_t len = end - start < size - 1 ? end - start : size - 1;
+    memcpy(out, tail + start, len);
+    out[len] = '\0';
+    return 1;
+}
+
+int tb_log_line_is_clean_exit(const char *line) {
+    /* "2026-10-20 18:47:01.123 [main] bye" */
+    static const char bye[] = "[main] bye";
+    return line && strlen(line) >= 24 + sizeof(bye) - 1 && strncmp(line + 24, bye, sizeof(bye) - 1) == 0;
+}
+
 int tb_log_start(const char *dir, size_t max_bytes) {
     if (g_log.running || !dir || !*dir) return -1;
     if (mkdir(dir, 0755) != 0 && errno != EEXIST) return -1;
@@ -187,6 +236,7 @@ int tb_log_start(const char *dir, size_t max_bytes) {
     /* stdout now goes to a pipe, which stdio would buffer in full. */
     setvbuf(stdout, NULL, _IOLBF, 0);
     atexit(tb_log_stop);
+    g_log.started = 1;
     return 0;
 }
 

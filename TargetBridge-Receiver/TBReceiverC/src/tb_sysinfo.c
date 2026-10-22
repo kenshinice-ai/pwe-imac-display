@@ -72,3 +72,23 @@ char *tb_sysinfo_describe(char *buf, size_t size) {
 #endif
     return buf;
 }
+
+static char *sysinfo_value(const char *name, char *buf, size_t size) {
+    if (!buf || size == 0) return buf;
+    buf[0] = '\0';
+#if defined(__APPLE__)
+    sysctl_text(name, buf, size);
+    if (strcmp(buf, "?") == 0) buf[0] = '\0';
+#else
+    (void)name;
+#endif
+    return buf;
+}
+
+char *tb_sysinfo_model(char *buf, size_t size) {
+    return sysinfo_value("hw.model", buf, size);
+}
+
+char *tb_sysinfo_os_version(char *buf, size_t size) {
+    return sysinfo_value("kern.osproductversion", buf, size);
+}

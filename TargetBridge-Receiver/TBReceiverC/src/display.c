@@ -91,6 +91,10 @@ struct tb_display {
     int           last_drawable_w;
     int           last_drawable_h;
     int           status_is_connecting;
+    /* PWE (1.1.1): when the idle or connecting screen was last presented. The
+     * main loop asks for it every pass; it is presented when its picture
+     * changed, else at TB_DISP_IDLE_PRESENT_MS / TB_DISP_CONNECTING_PRESENT_MS. */
+    uint64_t      last_status_present_ms;
 
     /* PWE pairing: a notice drawn in place of the calm idle screen's two lines
      * (and, for a warning, on the connecting screen). See tb_disp_set_notice. */
@@ -134,6 +138,21 @@ struct tb_display {
 };
 
 #define TB_DISP_QUIT_CONFIRM_MS 2000u
+
+/* PWE (1.1.1): how often an unchanged idle or connecting screen is presented
+ * again (a covered window gets its picture back; the spinner turns every 83 ms). */
+#define TB_DISP_IDLE_PRESENT_MS       100u
+#define TB_DISP_CONNECTING_PRESENT_MS  33u
+
+/* Whether to present the idle or connecting screen now: when its texture was
+ * rebuilt, or when `interval_ms` passed since the last present. Updates the
+ * stamp when it says yes. */
+static int tb_disp_status_present_due(struct tb_display *d, int rebuilt, uint64_t interval_ms) {
+    const uint64_t now = SDL_GetTicks64();
+    if (!rebuilt && d->last_status_present_ms && now - d->last_status_present_ms < interval_ms) return 0;
+    d->last_status_present_ms = now;
+    return 1;
+}
 
 /* Whether the screen should say "Press Esc again to quit" now (PWE build). */
 static int tb_disp_quit_hint(const struct tb_display *d) {
@@ -1041,7 +1060,10 @@ static void tb_disp_refresh_window_mode(struct tb_display *d) {
 
     if (monitor_shield_active) {
         SDL_SetWindowFullscreen(d->win, SDL_WINDOW_FULLSCREEN_DESKTOP);
-    } else {
+    } else if (SDL_GetWindowFlags(d->win) & SDL_WINDOW_FULLSCREEN) {
+        /* PWE (1.1.1): back to the window's size and place only when leaving
+         * fullscreen. This runs on every session change, language switch and
+         * renderer rebuild; a window the person moved or resized stays put. */
         SDL_SetWindowFullscreen(d->win, 0);
         SDL_SetWindowSize(d->win, 980, 620);
         SDL_SetWindowPosition(d->win, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
@@ -1869,6 +1891,22 @@ static void tb_disp_sdl_show_frame(struct tb_display *d, const struct tb_frame *
 
 static uint64_t tb_disp_now_ns(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW); }
 
+/* PWE (1.1.1): start the refresh ticks on the display the window is on. If
+ * CoreVideo will not start the link, pacing would wait on ticks that never
+ * come: draw on arrival instead (as with no display link at all), and pace
+ * again when a later start succeeds. */
+static void tb_disp_start_vsync(struct tb_display *d) {
+    if (!d->vsync) return;
+    tb_vsync_set_display(d->vsync, d->mtl ? tb_mtl_display_id(d->mtl) : 0);
+    const int err = tb_vsync_start(d->vsync);
+    if (err && d->paced) {
+        fprintf(stderr, "[disp] display link did not start (CVReturn %d): frames are drawn on arrival\n", err);
+    } else if (!err && !d->paced) {
+        fprintf(stderr, "[disp] display link running again: frames paced to the refresh\n");
+    }
+    d->paced = err == 0;
+}
+
 static uint64_t tb_disp_tick_count(const struct tb_display *d) {
     return d->vsync ? tb_vsync_count(d->vsync) : 0;
 }
@@ -1876,8 +1914,10 @@ static uint64_t tb_disp_tick_count(const struct tb_display *d) {
 static int tb_disp_metal_slot_free(const struct tb_display *d) {
     if (!d->paced) return 1;
     if (tb_disp_tick_count(d) != d->last_submit_tick) return 1;
-    /* No refresh ticks (display link stopped, display asleep): do not stall. */
-    return tb_disp_now_ns() - d->last_submit_ns > 50000000ull;
+    /* No refresh ticks (display link stopped, display asleep): do not stall.
+     * PWE (1.1.1): wait one and a half refresh periods, not a fixed 50 ms
+     * (three refreshes at 60 Hz). */
+    return tb_disp_now_ns() - d->last_submit_ns > tb_vsync_period_ns(d->vsync) * 3 / 2;
 }
 
 /* Whether a moved pointer should wait for the next video frame instead of
@@ -1940,10 +1980,7 @@ static int tb_disp_rebuild_renderer(struct tb_display *d, const char *wish) {
     }
     tb_disp_setup_renderer(d);
     tb_disp_refresh_window_mode(d);
-    if (d->mtl && d->is_connected && d->vsync) {
-        tb_vsync_set_display(d->vsync, tb_mtl_display_id(d->mtl));
-        tb_vsync_start(d->vsync);
-    }
+    if (d->mtl && d->is_connected) tb_disp_start_vsync(d);
     if (keep) {
         struct tb_frame f = {
             .width = (int)CVPixelBufferGetWidth(keep),
@@ -2299,6 +2336,10 @@ unsigned int tb_disp_poll_actions(struct tb_display *d) {
             fprintf(stderr, "[disp] quit: Command-Q, the close button or a signal\n");
             d->quit = 1;
         }
+        /* PWE (1.1.1): the window moved to another display: tick with that one. */
+        else if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_DISPLAY_CHANGED) {
+            if (d->vsync && d->mtl) tb_vsync_set_display(d->vsync, tb_mtl_display_id(d->mtl));
+        }
         else if (own_keys &&
                  tb_disp_is_shortcut(&ev, SDLK_ESCAPE, SDL_SCANCODE_ESCAPE)) tb_disp_escape(d);
         else if (own_keys &&
@@ -2501,10 +2542,7 @@ static void tb_disp_set_stream_state(struct tb_display *d, int connected, int co
     d->is_connecting = connecting;
     const char *outer = TB_LOOP_ENTER("display link: start or stop (CVDisplayLink)");
     if (connected) {
-        if (d->vsync) {
-            tb_vsync_set_display(d->vsync, d->mtl ? tb_mtl_display_id(d->mtl) : 0);
-            tb_vsync_start(d->vsync);
-        }
+        tb_disp_start_vsync(d);
     } else {
         tb_vsync_stop(d->vsync);
         tb_disp_metal_release_frames(d);
@@ -2589,6 +2627,7 @@ void tb_disp_render_status(struct tb_display *d,
     }
 
     const int quit_hint = tb_disp_quit_hint(d);
+    int rebuilt = 0;
     if (strcmp(d->last_ip, ip) != 0 ||
         strcmp(d->last_status, status) != 0 ||
         strcmp(d->last_sender, sender) != 0 ||
@@ -2604,6 +2643,7 @@ void tb_disp_render_status(struct tb_display *d,
         d->status_tex == NULL ||
         d->pwe_notice_dirty ||
         d->status_is_connecting) {
+        rebuilt = 1;
         d->pwe_notice_dirty = 0;
         snprintf(d->last_ip, sizeof(d->last_ip), "%s", ip);
         snprintf(d->last_status, sizeof(d->last_status), "%s", status);
@@ -2634,6 +2674,7 @@ void tb_disp_render_status(struct tb_display *d,
 
     /* On the Metal layer a covered window may wait a second for a drawable. */
     if (d->mtl && !tb_mtl_window_visible(d->mtl)) return;
+    if (!tb_disp_status_present_due(d, rebuilt, TB_DISP_IDLE_PRESENT_MS)) return;
     SDL_RenderClear(d->ren);
     if (d->status_tex) SDL_RenderCopy(d->ren, d->status_tex, NULL, NULL);
     const char *outer = TB_LOOP_ENTER("draw: SDL_RenderPresent (idle screen)");
@@ -2655,12 +2696,14 @@ void tb_disp_render_connecting(struct tb_display *d) {
     }
 
     const int quit_hint = tb_disp_quit_hint(d);
+    int rebuilt = 0;
     if (d->status_tex == NULL ||
         !d->status_is_connecting ||
         d->pwe_notice_dirty ||
         d->last_quit_hint != quit_hint ||
         d->last_drawable_w != drawable_w ||
         d->last_drawable_h != drawable_h) {
+        rebuilt = 1;
         d->pwe_notice_dirty = 0;
         d->last_drawable_w = drawable_w;
         d->last_drawable_h = drawable_h;
@@ -2676,6 +2719,7 @@ void tb_disp_render_connecting(struct tb_display *d) {
     tb_disp_set_title(d, "TargetBridge Receiver — Connecting");
 #endif
     if (d->mtl && !tb_mtl_window_visible(d->mtl)) return;
+    if (!tb_disp_status_present_due(d, rebuilt, TB_DISP_CONNECTING_PRESENT_MS)) return;
     SDL_RenderClear(d->ren);
     if (d->status_tex) SDL_RenderCopy(d->ren, d->status_tex, NULL, NULL);
     tb_disp_draw_connecting_spinner(d, drawable_w, drawable_h);

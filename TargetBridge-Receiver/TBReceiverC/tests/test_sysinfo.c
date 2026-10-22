@@ -54,6 +54,18 @@ int main(void) {
     const char *user = getenv("USER");
     if (user && strlen(user) > 3) CHECK(strstr(line, user) == NULL, "line carries no user name");
 
+    /* PWE (1.1.1): the Bonjour record's model and os, and the line agrees. */
+    char model[64], os[32];
+    tb_sysinfo_model(model, sizeof(model));
+    tb_sysinfo_os_version(os, sizeof(os));
+    printf("test_sysinfo: model=%s os=%s\n", model, os);
+    CHECK(model[0] && strchr(model, ' ') == NULL && strchr(model, ',') != NULL, "model looks like Mac14,2 or iMac18,3");
+    CHECK(os[0] >= '1' && os[0] <= '9' && strchr(os, '.') != NULL && strchr(os, ' ') == NULL, "os looks like 13.7.8");
+    CHECK(strncmp(line, model, strlen(model)) == 0, "the line starts with the same model");
+    char os_in_line[48];
+    snprintf(os_in_line, sizeof(os_in_line), " macOS %s ", os);
+    CHECK(strstr(line, os_in_line) != NULL, "the line carries the same macOS version");
+
     char tiny[8];
     tb_sysinfo_describe(tiny, sizeof(tiny));
     CHECK(strlen(tiny) < sizeof(tiny), "a short buffer is cut, not overrun");

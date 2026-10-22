@@ -62,6 +62,8 @@ CFLAGS   += -DTB_RECEIVER_TEST_HOOKS=$(TEST_HOOKS)
 UNAME_S  := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
 LDFLAGS  += -framework ApplicationServices -framework AppKit -framework CoreFoundation -framework CoreGraphics -framework CoreText -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework IOSurface -framework CoreServices -framework CoreAudio -framework SystemConfiguration -framework ServiceManagement
+# PWE (1.1.1): IOPMAssertionDeclareUserActivity wakes the screen when a session starts.
+LDFLAGS  += -framework IOKit
 endif
 
 C_SRC = src/main.c src/net.c src/audio_ring.c src/decoder.c src/display.c src/input_queue.c src/idle_watchdog.c src/receiver_profile.c src/tb_i18n.c
@@ -83,6 +85,8 @@ LDFLAGS += -framework Metal -framework QuartzCore
 OBJC_SRC = src/tb_gesture_bridge.m src/tb_display_tweaks.m src/tb_login_item.m
 # The iMac's clipboard on its own thread, off the main loop (PWE 1.1, T40).
 OBJC_SRC += src/tb_clipboard.m
+# The copy already running, when a second one starts (PWE 1.1.1).
+OBJC_SRC += src/tb_running_app.m
 OBJC_SRC += $(OBJC_SRC_PWE_RENDER)
 OBJ = $(C_SRC:.c=.o) $(OBJC_SRC:.m=.o) $(SEC_OBJ)
 BIN = tbreceiver

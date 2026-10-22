@@ -18,7 +18,8 @@ void             tb_vsync_destroy(struct tb_vsync *v);
 
 /* Follow the display the window is on; cheap when it did not change. */
 void             tb_vsync_set_display(struct tb_vsync *v, uint32_t display_id);
-void             tb_vsync_start(struct tb_vsync *v);
+/* 0 when the link runs (or already ran); otherwise CoreVideo's error (a CVReturn). */
+int              tb_vsync_start(struct tb_vsync *v);
 void             tb_vsync_stop(struct tb_vsync *v);
 
 /* Refreshes counted since start. Safe from any thread. */

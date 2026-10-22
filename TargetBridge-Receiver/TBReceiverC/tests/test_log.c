@@ -101,6 +101,70 @@ static void test_file_and_rotation(void) {
     rmdir(dir);
 }
 
+/* PWE (1.1.1): a file started by rotation opens with the header line. */
+static void test_rotation_header(void) {
+    char dir[] = "/tmp/tb_log_test.XXXXXX";
+    CHECK(mkdtemp(dir) != NULL, "mkdtemp");
+    tb_log_set_header("receiver 9.9 (test), pid 1; Mac1,1, macOS 1.0");
+    CHECK(tb_log_start(dir, 200) == 0, "tb_log_start (header)");
+    /* 53-byte lines: four fill the first file, so six rotate exactly once. */
+    for (int i = 0; i < 6; i++) fprintf(stderr, "line %02d of the header test\n", i);
+    tb_log_stop();
+    tb_log_set_header(NULL);
+
+    char path[300], old[300];
+    snprintf(path, sizeof(path), "%s/receiver.log", dir);
+    snprintf(old, sizeof(old), "%s/receiver.old.log", dir);
+    char *cur = slurp(path, NULL);
+    char *prev = slurp(old, NULL);
+    CHECK(cur && prev, "both files exist after rotation");
+    if (cur) {
+        static const char want[] = "[log] receiver 9.9 (test), pid 1; Mac1,1, macOS 1.0 (continued";
+        CHECK(strlen(cur) > 24 && strncmp(cur + 24, want, sizeof(want) - 1) == 0,
+              "the new file opens with the header, got \"%.100s\"", cur);
+        CHECK(strstr(cur, "line 05 of the header test") != NULL, "the last line follows the header");
+    }
+    if (prev) CHECK(strstr(prev, "line 00 of the header test") == prev + 24, "the first file has no header");
+    free(cur);
+    free(prev);
+    unlink(path);
+    unlink(old);
+    rmdir(dir);
+}
+
+/* PWE (1.1.1): the previous run's last line, and what counts as a clean exit. */
+static void test_last_line(void) {
+    CHECK(tb_log_line_is_clean_exit("2026-10-20 18:47:01.123 [main] bye"), "bye is clean");
+    CHECK(tb_log_line_is_clean_exit("2026-10-20 18:47:01.123 [main] bye (sound device still closing)"),
+          "bye with a reason is clean");
+    CHECK(!tb_log_line_is_clean_exit("2026-10-20 18:47:01.123 [main] 60 fps"), "another line is not");
+    CHECK(!tb_log_line_is_clean_exit("[main] bye"), "an unstamped line is not");
+    CHECK(!tb_log_line_is_clean_exit(NULL), "NULL is not");
+
+    char dir[] = "/tmp/tb_log_test.XXXXXX";
+    CHECK(mkdtemp(dir) != NULL, "mkdtemp");
+    char out[128];
+    CHECK(tb_log_read_last_line(dir, out, sizeof(out)) == 0 && out[0] == '\0', "no file: no line");
+    char path[300];
+    snprintf(path, sizeof(path), "%s/receiver.log", dir);
+    FILE *f = fopen(path, "w");
+    for (int i = 0; i < 200; i++) fprintf(f, "2026-10-20 18:47:01.123 line %03d of a long file\n", i);
+    fprintf(f, "2026-10-20 18:47:02.000 [main] bye\n");
+    fclose(f);
+    CHECK(tb_log_read_last_line(dir, out, sizeof(out)) == 1 && strcmp(out, "2026-10-20 18:47:02.000 [main] bye") == 0,
+          "the last line of a long file, got \"%s\"", out);
+    f = fopen(path, "a");
+    fprintf(f, "2026-10-20 18:47:03.000 [dec] cut off mid-li");
+    fclose(f);
+    CHECK(tb_log_read_last_line(dir, out, sizeof(out)) == 1 && strcmp(out, "2026-10-20 18:47:03.000 [dec] cut off mid-li") == 0,
+          "an unfinished last line, got \"%s\"", out);
+    char small[16];
+    CHECK(tb_log_read_last_line(dir, small, sizeof(small)) == 1 && strlen(small) == sizeof(small) - 1,
+          "a short buffer is cut, not overrun");
+    unlink(path);
+    rmdir(dir);
+}
+
 static void test_default_dir(void) {
     char out[512];
     setenv("HOME", "/Users/someone", 1);
@@ -117,6 +181,8 @@ static void test_default_dir(void) {
 int main(void) {
     test_stamp();
     test_file_and_rotation();
+    test_rotation_header();
+    test_last_line();
     test_default_dir();
     printf("test_log: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
