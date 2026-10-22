@@ -5,6 +5,7 @@
 > 2026-10-20 给 Marco 发了补充报告（回在 10-14 那封的线程里）。他 10-16 把 #212–#216 合进了 `maint-3.6`，3.6.1 候选版是上游 PR #218。
 > 渲染方式（Lee 2026-10-22 定）：iMac 默认 OpenGL；用户可在设置 › 高级改成「占用更少（Metal）」。测试里两种都通过。
 > 2026-10-22 给 Marco 发了英文公告和致谢句（Lee 授权，回在 10-14「a signed build of TargetBridge, before we publish」那条线程，只讲发布，不提安全）。他还没回过任何一封；Show HN 要等他不反对。同日 Lee 把测试版私发给第一批人。
+> 打磨（Lee 2026-10-22 定：按清单 https://claude.ai/artifact/TVduMSotx4napQXPrUZgth 执行）。已做：仓库 Issues 打开、两个 issue 模板推到 main（41795e7）、Actions 关掉（API）、描述/主页/wiki 改好；`pwe-1.1` 上文档扫过一遍、加「更新」一节、`docs/pwe/COMPATIBILITY.md`、`docs/pwe/releases/1.1.0.md`（74d86c0）；上游 maint-3.6 合并干跑：18 个文件，4 个冲突（`display.c` 11 处最重），见 `docs/pwe/UPSTREAM-DRYRUN-2026-10-22.md`。进行中（本地分支，发布后再合）：`pwe-1.1.1-sender`、`pwe-1.1.1-receiver`、`pwe-1.1-verify`（verify.sh 四项检查，过了就并进 1.1）。1.1.1 目标 11 月中旬，和 T+14 同天。
 > Lee 2026-10-22 按推荐定：1.1 完全免费（不注册、不试用、不锁功能，收入靠赞助，收费推到 2.0、T+60 约 2026-12-27 复盘）；新 cask 叫 `pwe-screen-encore`；仓库 Sponsor 按钮指向 pwestudio.site/support；10-26 晚的 go/no-go 推荐 go，到时只核对门槛。
 > 宣发（Lee 2026-10-21 定，按宣发简报的推荐）：发布和推广拆开，英文推广等第二款机型的结果和第一周 issue 处理得过来；10-26 晚按门槛定 go/no-go，推迟就整个日历顺延；首波只开微信、小红书、V2EX；T+14 前推广不提配对和加密；仓库 `pwe-imac-display` 发布周不改名，1.1.x 再议。简报 `docs/pwe/LAUNCH-BRIEF-1.1-2026-10-21.md`，网页版 https://claude.ai/artifact/DVXRmqViPuUQFGeBgR5oFS 。
 > 测试版（Lee 2026-10-21 定）：等 RC5（含 T40 剪贴板的真正修复）真机测过后，10-23～24 公证、用私下链接发给第一批测试者（不放 GitHub release，`pwe-1.1` 不推）。反馈走 GitHub issue 或 support@pwestudio.site。给测试者的说明 `docs/pwe/BETA-1.1-testers.md`（不入库，两处「发前核对」等 RC4 结果）。
@@ -40,8 +41,6 @@
 
 ## 等 Lee
 
-- **[动手] 打开仓库的 Issues，关掉 Actions** — 2026-10-22 核实：`has_issues: false`，而测试者说明、读我、支持页都指向 `/issues`，现在是死路；Actions `enabled: true`，10-28 推 main 可能触发上游 CI。Issues 可授权 Claude `gh repo edit --enable-issues`，Actions 只能在网页 Settings › Actions 关 · 不做则测试者反馈发不出去 · 自 2026-10-22
-- **[决定] 打磨方案清单** — 三份只读评审合成一份，分「现在（10-28 前，零风险）/ 1.1.1 / 1.2」：https://claude.ai/artifact/TVduMSotx4napQXPrUZgth 。推荐「现在」九条全做（不碰 App 代码）；1.1.1 约两周，11 月中旬和 T+14 同天出 · 不定则 1.1.1 没有范围 · 自 2026-10-22
 - **[给料] 测试者名单** — Lee 2026-10-22 已把测试版发给第一批人；请把发给了谁（称呼、联系方式、iMac 年份）记进 `docs/pwe/BETA-testers-roster.md`，终身免费要靠这份名单兑现 · 不记则以后核对不了谁该免费 · 自 2026-10-22
 - **[动手] GitHub Sponsors 审核通过后打开仓库的 Sponsorships 开关** — 资料已提交，2026-10-22 状态 Pending（GitHub 审核中）；通过后 GitHub 会发邮件，Lee 到仓库 Settings › General › Features 勾选 Sponsorships · 不开则仓库页没有赞助入口（支持页另由工具站会话放出按钮）· 自 2026-10-21
 - **[动手] 小红书主页简介写上 pwestudio.site/screenencore（纯文字）** — 10-29 发帖前；帖子里不放网址，评论区有人问就回「主页简介里有」· 不写则问下载的人找不到 · 自 2026-10-22
@@ -57,12 +56,13 @@
 
 ## 1.1 发布步骤（2026-10-28，Claude 做，候选版测试的 P1 修完之后）
 
-1. 把 `pwe-1.1` 合进 `main`（不快进，留合并提交）。成功判据：`git merge-base --is-ancestor pwe-1.1 main` 退出码 0。
+1. 把 `pwe-1.1` 合进 `main`（不快进，留合并提交）。`HANDOFF.md` 冲突一律取 main 的（分支上那份停在 10-16）。成功判据：`git merge-base --is-ancestor pwe-1.1 main` 退出码 0。
+1b. 文档扫一遍（2026-10-22 已在 `pwe-1.1` 做过一轮，74d86c0；发布当天再核）：`git grep -n "pwe-imac-display\b" -- '*.md' '*.txt'` 只剩仓库 URL；`git diff origin/main..main -- HANDOFF.md` 里没有不该公开的内容（测试者名单、私下链接、安全细节）；`docs/pwe/releases/1.1.0.md` 填上构建号和 sha256。成功判据：三条都过。
 2. 把 `docs/pwe/` 里还没入库、也不含安全细节的方案文档按需入库；`AUDIT-2026-10-15.md`、`DESIGN-pairing-2026-10-19.md`、`DRAFT-upstream-report-2026-10-19.md` 等含安全细节的继续不入库。
 3. 打标签 `git tag pwe-1.1.0`，在解锁的屏幕上运行 `pwe/package.sh --notarize`。成功判据：DMG 和两个 App 都是 `source=Notarized Developer ID`，`bundle checks passed`。
 4. 推送：`git push origin main pwe-1.1.0`，只推这一个标签。
-5. 发 release，上传 `pwe/dist/` 的三个文件；说明只写一般说法，不写复现细节。成功判据：`gh release download` 回来的文件通过 `shasum -c`。
-6. 在 `homebrew-tap` 加新 cask `pwe-screen-encore`（Lee 2026-10-22 定）。成功判据：`brew fetch --cask` 显示 ✔。
+5. 发 release：`gh release create pwe-1.1.0 --notes-file docs/pwe/releases/1.1.0.md`，上传 `pwe/dist/` 的三个文件；说明只写一般说法，不写复现细节。成功判据：`gh release download` 回来的文件通过 `shasum -c`。
+6. 在 `homebrew-tap` 加新 cask `pwe-screen-encore`（Lee 2026-10-22 定）。`zap` 要列全：`~/Library/Application Support/PWE Screen Encore*`、`~/Library/Preferences/com.pwegroup.pweimacdisplay*.plist`、`~/Library/LaunchAgents/com.pwegroup.pweimacdisplay.receiver.plist`、`~/Library/Logs/PWE Screen Encore Receiver/`、`~/Library/Saved Application State/com.pwegroup.pweimacdisplay.savedState`、`~/Library/HTTPStorages/com.pwegroup.pweimacdisplay`；`caveats` 写「接收端要拷到 iMac 上：在 iMac 上打开同一个磁盘映像」。成功判据：`brew fetch --cask` 显示 ✔。
 7. README 第一段改回下载说明。
 7a. 更新工具站（iCloud 里 `PWE Loan Bar` 的 checkout；做法见那边 `site/README.md`「A new product」）。
     1. 在 `site/functions/_release.js` 加 `screenencore`（version、published、notes_en、notes_cn）。成功判据：产品页「Latest」不再显示 `No release yet.`。
@@ -74,6 +74,15 @@
 7b. 给「Screen Encore 全 3D 产品片制作」会话交正式版素材（10-30 前），放进 `docs/pwe/film-assets-2026-10-28/`，按它 README 的状态表填，每批交完发消息给那个会话。发送端截图用 `PWE_SNAPSHOT_SCALE=3`（`pwe-1.1` c9f5398 起）。内容：用正式构建跑 `--pwe-snapshot`（发送端 01、02、04、05、07，浅色和深色，中文）；接收端等待画面（中文，5120 × 2880，用素材目录 `tools/` 里的离屏渲染工具）；菜单栏图标（浅色、深色栏）；一张合成的「扩展桌面」图（PWE 壁纸加一个 PWE 窗口，不出现 Apple 标志和别家 App）。再用正式版实测插线到出画面 3–5 次，把秒数和日期发过去。成功判据：那边回复已收到，片子里没有测试版号。
 8. 回信告诉 Marco 已发布（10-14 那封的线程）。
 9. 删除本地分支 `security-1.0.1`（已全部并进 1.1）。
+
+## 1.1.0 发出去不行怎么撤（2026-10-22 写，未演练）
+
+1. 把 release 改成 pre-release 并隐藏下载：`gh release edit pwe-1.1.0 --prerelease --draft`。成功判据：`gh release view pwe-1.1.0 --json isDraft` 是 true。
+2. 停止更新检查推新版：工具站 `site/functions/_release.js` 把 `screenencore` 的 version 改回上一版或删掉，重新部署（Lee 在那个会话说「部署」）。成功判据：`curl https://pwestudio.site/app/check?product=screenencore&version=1.1.0` 不再返回更新。
+3. cask：`homebrew-tap` 里 `git revert` 加 cask 的那次提交并推送。成功判据：`brew fetch --cask kenshinice-ai/tap/pwe-screen-encore` 报找不到。
+4. README 第一段改回「1.1 即将推出」，推 main。成功判据：仓库首页不再有下载链接。
+5. 已装的用户：发一条 issue 置顶说明问题和临时办法；接收端的副本收不回，只能在说明里写。
+6. 标签 `pwe-1.1.0` 不删不动（修好后发 1.1.1，不复用标签）。
 
 ## 1.0.0 撤下后怎么恢复（2026-10-20）
 
