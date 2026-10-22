@@ -88,7 +88,7 @@
 | 10-23 | 测试机按 TEST「1.1.0 正式版：装机和插拔」做 X0–X4（说明 `docs/pwe/test-mac-2026-10-22/RELEASE-1.1.0-instructions.md`） | Lee（装、插拔）、测试机会话（记录） | 打开不报「无法验证」；秒数补进产品片正式批 README |
 | 10-23 19:05 后 | 工具站部署，「真 5K」措辞上线 | 工具站会话 | /screenencore/ 不再有「48 Hz 和 60 Hz 下都是真 5K」 |
 | 10-23～25 | 收测试者反馈；Lee 发测试者名单，Claude 记进 roster | Lee、Claude | roster 有人名和机型 |
-| 10-26 晚 | go/no-go，只核对门槛；必须修的问题出现才重打包 | Lee | Lee 说 go 或给新日期 |
+| 10-26 晚 | go/no-go，只核对门槛；必须修的问题出现才重打包。定了之后马上给「YouTube 频道管理」会话发一句：go 就写发布日期和 App 大约几点上线（GitHub release、站点下载按钮），no-go 就写新日期。它收到才设定时（产品片 ENCORE001 定在发布日 21:00 墨尔本，不早于发布） | Lee 定；Claude 发消息 | Lee 说 go 或给新日期；YouTube 会话回复已设定时 |
 | 10-28 | 发布步骤 1–9；7a 给工具站发 go、sha256、DMG 大小；7c 通知小红书会话 | Claude；Lee 在工具站说「部署」 | `brew fetch --cask` ✔；产品页显示 1.1.0 |
 | 10-29 12:00 | 小红书 T+1 图文 | 小红书会话（定时） | 已发 |
 | 10-28～11-04 | 第一周：看 issue 和 support 邮件，填 COMPATIBILITY.md；先攒 bug，不逐个发版 | Claude | 每个 issue 48 小时内有回复 |
