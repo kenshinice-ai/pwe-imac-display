@@ -78,6 +78,8 @@ C_SRC += src/tb_log.c
 C_SRC += src/tb_loopwatch.c
 # The global event tap on its own run-loop thread, and its rate line (PWE 1.1.1, A15).
 C_SRC += src/tb_runloop_thread.c src/tb_input_rate.c
+# Brightness on the display the window is on (PWE 1.1.1, A6).
+C_SRC += src/tb_brightness.c
 # Sound output and volume on their own thread, off the main loop (PWE 1.1, T40).
 C_SRC += src/audio_out.c
 # Hardware decode as VideoToolbox reports it, and the [sys] start-up line (PWE 1.1).
@@ -171,6 +173,8 @@ PWE_RENDER_TEST_BINS += test_catchup
 PWE_RENDER_TEST_BINS += test_runloop_thread test_input_rate
 # PWE (1.1.1): threads for software decoding.
 PWE_RENDER_TEST_BINS += test_decthreads
+# PWE (1.1.1): brightness on the window's display only.
+PWE_RENDER_TEST_BINS += test_brightness
 
 
 # ---- PWE: secure layer tests (need libsodium; AddressSanitizer on) -----------
@@ -252,6 +256,9 @@ test_input_rate: tests/test_input_rate.c src/tb_input_rate.c src/tb_input_rate.h
 
 test_decthreads: tests/test_decthreads.c src/tb_decthreads.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_decthreads.c -o $@
+
+test_brightness: tests/test_brightness.c src/tb_brightness.c src/tb_brightness.h
+	$(CC) $(TEST_CFLAGS) -Isrc tests/test_brightness.c src/tb_brightness.c -framework CoreGraphics -o $@
 
 test_cursor_image: tests/test_cursor_image.c src/tb_cursor_image.c src/tb_cursor_image.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_cursor_image.c src/tb_cursor_image.c -o $@

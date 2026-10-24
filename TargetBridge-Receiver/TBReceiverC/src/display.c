@@ -31,12 +31,12 @@
 #include "tb_trace.h"
 #include "tb_metal_video.h"
 #include "tb_vsync.h"
+#include "tb_brightness.h"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreGraphics/CoreGraphics.h>
 #include <CoreText/CoreText.h>
 #include <SDL.h>
-#include <dlfcn.h>
 
 #include <math.h>
 #include <stdio.h>
@@ -2750,34 +2750,26 @@ void tb_disp_set_login_item_state(struct tb_display *d, enum tb_display_login_it
     d->login_item_state = state;
 }
 
+/* PWE (1.1.1, A6): only the display this window is on (tb_brightness.h). */
 void tb_disp_set_brightness(struct tb_display *d, double level) {
-    (void)d;
-    if (level < 0.0) level = 0.0;
-    if (level > 1.0) level = 1.0;
-
-    void *lib = dlopen("/System/Library/PrivateFrameworks/DisplayServices.framework/Versions/A/DisplayServices", RTLD_LAZY);
-    if (!lib) {
-        fprintf(stderr, "[disp] failed to dlopen DisplayServices\n");
-        return;
-    }
-
-    typedef int (*SetBrightnessFunc)(CGDirectDisplayID display, float brightness);
-    SetBrightnessFunc set_brightness = (SetBrightnessFunc)dlsym(lib, "DisplayServicesSetBrightness");
-    if (!set_brightness) {
-        fprintf(stderr, "[disp] failed to find DisplayServicesSetBrightness symbol\n");
-        dlclose(lib);
-        return;
-    }
-
-    CGDirectDisplayID displays[16];
-    uint32_t count = 0;
-    if (CGGetActiveDisplayList(16, displays, &count) == kCGErrorSuccess) {
-        for (uint32_t i = 0; i < count; i++) {
-            set_brightness(displays[i], (float)level);
+    CGDirectDisplayID target = CGMainDisplayID();
+    if (d && d->win) {
+        int x = 0, y = 0, w = 0, h = 0;
+        SDL_GetWindowPosition(d->win, &x, &y);
+        SDL_GetWindowSize(d->win, &w, &h);
+        CGDirectDisplayID ids[16];
+        CGRect bounds[16];
+        uint32_t count = 0;
+        if (CGGetActiveDisplayList(16, ids, &count) == kCGErrorSuccess) {
+            for (uint32_t i = 0; i < count; i++) bounds[i] = CGDisplayBounds(ids[i]);
+            target = tb_brightness_pick_display(CGRectMake(x, y, w, h), ids, bounds, count, target);
         }
-    } else {
-        set_brightness(CGMainDisplayID(), (float)level);
     }
-
-    dlclose(lib);
+    static CGDirectDisplayID last_target;
+    if (target != last_target) {
+        last_target = target;
+        fprintf(stderr, "[disp] brightness goes to display %u (%s), the one this window is on\n",
+                (unsigned)target, CGDisplayIsBuiltin(target) ? "built in" : "external");
+    }
+    (void)tb_brightness_set(target, level);
 }
