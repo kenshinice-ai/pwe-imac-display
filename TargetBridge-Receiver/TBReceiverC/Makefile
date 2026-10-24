@@ -163,6 +163,8 @@ $(TEST_RECEIVER_PROFILE_BIN): tests/test_receiver_profile.c src/receiver_profile
 PWE_RENDER_TEST_BINS = test_trace test_metal_video test_cursor_image test_log test_loopwatch
 # PWE (1.1.1): log windows per kind of event.
 PWE_RENDER_TEST_BINS += test_ratelimit
+# PWE (1.1.1): only the newest picture of a backlog is shown.
+PWE_RENDER_TEST_BINS += test_catchup
 
 
 # ---- PWE: secure layer tests (need libsodium; AddressSanitizer on) -----------
@@ -228,6 +230,9 @@ test_loopwatch: tests/test_loopwatch.c src/tb_loopwatch.c src/tb_loopwatch.h
 
 test_ratelimit: tests/test_ratelimit.c src/tb_ratelimit.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_ratelimit.c -o $@
+
+test_catchup: tests/test_catchup.c src/tb_catchup.h
+	$(CC) $(TEST_CFLAGS) -Isrc tests/test_catchup.c -o $@
 
 test_cursor_image: tests/test_cursor_image.c src/tb_cursor_image.c src/tb_cursor_image.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_cursor_image.c src/tb_cursor_image.c -o $@

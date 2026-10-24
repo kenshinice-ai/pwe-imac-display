@@ -82,6 +82,7 @@
 | `pwe-1.1.1-receiver`（待合并） | 接收端 `main.c`：启动时读上一次日志的最后一行，不是 `[main] bye` 就在拿到端口后记一行，指向 `~/Library/DiagnosticReports`；SIGHUP 和 SIGINT/SIGTERM 一样正常退出。`tb_log.c`/`.h` 加 `tb_log_read_last_line`、`tb_log_line_is_clean_exit`，`test_log.c` 加检查 | 评审 2026-10-22：测试者发来的日志看不出上一次是崩溃还是正常退出；从终端启动后关掉终端窗口不走正常退出 | 待提 | 1.1.1 |
 | `pwe-1.1.1-receiver`（待合并） | 接收端 `display.c`、`main.c`：等待和连接中画面只在变化时或每 100 / 33 ms 呈现一次（原来每圈都呈现）；没有会话时主循环每圈睡 10 ms（原 1 ms，有会话仍 1 ms） | 评审 2026-10-22：待机时约 700–1000 次/秒重画，老 iMac 待机发热的第一嫌疑 | 待提 | 1.1.1；改前后要在真机量待机 CPU |
 | `pwe-1.1.1-receiver`（待合并） | 接收端 `decoder.c`：解码出错的日志每种错误各用一个 10 秒窗口（新头文件 `tb_ratelimit.h`，`test_ratelimit.c`）；`avcodec_send_packet` / `avcodec_receive_frame` 超过 500 ms 时记一行：耗时、本线程 CPU 时间、page-in 数和判断（在算 / 等内存 / 没在跑）、包大小、slice NAL 类型、是否关键帧、解码器打开后第几个包、打开了多久（`tb_loopwatch.c`/`.h` 加 `tb_slowcall_*`） | 评审 2026-10-22（B2）：原来所有错误共用一个计时器，一种错误刷屏时另一种的第一行被吞掉。2026-10-24 iMac18,3 上两次在 `avcodec_send_packet` 里卡 2–2.8 s（栈在 VideoToolbox 的 slice 拷贝），日志分不清是解码器的问题还是整台 Mac 停顿 | 待提 | 1.1.1 |
+| `pwe-1.1.1-receiver`（待合并） | 接收端 `main.c`：落后于发送端时（读到的这块加上内核里还没读的，超过两帧的量；帧的量是帧包大小的滑动平均，新头文件 `tb_catchup.h`，`test_catchup.c`）每帧照样解码，但这一轮读取里解出的画面只留最新一张，读完再显示；一轮读取最多解码 50 ms 就先回主循环。跳过的画面在 trace 里记为 `replaced`，每 10 秒最多一行 `[main] behind the sender …`。软件解码的 CPU 画面照旧逐帧显示。`mock_sender.py` 的 stream 加 `--stall-at`，smoke 加 8a 阶段 | 2026-10-24 iMac18,3：主循环卡 2.8 s 后，积压的 145 帧在约一秒内逐张显示（快进） | 待提 | 1.1.1 |
 
 打包时的改名（`pwe/rebrand.py`）不改仓库里的文件，所以不在这张表里。它的锚点由脚本自己检查：上游改了对应的文字，脚本就会停下。
 

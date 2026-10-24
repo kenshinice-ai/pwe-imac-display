@@ -16,6 +16,9 @@
 #                       fresh receiver (also skipped without ffmpeg)
 #   8. the Mac's choice -> the HELLO's receiverRenderer switches to Metal and
 #                       back to OpenGL (PWE; skipped without ffmpeg)
+#   8a. catching up  -> a 1.5 s stall mid-stream: the backlog is decoded and
+#                       only its newest picture shown, no fast-forward (PWE
+#                       1.1.1; skipped without ffmpeg)
 #   3b. watchdog     -> a main loop held up for 3 s is reported with its phase
 #                       and stack, and again when it runs (PWE, T40)
 #   8b. picture changes -> six session changes with sound on Metal, each taken
@@ -225,6 +228,16 @@ if (( ! NO_STREAM )) && command -v ffmpeg >/dev/null; then
     mock --mode stream --duration 3 --renderer opengl || fail "mock stream (opengl) exited non-zero"
     expect_log "the Mac asks for OpenGL: switching the renderer" "receiver switched back to OpenGL"
     expect_log "[disp] texture " "OpenGL rendered the next session"
+
+    phase "Phase 8a: catching up after a stall (1.1.1)"
+    relaunch
+    mock --mode stream --duration 5 --stall-at 1.5 --stall-ms 1500 || fail "mock stream with a stall exited non-zero"
+    expect_log "[main] behind the sender in " "receiver skipped the backlog's older pictures"
+    if grep -qE '^\[trace\] in=[0-9]+ shown=[0-9]+ replaced=[1-9]' "$LOG"; then
+        pass "the trace counts the skipped pictures as replaced"
+    else
+        fail "no trace line with replaced > 0 after the stall"
+    fi
 
     phase "Phase 8b: picture changes with sound (T40)"
     relaunch TB_RECEIVER_RENDER_DRIVER=metal

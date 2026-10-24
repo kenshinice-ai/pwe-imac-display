@@ -42,4 +42,5 @@ smoke_peer
 pboard_tool
 # PWE (1.1.1)
 test_ratelimit
+test_catchup
 *.dSYM/

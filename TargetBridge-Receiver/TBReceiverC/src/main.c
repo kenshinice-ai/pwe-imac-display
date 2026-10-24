@@ -27,6 +27,7 @@
 #include "tb_log.h"
 #include "tb_loopwatch.h"
 #include "tb_trace.h"
+#include "tb_catchup.h"
 #include "tb_clipboard.h"
 #include "tb_sysinfo.h"
 #include "tb_running_app.h"
@@ -58,6 +59,8 @@
 #include <dns_sd.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreGraphics/CoreGraphics.h>
+#include <CoreVideo/CoreVideo.h>
+#include <sys/ioctl.h>
 
 #include <errno.h>
 #include <limits.h>
@@ -89,7 +92,16 @@ struct app {
     int      held_ipv6;
     char     held_ifname[IFNAMSIZ];
 
-    uint64_t frames;
+    uint64_t frames;   /* pictures shown */
+    /* PWE (1.1.1): behind the sender after a stall (tb_catchup.h). While
+     * `catchup_holding`, decoded pictures wait in `catchup_frame`, newest
+     * first, and the read pass shows the newest when it ends. */
+    struct tb_catchup catchup;
+    int               catchup_holding;
+    CVPixelBufferRef  catchup_frame;
+    uint32_t          catchup_trace_id;
+    unsigned long     catchup_skipped;   /* decoded, never shown; since the last report */
+    unsigned long     catchup_passes;    /* read passes that skipped any */
     uint64_t last_fps_tick_ms;
     uint64_t last_fps_count;
     /* PWE (1.1.1): per-second counts gathered into one line every 10 s. */
@@ -1094,9 +1106,8 @@ static void tb_receiver_wake_screen_for_session(void) {
     else fprintf(stderr, "[power] first picture: could not wake the screen (0x%x)\n", (unsigned)r);
 }
 
-static void on_frame(const struct tb_frame *frame, void *ud) {
-    struct app *a = (struct app *)ud;
-    tb_trace_mark_now(frame->trace_id, TB_TRACE_DECODED);
+/* A decoded picture goes to the screen now. */
+static void tb_receiver_present(struct app *a, const struct tb_frame *frame) {
     if (!a->have_video_frame) tb_receiver_wake_screen_for_session();
     a->have_video_frame = 1;
     tb_copy_i18n(a->status_text, sizeof(a->status_text), "receiver.status.stream_active");
@@ -1113,6 +1124,49 @@ static void on_frame(const struct tb_frame *frame, void *ud) {
     }
     tb_disp_show_frame(a->disp, frame);
     a->frames++;
+}
+
+/* PWE (1.1.1): the waiting picture is not shown: a newer one replaces it. */
+static void tb_receiver_skip_waiting_frame(struct app *a) {
+    if (!a->catchup_frame) return;
+    tb_trace_frame_replaced(a->catchup_trace_id);
+    CVPixelBufferRelease(a->catchup_frame);
+    a->catchup_frame = NULL;
+    a->catchup_trace_id = 0;
+    a->catchup_skipped++;
+}
+
+/* PWE (1.1.1): the read pass ended: show the newest waiting picture. */
+static void tb_receiver_show_waiting_frame(struct app *a) {
+    CVPixelBufferRef pb = a->catchup_frame;
+    if (!pb) return;
+    a->catchup_frame = NULL;
+    const struct tb_frame f = {
+        .width = (int)CVPixelBufferGetWidth(pb),
+        .height = (int)CVPixelBufferGetHeight(pb),
+        .pixel_buffer = pb,
+        .trace_id = a->catchup_trace_id,
+    };
+    a->catchup_trace_id = 0;
+    tb_receiver_present(a, &f);
+    CVPixelBufferRelease(pb);
+}
+
+static void on_frame(const struct tb_frame *frame, void *ud) {
+    struct app *a = (struct app *)ud;
+    tb_trace_mark_now(frame->trace_id, TB_TRACE_DECODED);
+    /* PWE (1.1.1): behind the sender, the picture waits; a newer one decoded
+     * in the same pass replaces it. VideoToolbox pictures only: they can be
+     * kept past this call by a retain. CPU pictures (software decode) are
+     * valid only now and are shown as before. */
+    if (a->catchup_holding && frame->pixel_buffer) {
+        tb_receiver_skip_waiting_frame(a);
+        a->catchup_frame = CVPixelBufferRetain((CVPixelBufferRef)frame->pixel_buffer);
+        a->catchup_trace_id = frame->trace_id;
+        return;
+    }
+    tb_receiver_skip_waiting_frame(a);
+    tb_receiver_present(a, frame);
 }
 
 /* Raw passthrough: render received NV12 planes directly, bypassing the decoder.
@@ -1252,6 +1306,7 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
     case TB_PKT_FRAME:
         TB_LOOP_PHASE("packet: video frame (decode, draw)");
         a->session_active = 1;
+        tb_catchup_note_frame(&a->catchup, len);   /* PWE (1.1.1) */
         tb_dec_feed_frame(a->dec, payload, len, tb_trace_frame_arrived());
         break;
     case TB_PKT_RAW_FRAME:
@@ -1371,16 +1426,28 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
 
 /* ---- Networking helpers ---------------------------------------------- */
 
-static int drain_socket(struct app *a) {
+/* PWE (1.1.1): one read pass. Behind the sender (tb_catchup.h), the pictures
+ * decoded from a chunk wait and only the newest is shown when the pass ends;
+ * a pass that has decoded for TB_CATCHUP_PASS_BUDGET_MS ends early, so a long
+ * backlog still lets the loop show a picture and answer the window and the
+ * keyboard every 50 ms. Every frame is decoded either way. */
+static int drain_socket_pass(struct app *a) {
     uint8_t buf[1024 * 1024];
     int saw_data = 0;
+    const uint64_t started_ms = now_ms();
     for (;;) {
         TB_LOOP_PHASE("socket read");
         ssize_t n = read(a->client_fd, buf, sizeof(buf));
         if (n > 0) {
             saw_data = 1;
+            int waiting = 0;   /* bytes the kernel still holds after this chunk */
+            if (ioctl(a->client_fd, FIONREAD, &waiting) < 0 || waiting < 0) waiting = 0;
+            a->catchup_holding = tb_catchup_behind(&a->catchup, (uint64_t)n + (uint64_t)waiting);
             TB_LOOP_PHASE("connection: secure layer (handshake, keychain, decrypt)");
-            if (tb_conn_feed(&a->conn, buf, (size_t)n, now_ms()) < 0) return -1;
+            const int fed = tb_conn_feed(&a->conn, buf, (size_t)n, now_ms());
+            a->catchup_holding = 0;
+            if (fed < 0) return -1;
+            if (waiting > 0 && now_ms() - started_ms >= TB_CATCHUP_PASS_BUDGET_MS) return saw_data;
         } else if (n == 0) {
             return -1;  /* peer closed */
         } else {
@@ -1389,6 +1456,19 @@ static int drain_socket(struct app *a) {
             return -1;
         }
     }
+}
+
+static int drain_socket(struct app *a) {
+    const unsigned long skipped_before = a->catchup_skipped;
+    const int r = drain_socket_pass(a);
+    if (r < 0) {
+        tb_receiver_skip_waiting_frame(a);   /* the session is ending */
+    } else {
+        TB_LOOP_PHASE("display: the newest picture of a backlog");
+        tb_receiver_show_waiting_frame(a);
+    }
+    if (a->catchup_skipped != skipped_before) a->catchup_passes++;
+    return r;
 }
 
 static void write_be32(uint8_t *dst, uint32_t value) {
@@ -2026,6 +2106,8 @@ static void close_client(struct app *a) {
     tb_clipboard_new_session(a->clipboard);
     TB_LOOP_PHASE("session end: decoder reset");
     tb_dec_reset(a->dec);   /* fresh decoder for next session */
+    tb_receiver_skip_waiting_frame(a);   /* PWE (1.1.1): normally none by now */
+    tb_catchup_reset(&a->catchup);
     TB_LOOP_PHASE("session end: sound idle");
     tb_audio_out_idle(a->audio);   /* the audio thread closes the device later */
     TB_LOOP_PHASE("session end: idle notice");
@@ -2981,6 +3063,14 @@ int main(int argc, char **argv) {
                 if (a.fps_seconds > 0) {
                     fprintf(stderr, "[main] fps over %u s with frames: avg %.1f, min %u, max %u\n",
                             a.fps_seconds, (double)a.fps_sum / a.fps_seconds, a.fps_min, a.fps_max);
+                }
+                /* PWE (1.1.1): at most one line per 10 s about catching up. */
+                if (a.catchup_skipped > 0) {
+                    fprintf(stderr, "[main] behind the sender in %lu read passes: %lu decoded pictures "
+                                    "skipped, the newest of each backlog shown\n",
+                            a.catchup_passes, a.catchup_skipped);
+                    a.catchup_skipped = 0;
+                    a.catchup_passes = 0;
                 }
                 a.fps_report_ms = t;
                 a.fps_seconds = a.fps_min = a.fps_max = 0;
