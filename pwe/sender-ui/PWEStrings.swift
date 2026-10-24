@@ -351,6 +351,26 @@ struct PWEStrings {
         t("Works only on an encrypted connection.", "只在加密连接中可用。")
     }
 
+    // Settings › General › Use only the iMac (A2)
+    var onlyIMacTitle: String { t("Use only the iMac", "以后只用 iMac") }
+    var onlyIMacBody: String {
+        t("Do this once while you can see this Mac. Afterwards the iMac is all you need, except after a restart (type your password on this Mac's keyboard).",
+          "趁现在看得见这台 Mac 时做一次。之后只用 iMac 就行；只有重启后要在这台 Mac 的键盘上输入密码。")
+    }
+    func onlyIMacRow(_ row: PWEOnlyIMacRules.Row) -> String {
+        switch row {
+        case .screenRecording: return t("\(screenRecording()) allowed", "已允许\(screenRecording())")
+        case .openAtLogin: return launchAtLogin
+        case .autoConnect: return autoConnect
+        case .keyboardMouse: return t("Keyboard & Mouse: \(inputRoleName(.iMacControlsMac))", "键盘与鼠标：\(inputRoleName(.iMacControlsMac))")
+        case .screenSharing: return t("Screen Sharing is on", "已打开「屏幕共享」")
+        case .remoteLogin: return t("Remote Login is on", "已打开「远程登录」")
+        }
+    }
+    /// A row's button for PWE's own setting: it acts at once, so no ellipsis.
+    var turnOn: String { t("Turn On", "打开") }
+    var checkInSystemSettings: String { t("Check in System Settings…", "在系统设置里查看…") }
+
     // Settings
     var general: String { t("General", "通用") }
     var keyboardMouse: String { t("Keyboard & Mouse", "键盘与鼠标") }

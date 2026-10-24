@@ -340,6 +340,8 @@ final class PWESenderModel: ObservableObject {
     /// The menu bar item is not on screen (PWEStatusMenu says so). The first
     /// connection's tip then does not point at it (T19).
     @Published var menuBarIconHidden = false
+    /// Screen Sharing and Remote Login, as last read (A2, PWESharingState).
+    @Published private(set) var sharingState = PWESharingState()
     /// Screen Sharing on this Mac shows the iMac in use as its display (A14).
     @Published private(set) var viewedWithScreenSharing = false
     private var screenSharingWatch: PWEScreenSharingWatch?
@@ -505,7 +507,9 @@ final class PWESenderModel: ObservableObject {
     /// A fixed phase for snapshots: no engine, nothing changes.
     init(preview phase: PWEPhase, firstConnection: Bool = false, inputRole: PWEInputRole = .off,
          security: PWESecurityState = .none, paired: [PWEPairedReceiver] = [],
-         codeNote: PWECodeNote? = nil, lockEnd: Date? = nil, forgetFailure: String? = nil) {
+         codeNote: PWECodeNote? = nil, lockEnd: Date? = nil, forgetFailure: String? = nil,
+         sharing: PWESharingState = PWESharingState(screenSharing: true, remoteLogin: true)) {
+        self.sharingState = sharing
         self.previewSecurity = security
         self.pairedIMacs = paired
         self.forgetFailure = forgetFailure
@@ -1167,6 +1171,52 @@ final class PWESenderModel: ObservableObject {
     }
 
     func openLoginItemsSettings() { SMAppService.openSystemSettingsLoginItems() }
+
+    // MARK: - Use only the iMac (A2)
+
+    /// What the "Use only the iMac" rows read (PWEOnlyIMacRules).
+    var onlyIMacInputs: PWEOnlyIMacRules.Inputs {
+        PWEOnlyIMacRules.Inputs(
+            screenRecording: service == nil ? true : hasScreenRecording(),
+            launchAtLogin: launchAtLogin, launchAtLoginNeedsApproval: launchAtLoginNeedsApproval,
+            canRegisterLogin: !launchAtLoginUnavailable, autoConnect: autoConnect, inputRole: inputRole,
+            screenSharing: sharingState.screenSharing, remoteLogin: sharingState.remoteLogin)
+    }
+
+    /// Reads Screen Sharing and Remote Login again, off the main thread. Called
+    /// when the list shows and when the app comes back from System Settings.
+    func refreshSharingState() {
+        guard service != nil else { return }
+        _ = hasScreenRecording(force: true)
+        Task.detached(priority: .utility) { [weak self] in
+            let state = PWESharingState.read()
+            await MainActor.run {
+                guard let self, self.sharingState != state else { return }
+                self.sharingState = state
+            }
+        }
+    }
+
+    /// A row's button: PWE's own setting is turned on here; a system setting
+    /// only gets its pane opened. Screen Sharing and Remote Login are never
+    /// turned on by the app.
+    func fixOnlyIMac(_ row: PWEOnlyIMacRules.Row) {
+        switch row {
+        case .screenRecording:
+            requestScreenRecording()
+        case .openAtLogin:
+            if launchAtLoginNeedsApproval { openLoginItemsSettings() } else { setLaunchAtLogin(true) }
+        case .autoConnect:
+            autoConnect = true
+        case .keyboardMouse:
+            inputRole = .iMacControlsMac
+        case .screenSharing, .remoteLogin:
+            if let url = URL(string: "x-apple.systempreferences:com.apple.Sharing-Settings.extension") {
+                NSWorkspace.shared.open(url)
+            }
+        }
+        objectWillChange.send()
+    }
 
     // MARK: - Pairing and encryption (the engine's PWESecureLink)
 

@@ -279,6 +279,11 @@ enum PWESnapshot {
             ], forgetFailure: "Studio iMac")
             let tabs: [(String, String, AnyView)] = [
                 ("s1-general", strings.general, AnyView(PWEGeneralSettings(model: connected, updates: UpdateCheck(), strings: strings))),
+                // A2: the "Use only the iMac" list with every kind of row.
+                ("s4-general-only-imac", strings.general,
+                 AnyView(PWEGeneralSettings(model: PWESenderModel(preview: .connected(imac), inputRole: .iMacControlsMac,
+                                                                  sharing: PWESharingState(screenSharing: false, remoteLogin: nil)),
+                                            updates: UpdateCheck(), strings: strings))),
                 ("s2-keyboard-mouse", strings.keyboardMouse, AnyView(PWEInputSettings(model: connected, strings: strings))),
                 ("s2b-keyboard-mouse-on", strings.keyboardMouse, AnyView(PWEInputSettings(model: sharing, strings: strings))),
                 ("s3-advanced", strings.advancedTab, AnyView(PWEAdvancedSettings(model: connected, strings: strings))),

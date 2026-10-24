@@ -135,6 +135,7 @@ struct PWEGeneralSettings: View {
             Section {
                 PWEBrightnessKeysSetting(language: strings.language)
             }
+            PWEOnlyIMacSection(model: model, strings: strings)
             Section {
                 Toggle(strings.checkUpdatesDaily, isOn: $dailyChecks)
                     .onChange(of: dailyChecks) { _, on in
@@ -152,7 +153,54 @@ struct PWEGeneralSettings: View {
             }
         }
         .formStyle(.grouped)
-        .frame(height: 300)
+        .frame(height: 620)
+    }
+}
+
+/// A2: what makes the iMac enough on its own, one row each (PWEOnlyIMacRules).
+/// Shown always: it is most useful before a borrowed screen goes back.
+struct PWEOnlyIMacSection: View {
+    @ObservedObject var model: PWESenderModel
+    let strings: PWEStrings
+
+    var body: some View {
+        Section(strings.onlyIMacTitle) {
+            footnote(strings.onlyIMacBody)
+            let inputs = model.onlyIMacInputs
+            ForEach(PWEOnlyIMacRules.Row.allCases) { row in
+                LabeledContent {
+                    control(row, PWEOnlyIMacRules.state(row, inputs))
+                } label: {
+                    Text(strings.onlyIMacRow(row))
+                }
+            }
+        }
+        .onAppear { model.refreshSharingState() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            model.refreshSharingState()
+        }
+    }
+
+    @ViewBuilder
+    private func control(_ row: PWEOnlyIMacRules.Row, _ state: PWEOnlyIMacRules.State) -> some View {
+        switch state {
+        case .done:
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+                .accessibilityLabel(strings.passed)
+        case .turnOn:
+            Button(strings.turnOn) { model.fixOnlyIMac(row) }
+        case .openSettings:
+            Button(strings.open) { model.fixOnlyIMac(row) }
+        case .check:
+            Button(strings.checkInSystemSettings) { model.fixOnlyIMac(row) }
+        case .moveToApplications:
+            Text(strings.launchAtLoginMove)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.trailing)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 
