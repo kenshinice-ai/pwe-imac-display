@@ -20,9 +20,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "tb_loopwatch.h"
 #include "tb_ratelimit.h"
+#include "tb_decthreads.h"
 #include "tb_sysinfo.h"
 #include "tb_trace.h"
 
@@ -56,6 +58,12 @@ struct tb_decoder {
     struct SwsContext *sws;
     enum AVPixelFormat hw_pix_fmt;
     int               using_software_decode;
+    /* PWE (1.1.1, A5): FFmpeg decodes in software with threads
+     * (tb_decthreads.h). `force_software` skips VideoToolbox: set by
+     * TB_RECEIVER_SOFTWARE_DECODE, or after VideoToolbox refused this
+     * session's stream (the next keyframe reopens the decoder threaded). */
+    int               force_software;
+    int               software_threads;   /* threads the open decoder has; 0 = VideoToolbox */
 
     uint8_t          *extradata;
     int               extradata_size;
@@ -200,6 +208,8 @@ void tb_dec_reset(struct tb_decoder *d) {
     d->extradata      = NULL;
     d->extradata_size = 0;
     d->opened         = 0;
+    d->force_software = 0;   /* PWE (1.1.1): each session tries VideoToolbox again */
+    d->software_threads = 0;
     /* hw_dev, hw_frame, sw_frame, pkt stay allocated for reuse. */
 }
 
@@ -274,6 +284,39 @@ static int build_extradata(struct tb_decoder *d,
     return 0;
 }
 
+/* PWE (1.1.1, A5): TB_RECEIVER_SOFTWARE_DECODE: unset or "0" = VideoToolbox
+ * as usual; "1" or "slice" = FFmpeg's software decoder, slice threads first;
+ * "frame" = frame threads. For measuring a Mac without hardware HEVC, where
+ * VideoToolbox's own software decoder is used otherwise. */
+static int software_decode_wish(int *want_frame) {
+    const char *v = getenv("TB_RECEIVER_SOFTWARE_DECODE");
+    *want_frame = v && strcmp(v, "frame") == 0;
+    return v && v[0] && strcmp(v, "0") != 0;
+}
+
+/* PWE (1.1.1, A5): threads for FFmpeg's software decoder, before
+ * avcodec_open2. */
+static void configure_software_threads(struct tb_decoder *d, int want_frame) {
+    const long cpus = sysconf(_SC_NPROCESSORS_ONLN);
+    enum tb_dec_threading how = TB_DEC_THREADS_ONE;
+    const int n = tb_dec_thread_plan(cpus > 0 ? (int)cpus : 1,
+                                     (d->codec->capabilities & AV_CODEC_CAP_SLICE_THREADS) != 0,
+                                     (d->codec->capabilities & AV_CODEC_CAP_FRAME_THREADS) != 0,
+                                     want_frame, &how);
+    d->ctx->thread_count = n;
+    d->ctx->thread_type = how == TB_DEC_THREADS_FRAME ? FF_THREAD_FRAME
+                        : how == TB_DEC_THREADS_SLICE ? FF_THREAD_SLICE : 0;
+    d->software_threads = n;
+    if (how == TB_DEC_THREADS_FRAME) {
+        fprintf(stderr, "[dec] software decode: %d frame threads (of %ld CPUs); pictures leave %d frames later\n",
+                n, cpus, n - 1);
+    } else if (how == TB_DEC_THREADS_SLICE) {
+        fprintf(stderr, "[dec] software decode: %d slice threads (of %ld CPUs)\n", n, cpus);
+    } else {
+        fprintf(stderr, "[dec] software decode: one thread (%ld CPUs)\n", cpus);
+    }
+}
+
 static int open_decoder(struct tb_decoder *d) {
     if (d->codec_id == AV_CODEC_ID_NONE) d->codec_id = AV_CODEC_ID_H264;
     d->codec = avcodec_find_decoder(d->codec_id);
@@ -295,7 +338,14 @@ static int open_decoder(struct tb_decoder *d) {
             break;
         }
     }
-    if (d->hw_pix_fmt == AV_PIX_FMT_NONE) {
+    int want_frame = 0;
+    if (software_decode_wish(&want_frame)) d->force_software = 1;
+    if (d->force_software && d->hw_pix_fmt != AV_PIX_FMT_NONE) {
+        fprintf(stderr, "[dec] VideoToolbox left out: %s\n",
+                getenv("TB_RECEIVER_SOFTWARE_DECODE") ? "TB_RECEIVER_SOFTWARE_DECODE"
+                                                      : "it refused this session's stream");
+        d->hw_pix_fmt = AV_PIX_FMT_NONE;
+    } else if (d->hw_pix_fmt == AV_PIX_FMT_NONE) {
         fprintf(stderr, "[dec] WARNING: no HW pix fmt for codec, using SW decode (slow!)\n");
     } else {
         fprintf(stderr, "[dec] HW decode pix_fmt=%s device=%s\n",
@@ -319,6 +369,8 @@ static int open_decoder(struct tb_decoder *d) {
             d->ctx->opaque        = d;
         }
     }
+    d->software_threads = 0;
+    if (!d->ctx->hw_device_ctx) configure_software_threads(d, want_frame);   /* PWE (1.1.1, A5) */
 
     /* Install extradata so FFmpeg knows VPS/SPS/PPS up front. */
     if (d->extradata && d->extradata_size > 0) {
@@ -494,6 +546,15 @@ int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len, uin
     int      keyframe = 0;
     int      slice_type = -1;
     if (avcc_to_annexb(d, avcc, len, &anb, &anb_len, &keyframe, &slice_type) < 0) return -1;
+
+    /* PWE (1.1.1, A5): VideoToolbox refused this stream and FFmpeg fell back
+     * to one software thread: at this keyframe, reopen as a threaded software
+     * decoder (a keyframe needs nothing from before it). */
+    if (keyframe && d->using_software_decode && d->software_threads == 0 && !d->force_software) {
+        d->force_software = 1;
+        if (open_decoder(d) < 0) return -1;
+        d->await_keyframe = 1;   /* this keyframe starts the new decoder */
+    }
 
     if (d->await_keyframe) {
         if (!keyframe) {

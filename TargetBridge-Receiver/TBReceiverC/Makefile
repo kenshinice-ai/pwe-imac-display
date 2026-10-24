@@ -169,6 +169,8 @@ PWE_RENDER_TEST_BINS += test_ratelimit
 PWE_RENDER_TEST_BINS += test_catchup
 # PWE (1.1.1): the event tap on its own run-loop thread, and its rate line.
 PWE_RENDER_TEST_BINS += test_runloop_thread test_input_rate
+# PWE (1.1.1): threads for software decoding.
+PWE_RENDER_TEST_BINS += test_decthreads
 
 
 # ---- PWE: secure layer tests (need libsodium; AddressSanitizer on) -----------
@@ -247,6 +249,9 @@ test_runloop_thread: tests/test_runloop_thread.c src/tb_runloop_thread.c src/tb_
 
 test_input_rate: tests/test_input_rate.c src/tb_input_rate.c src/tb_input_rate.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_input_rate.c src/tb_input_rate.c -o $@
+
+test_decthreads: tests/test_decthreads.c src/tb_decthreads.h
+	$(CC) $(TEST_CFLAGS) -Isrc tests/test_decthreads.c -o $@
 
 test_cursor_image: tests/test_cursor_image.c src/tb_cursor_image.c src/tb_cursor_image.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_cursor_image.c src/tb_cursor_image.c -o $@
