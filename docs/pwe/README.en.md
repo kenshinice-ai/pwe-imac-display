@@ -42,7 +42,7 @@ Fixes go to TargetBridge first, such as the
 
 ## Requirements
 
-- A Mac with Apple silicon or Intel, macOS 14 or later, for the sender.
+- A Mac with Apple silicon, macOS 14 or later, for the sender. Intel Macs are not tested, and upstream TargetBridge says they do not work.
 - A 2014–2020 27-inch 5K iMac on macOS 11 or later for the receiver. Fully tested
   on the 2017 model (iMac18,3); the other years should work by design, and we are
   collecting results from more models. 2014 and mid-2015 models have no HEVC
