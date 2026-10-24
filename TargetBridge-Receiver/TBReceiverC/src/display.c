@@ -1965,6 +1965,10 @@ static int tb_disp_rebuild_renderer(struct tb_display *d, const char *wish) {
     tb_disp_destroy_status_texture(d);
     if (d->cursor_tex) SDL_DestroyTexture(d->cursor_tex);
     d->cursor_tex = NULL;
+    /* PWE (1.1.1, A16): the pointer bitmap lived in the Metal renderer just
+     * destroyed. Forget which one was uploaded, or a new Metal renderer that
+     * sees the same picture again never gets it and draws no pointer. */
+    d->metal_cursor_key = 0;
     if (d->tex) SDL_DestroyTexture(d->tex);
     d->tex = NULL;
     d->tex_w = d->tex_h = 0;

@@ -28,6 +28,7 @@
 #include "tb_loopwatch.h"
 #include "tb_trace.h"
 #include "tb_catchup.h"
+#include "tb_ratelimit.h"
 #include "tb_input_rate.h"
 #include "tb_runloop_thread.h"
 #include "tb_clipboard.h"
@@ -175,6 +176,7 @@ struct app {
     atomic_int window_on_active_space;
     uint64_t   last_space_check_ms;
     struct tb_input_rate tap_rate;   /* the tap's thread only */
+    struct tb_ratelimit  edge_switch_log;   /* under tx_lock */
 
     /* PWE (T40): sound output and volume, on their own thread (audio_out.h). */
     struct tb_audio_out *audio;
@@ -1738,6 +1740,21 @@ static CGEventRef tb_receiver_input_tap_callback(CGEventTapProxy proxy,
     return should_consume ? NULL : event;
 }
 
+/* PWE (1.1.1, A16): the iMac's own (hidden) pointer reached a side of its
+ * screen, so the move became a request to switch to another receiver, which a
+ * Mac with one receiver ignores. The iMac's pointer and the Mac's pointer move
+ * independently; when the pointer seems to vanish or stop, these lines say
+ * whether this was it. Once per 10 s. Under tx_lock. */
+static void tb_receiver_log_edge_switch(struct app *a, int direction, CGPoint location) {
+    unsigned long quiet = 0;
+    if (!tb_ratelimit_allow(&a->edge_switch_log, now_ms(), 10000, &quiet)) return;
+    tb_receiver_input_log("[input] the iMac's pointer is at the %s edge of its screen (%.0f, %.0f): "
+                          "asked the Mac to switch to the %s receiver instead of moving%s",
+                          direction < 0 ? "left" : "right", location.x, location.y,
+                          direction < 0 ? "previous" : "next",
+                          quiet ? "; more since the last report" : "");
+}
+
 /* Forward one event; 1 when it should not reach the iMac's own apps. */
 static int tb_receiver_input_tap_forward(struct app *a, CGEventType type, CGEventRef event) {
     int should_consume = 0;
@@ -1755,12 +1772,14 @@ static int tb_receiver_input_tap_forward(struct app *a, CGEventType type, CGEven
         if (now - a->last_target_switch_ms > 450) {
             if (location.x <= CGRectGetMinX(bounds) + 2.0 && dx < 0) {
                 a->last_target_switch_ms = now;
+                tb_receiver_log_edge_switch(a, -1, location);
                 tb_receiver_send_target_switch(a, -1);
                 should_consume = a->input_tap_consumes_events;
                 break;
             }
             if (location.x >= CGRectGetMaxX(bounds) - 2.0 && dx > 0) {
                 a->last_target_switch_ms = now;
+                tb_receiver_log_edge_switch(a, 1, location);
                 tb_receiver_send_target_switch(a, 1);
                 should_consume = a->input_tap_consumes_events;
                 break;
