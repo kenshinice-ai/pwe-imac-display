@@ -84,6 +84,7 @@
 | `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderService.swift`：虚拟屏模式的选择（原生比例、渲染匹配、按接收端 profile）原样提成 `virtualDisplayModeOverride(preset:matchRenderToStream:captureSource:)`，连接路径调用它，行为不变 | PWE 的「流畅 · 4K 60」（`crisp2160p60`）依赖它在渲染匹配关时不改虚拟屏、桌面仍是 5K；提出来才能写测试 | 待提 | 本地提交，未推 |
 | `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderService.swift`：扩展桌面的虚拟屏在它是唯一在线显示器时（与镜像的无头路径同一条规则 `shouldUseHeadlessVirtualDisplay`）改用现成的 CGDisplayStream 直采路径（`startDirectDisplayStream`，声音走辅助音频流）；有物理屏时仍走 ScreenCaptureKit，除非 defaults `PWEDirectCaptureExtended`（true 总用、false 不用）或环境变量 `PWE_DIRECT_CAPTURE`（1/0）指定；直采起不来退回 ScreenCaptureKit；会话中显示器增减使判断改变时重启采集（`pweReconsiderExtendedCapturePath`）。另加实验开关 `PWE_SCK_BGRA=1`（ScreenCaptureKit 用 BGRA） | Mac Studio 只接 iMac：镜像（直采）5K 60 发出 52–53 帧/秒、两档 4K 约 60，扩展（ScreenCaptureKit）5K 约 34（Lee 2026-10-24） | 待提 | 本地提交，未推；笔记本上未测 |
 | `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderService.swift` 的 `TBVideoPipeline`：在自己的队列上计数抓到、送进编码器、编码完成、发出的帧和编码耗时（开始时间放在 `sourceFrameRefcon` 里，不分配内存），每 10 秒用 `PWELog` 记一行 `[pwe] stream 10 s (<preset>): captured …/s submitted …/s encoded …/s sent …/s encode p50 … ms p95 … ms`（`PWEStreamStats`，带测试） | 菜单显示 60 而 iMac 只收到约 35，靠 ffmpeg 才查到编码器（FPS-TRACE 2026-10-24）；以后从报告就能看出帧在哪一段丢 | 待提 | 本地提交，未推 |
+| `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderService.swift`：每次剪贴板同步记一行（方向和字节数，不记内容）：发给 iMac、从 iMac 取用、因不是 iMac 主控或未加密而没取用 | RC8 T48 时两边日志都没有剪贴板的行，判断不了有没有发出 | 待提 | 本地提交，未推 |
 
 打包时的改名（`pwe/rebrand.py`）不改仓库里的文件，所以不在这张表里。它的锚点由脚本自己检查：上游改了对应的文字，脚本就会停下。
 

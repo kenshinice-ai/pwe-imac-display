@@ -2573,6 +2573,17 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             value: TBMonitorClipboard(text: text)
         ) else { return }
         send(packet)
+        PWELog.note("[pwe] " + Self.pweClipboardLogLine(sent: true, byteCount: text.utf8.count))
+    }
+
+    /// PWE (A10, 1.1.1): one line per clipboard sync, its direction and size,
+    /// never its text. RC8's T48 could not tell from either log whether a sync
+    /// was sent at all.
+    nonisolated static func pweClipboardLogLine(sent: Bool, byteCount: Int, taken: Bool = true) -> String {
+        if sent { return "clipboard: sent \(byteCount) bytes to the iMac" }
+        return taken
+            ? "clipboard: took \(byteCount) bytes from the iMac"
+            : "clipboard: left the iMac's \(byteCount) bytes (only taken while the iMac controls, encrypted)"
     }
 
     private func sendTeardownAndClose(
@@ -2700,11 +2711,16 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             case .clipboard:
                 // PWE: the receiver's clipboard is taken only while the receiver
                 // controls input, and only in an encrypted session.
-                guard Self.pweTakesReceiverClipboard(role: inputControlRole, linkMode: pweLink?.mode) else { break }
+                guard Self.pweTakesReceiverClipboard(role: inputControlRole, linkMode: pweLink?.mode) else {
+                    let size = TBMonitorProtocol.decodeJSON(TBMonitorClipboard.self, from: payload)?.text.utf8.count ?? payload.count
+                    PWELog.note("[pwe] " + Self.pweClipboardLogLine(sent: false, byteCount: size, taken: false))
+                    break
+                }
                 if let clipboard = TBMonitorProtocol.decodeJSON(TBMonitorClipboard.self, from: payload) {
                     let pasteboard = NSPasteboard.general
                     pasteboard.clearContents()
                     pasteboard.setString(clipboard.text, forType: .string)
+                    PWELog.note("[pwe] " + Self.pweClipboardLogLine(sent: false, byteCount: clipboard.text.utf8.count))
                 }
             default:
                 break

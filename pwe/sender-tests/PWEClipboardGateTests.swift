@@ -31,4 +31,12 @@ final class PWEClipboardGateTests: XCTestCase {
         XCTAssertFalse(TBDisplaySenderSession.pweTakesReceiverClipboard(role: PWEInputRole.iMacControlsMac.engineRole,
                                                                         linkMode: .plaintext))
     }
+
+    /// A10: each sync logs its direction and size, never the text.
+    func testTheClipboardLogLineCarriesNoText() {
+        typealias Session = TBDisplaySenderSession
+        XCTAssertEqual(Session.pweClipboardLogLine(sent: true, byteCount: 12), "clipboard: sent 12 bytes to the iMac")
+        XCTAssertEqual(Session.pweClipboardLogLine(sent: false, byteCount: 5), "clipboard: took 5 bytes from the iMac")
+        XCTAssertTrue(Session.pweClipboardLogLine(sent: false, byteCount: 5, taken: false).hasPrefix("clipboard: left the iMac's 5 bytes"))
+    }
 }
