@@ -927,24 +927,39 @@ final class TBDisplaySenderService: ObservableObject {
             // per language (discovery updates arrive often).
             if sessions.contains(where: { $0.isConnected && candidateIPs.contains($0.receiverIP) }) { continue }
             let hint = receiver.stableIdentity
+            // PWE (A9): the receiver the retry loop is about to dial gets the
+            // language in that session's hello. A short connection now only
+            // reached it 40 ms before the session (RC8 18:09:37, RC7 too).
+            if TBSenderAutomation.isConnectingAutomatically,
+               sessions.contains(where: { !$0.selectedReceiverID.isEmpty && receiver.matchesPersistedIdentity($0.selectedReceiverID) }) {
+                pweLanguagePushed[hint] = languageCode
+                continue
+            }
             guard let expectedID = PWEPairingStore.shared.expectedReceiverID(forHint: hint),
                   pweLanguagePushed[hint] != languageCode else { continue }
             pweLanguagePushed[hint] = languageCode
-            var sentTo = Set<String>()
-            for ip in candidateIPs where !ip.isEmpty && sentTo.insert(ip).inserted {
-                sendLanguageUpdate(to: ip, languageCode: languageCode, expectedID: expectedID)
-            }
+            // PWE (A9): one address at a time, the next only if this one did not
+            // take the packet. All at once opened a connection on each (IPv6 and
+            // IPv4 on the same cable).
+            sendLanguageUpdate(to: Self.pweLanguageAddresses(candidateIPs), languageCode: languageCode,
+                               expectedID: expectedID)
         }
     }
 
-    private func sendLanguageUpdate(to receiverIP: String, languageCode: String, expectedID: Data) {
-        guard !receiverIP.isEmpty,
+    private func sendLanguageUpdate(to receiverIPs: [String], languageCode: String, expectedID: Data) {
+        guard !receiverIPs.isEmpty,
               let packet = TBMonitorProtocol.makeJSONPacket(
                 type: .uiLanguage,
                 value: TBMonitorUILanguageUpdate(uiLanguage: languageCode)
               )
         else { return }
-        PWESecureOneShot.send(packet, to: receiverIP, expectedID: expectedID)
+        PWESecureOneShot.send(packet, toFirstOf: receiverIPs, expectedID: expectedID)
+    }
+
+    /// PWE: the receiver's addresses to try, in order, each once.
+    nonisolated static func pweLanguageAddresses(_ candidates: [String]) -> [String] {
+        var seen = Set<String>()
+        return candidates.filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
     private func detectLocalInterfaces() -> [TBLocalLinkInterface] {

@@ -471,8 +471,11 @@ final class PWESecureOneShot: @unchecked Sendable {
     private let queue = DispatchQueue(label: "pwe.secure.oneshot")
     private var buffer = Data()
     private var finished = false
+    /// Called once, with whether the packet was handed to the connection.
+    private let completion: (Bool) -> Void
 
-    private init(packet: Data, host: String, expectedID: Data, store: PWEPairingStore) {
+    private init(packet: Data, host: String, expectedID: Data, store: PWEPairingStore,
+                 completion: @escaping (Bool) -> Void) {
         connection = NWConnection(
             host: NWEndpoint.Host(host),
             port: NWEndpoint.Port(rawValue: TBMonitorProtocol.port)!,
@@ -481,10 +484,17 @@ final class PWESecureOneShot: @unchecked Sendable {
         link = PWESecureLink(connection: connection, plaintext: false, store: store)
         self.packet = packet
         self.expectedID = expectedID
+        self.completion = completion
     }
 
-    static func send(_ packet: Data, to host: String, expectedID: Data, store: PWEPairingStore = .shared) {
-        let shot = PWESecureOneShot(packet: packet, host: host, expectedID: expectedID, store: store)
+    /// Tries `hosts` in order and stops at the first that takes the packet:
+    /// one connection when the first address answers.
+    static func send(_ packet: Data, toFirstOf hosts: [String], expectedID: Data, store: PWEPairingStore = .shared) {
+        guard let host = hosts.first else { return }
+        let shot = PWESecureOneShot(packet: packet, host: host, expectedID: expectedID, store: store) { delivered in
+            guard !delivered else { return }
+            send(packet, toFirstOf: Array(hosts.dropFirst()), expectedID: expectedID, store: store)
+        }
         shot.run()
     }
 
@@ -514,7 +524,9 @@ final class PWESecureOneShot: @unchecked Sendable {
                     guard (0x50...0x5E).contains(type.rawValue) else { return finish() }
                     let step = link.handle(type: type.rawValue, payload: payload)
                     if step.has(PWE_SEC_EV_SECURE) {
-                        link.send(content: packet, completion: .contentProcessed({ [self] _ in finish() }))
+                        link.send(content: packet, completion: .contentProcessed({ [self] error in
+                            finish(delivered: error == nil)
+                        }))
                         return
                     }
                     if step.closes || step.has(PWE_SEC_EV_NEED_CODE) { return finish() }
@@ -527,11 +539,12 @@ final class PWESecureOneShot: @unchecked Sendable {
         }
     }
 
-    private func finish() {
+    private func finish(delivered: Bool = false) {
         guard !finished else { return }
         finished = true
         link.close()
         connection.cancel()
+        completion(delivered)
     }
 }
 
