@@ -89,14 +89,13 @@
 | 10-23 19:05 后 | 工具站部署，「真 5K」措辞上线 | 工具站会话 | /screenencore/ 不再有「48 Hz 和 60 Hz 下都是真 5K」 |
 | 10-23～25 | 收测试者反馈；Lee 发测试者名单，Claude 记进 roster | Lee、Claude | roster 有人名和机型 |
 | 10-26 晚 | go/no-go，只核对门槛；必须修的问题出现才重打包。定了之后马上给「YouTube 频道管理」会话发一句：go 就写发布日期和 App 大约几点上线（GitHub release、站点下载按钮），no-go 就写新日期。它收到才设定时（产品片 ENCORE001 定在发布日 21:00 墨尔本，不早于发布） | Lee 定；Claude 发消息 | Lee 说 go 或给新日期；YouTube 会话回复已设定时 |
-| 10-28 | 发布步骤 1–9；7a 给工具站发 go、sha256、DMG 大小，并请它把 Mac 一行的「Apple silicon or Intel」改成只写 Apple 芯片（Intel 没测过，上游说不支持；2026-10-24 工具站会话不在线，没发出。小红书第 9 张、YouTube 和 B 站说明、产品片文档已改成只写 Apple 芯片）；7c 通知小红书会话 | Claude；Lee 在工具站说「部署」 | `brew fetch --cask` ✔；产品页显示 1.1.0 |
+| 10-28 | 发布步骤 1–9；7a 给工具站发 go、sha256、DMG 大小；7c 通知小红书会话 | Claude；Lee 在工具站说「部署」 | `brew fetch --cask` ✔；产品页显示 1.1.0 |
 | 10-29 12:00 | 小红书 T+1 图文 | 小红书会话（定时） | 已发 |
+| 发布后 | 使用说明和官网加「只接 iMac 的台式 Mac」一节（Lee 2026-10-23 定，不动 1.1.0）。2026-10-23 在 Mac Studio 上实测：锁屏、睡醒 1–2 秒都在 iMac 上出密码界面，用 iMac 的键盘能解锁 | Claude 写，工具站会话上网站 | — |
 | 10-28～11-04 | 第一周：看 issue 和 support 邮件，填 COMPATIBILITY.md；先攒 bug，不逐个发版 | Claude | 每个 issue 48 小时内有回复 |
 | 约 11-11（T+14） | 宣传可以提配对和加密；上游 PR 一周一个，先提不涉及安全的 | Claude，Lee 定 | — |
-| 11 月中 | 1.1.1：汇总 bug 一次修完，再测一轮（ISSUES「RC8」、复盘里的清单；加上菜单实时帧率显示发送端帧数、不是 iMac 实际帧数的问题） | Claude | 一轮真机测试通过 |
-| Lee 设置好 Mac Studio 后 | Mac Studio 当发送端、iMac 是唯一屏幕：按 `docs/pwe/TEST-headless-mac-studio-2026-10-24.md` 做 H0–H7（方案 `PLAN-headless-mac-2026-10-24.md`，都不入库）；结果决定 1.2 改什么、宣传能不能提 Mac mini / Studio | Lee（Mac Studio、密码、插拔）、Claude（看结果） | H0–H7 有结果 |
+| 约 11-18 | 1.1.1：方案 `docs/pwe/PLAN-1.1.1-2026-10-23.md`（不入库；原定 33 项已有 27 项进了 1.1.0，剩下的加新项分 A 用户版本 / B 维护 / C 不进）。汇总 bug 一次修完，再测一轮；加「无屏配对」和「以后只用 iMac」准备清单（Lee 2026-10-23 定，方案在 `docs/pwe/IDEA-headless-and-lock-screen-2026-10-23.md`，不入库）（ISSUES「RC8」、复盘里的清单；加上菜单实时帧率显示发送端帧数、不是 iMac 实际帧数的问题；2026-10-24 实测：5K 60 下 iMac 每秒只收到约 35 帧且几乎全部显示，瓶颈在 Mac 端，另有会话开始后解码器卡 2 秒，见 `docs/pwe/FPS-TRACE-2026-10-24.md`） | Claude | 一轮真机测试通过 |
 | 发布稳定后 | 仓库移出 iCloud（Lee 2026-10-23 定：之后再做）；先给测试机换一种拿测试文档的办法 | Claude 出方案，Lee 定 | — |
-| 2026-10-24 起 | Windows → iMac 雷雳直连试验：Codex 按任务包 `docs/pwe/CODEX-TASK-windows-e0-2026-10-24.md`（不入库）分四步做，每步停下等 Lee；在自己的 worktree `~/Developer/pwe-encore-windows`（分支 `exp/windows-e0`），不推送、不碰 `pwe-1.1` | Codex；Lee（Windows 电脑信息、在场插拔、同意安装） | 第 2 步给出「继续 / 限定 / 暂停」 |
 | 约 12-27（T+60） | 定价复盘；Windows 版要不要做（2.0） | Lee 定 | — |
 
 ## 1.1.0 发出去不行怎么撤（2026-10-22 写，未演练）
