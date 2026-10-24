@@ -2589,14 +2589,25 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         PWELog.note("[pwe] " + Self.pweClipboardLogLine(sent: true, byteCount: text.utf8.count))
     }
 
-    /// PWE (A10, 1.1.1): one line per clipboard sync, its direction and size,
-    /// never its text. RC8's T48 could not tell from either log whether a sync
-    /// was sent at all.
+    /// PWE (A10, 1.1.1): one line per clipboard sync, its direction and a size
+    /// class, never its text or exact length (a copied password's length would
+    /// otherwise land in the log). RC8's T48 could not tell from either log
+    /// whether a sync was sent at all.
     nonisolated static func pweClipboardLogLine(sent: Bool, byteCount: Int, taken: Bool = true) -> String {
-        if sent { return "clipboard: sent \(byteCount) bytes to the iMac" }
+        let size = pweClipboardSizeClass(byteCount)
+        if sent { return "clipboard: sent \(size) to the iMac" }
         return taken
-            ? "clipboard: took \(byteCount) bytes from the iMac"
-            : "clipboard: left the iMac's \(byteCount) bytes (only taken while the iMac controls, encrypted)"
+            ? "clipboard: took \(size) from the iMac"
+            : "clipboard: left the iMac's \(size) (only taken while the iMac controls, encrypted)"
+    }
+
+    /// The receiver logs the same three classes.
+    nonisolated static func pweClipboardSizeClass(_ byteCount: Int) -> String {
+        switch byteCount {
+        case ..<100: return "under 100 bytes"
+        case ..<10_240: return "100 bytes-10 KB"
+        default: return "over 10 KB"
+        }
     }
 
     private func sendTeardownAndClose(
