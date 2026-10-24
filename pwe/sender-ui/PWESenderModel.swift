@@ -621,9 +621,17 @@ final class PWESenderModel: ObservableObject {
     }
 
     /// The picture is up with sound relayed: the iMac is playing this Mac's audio.
+    /// Only while a capture really records it: on the direct path the sound
+    /// comes from a separate audio stream, and if that does not start, muting
+    /// this Mac would leave sound nowhere.
     private var isRelayingSound: Bool {
         guard let session else { return false }
-        return session.isStreaming && session.audioEnabled && session.audioAddonAvailable
+        return Self.relaysSound(streaming: session.isStreaming, audioEnabled: session.audioEnabled,
+                                addonAvailable: session.audioAddonAvailable, capturingAudio: session.pweCapturingAudio)
+    }
+
+    nonisolated static func relaysSound(streaming: Bool, audioEnabled: Bool, addonAvailable: Bool, capturingAudio: Bool) -> Bool {
+        streaming && audioEnabled && addonAvailable && capturingAudio
     }
 
     private func observeSessions() {
