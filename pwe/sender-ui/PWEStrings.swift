@@ -121,6 +121,13 @@ struct PWEStrings {
         }
     }
     var arrange: String { t("Arrange Displays…", "排列显示器…") }
+    /// A14 (T50): Screen Sharing on this Mac shows the iMac that is its display.
+    var screenSharingNotice: String {
+        t("You're viewing this iMac with Screen Sharing, so the picture repeats itself. To use the iMac directly, disconnect Screen Sharing.",
+          "你在用屏幕共享看这台 iMac，画面会无限重复。要直接用 iMac，先断开屏幕共享。")
+    }
+    /// The menu's short form of it; the item's tooltip carries the whole notice.
+    var screenSharingMenu: String { t("Viewing this iMac with Screen Sharing", "正在用屏幕共享看这台 iMac") }
     var disconnect: String { t("Disconnect", "断开") }
     /// The menu's line under the status while the picture is up: the picture's
     /// size and the frames this Mac sent in the last second (the engine's

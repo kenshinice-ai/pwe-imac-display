@@ -55,6 +55,10 @@ final class PWEStatusMenu: NSObject {
                 DispatchQueue.main.async { [weak self] in self?.refreshOpenMenu() }
             }
             .store(in: &cancellables)
+        model.$viewedWithScreenSharing
+            .removeDuplicates()
+            .sink { [weak self] _ in DispatchQueue.main.async { [weak self] in self?.refreshOpenMenu() } }
+            .store(in: &cancellables)
         // "Reconnecting to apply the change…" for a few seconds after a setting
         // that reconnects, in place of the phase's words (also in the window).
         model.$reconnectNotice
@@ -177,7 +181,7 @@ final class PWEStatusMenu: NSObject {
     /// Which items the menu holds: what `rebuild` decides on. The first line's
     /// words are not part of it; they change in place.
     private struct Shape: Equatable {
-        var showing, unencrypted, canDisconnect, volume: Bool
+        var showing, unencrypted, canDisconnect, volume, screenSharing: Bool
         var connectable: String?
         var choices: [String]
         var update: String?
@@ -185,7 +189,8 @@ final class PWEStatusMenu: NSObject {
 
     private var shape: Shape {
         Shape(showing: model.isShowing, unencrypted: model.isUnencrypted, canDisconnect: model.canDisconnect,
-              volume: model.sound != .onlyThisMac, connectable: model.connectableReceiver?.id,
+              volume: model.sound != .onlyThisMac, screenSharing: model.isShowing && model.viewedWithScreenSharing,
+              connectable: model.connectableReceiver?.id,
               choices: choosable.map(\.id), update: updates?.available?.version)
     }
 
@@ -215,6 +220,13 @@ final class PWEStatusMenu: NSObject {
             // A snapshot when the menu opens: the engine's fps timer does not run
             // while a menu is tracking, so a live binding would never update here.
             menu.addItem(disabled(strings.liveLine(preset, fps: model.framesPerSecond)))
+        }
+        if model.isShowing, model.viewedWithScreenSharing {
+            // A14: a status note in the menu, no notification.
+            let note = disabled(strings.screenSharingMenu)
+            note.image = NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: nil)
+            note.toolTip = strings.screenSharingNotice
+            menu.addItem(note)
         }
         if let version = updates?.available?.version {
             menu.addItem(action(strings.updateAvailableMenu(version)) { NSWorkspace.shared.open(UpdateCheck.downloadPage) })

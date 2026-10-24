@@ -340,6 +340,9 @@ final class PWESenderModel: ObservableObject {
     /// The menu bar item is not on screen (PWEStatusMenu says so). The first
     /// connection's tip then does not point at it (T19).
     @Published var menuBarIconHidden = false
+    /// Screen Sharing on this Mac shows the iMac in use as its display (A14).
+    @Published private(set) var viewedWithScreenSharing = false
+    private var screenSharingWatch: PWEScreenSharingWatch?
     /// A one-line notice while a changed setting reconnects ("Reconnecting to apply…").
     @Published private(set) var reconnectNotice = false
     /// While the iMac plays this Mac's sound, keep the Mac's own speakers muted
@@ -455,6 +458,7 @@ final class PWESenderModel: ObservableObject {
         refreshLaunchAtLogin()
         resetNetworkLinkOnce()
         migratePicturesOnce()
+        screenSharingWatch = PWEScreenSharingWatch { [weak self] viewing in self?.viewedWithScreenSharing = viewing }
 
         service.objectWillChange
             .receive(on: Self.engineUpdates)
@@ -591,6 +595,16 @@ final class PWESenderModel: ObservableObject {
         localMute?.update(mute: soundOnlyOnIMac && isRelayingSound)
         applyInputRole(force: false)
         watchForReplug(service)
+        screenSharingWatch?.update(names: screenSharingNames(service))
+    }
+
+    /// While the iMac is a display: the names Screen Sharing may call it (A14).
+    private func screenSharingNames(_ service: TBDisplaySenderService) -> [String]? {
+        guard case .connected(let receiver) = phase, let receiver,
+              let discovered = service.discoveredReceivers.first(where: { $0.stableIdentity == receiver.id }) else { return nil }
+        var paired: String?
+        if let security = session?.pweSecurity, case .encrypted(let name) = security { paired = name }
+        return PWEScreenSharingRules.names(for: discovered, friendlyName: receiver.name, pairedName: paired)
     }
 
     /// The first time an iMac becomes a display: show the extra lines, and turn

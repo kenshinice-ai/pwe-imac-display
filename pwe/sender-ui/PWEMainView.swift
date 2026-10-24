@@ -221,6 +221,8 @@ struct PWEMainView: View {
         } actions: {
             VStack(alignment: .leading, spacing: 16) {
                 if model.isUnencrypted { unencryptedWarning }
+                // A14: the picture loop Screen Sharing makes, and how to end it.
+                if model.viewedWithScreenSharing { PWENote(strings.screenSharingNotice) }
                 HStack(spacing: 10) {
                     Button(strings.arrange) { model.openDisplaySettings() }
                     Button(strings.disconnect) { model.disconnect() }
