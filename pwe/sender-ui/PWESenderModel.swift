@@ -1027,6 +1027,11 @@ final class PWESenderModel: ObservableObject {
         launchAtLoginNeedsApproval = status == .requiresApproval
     }
 
+    /// The Open at login switch's state (PWELoginItemRules.display).
+    var launchAtLoginDisplay: PWELoginItemRules.Display {
+        PWELoginItemRules.display(registered: launchAtLogin, canRegister: !launchAtLoginUnavailable)
+    }
+
     func setLaunchAtLogin(_ on: Bool) {
         guard service != nil else { launchAtLogin = on; return }
         if on, launchAtLoginUnavailable {

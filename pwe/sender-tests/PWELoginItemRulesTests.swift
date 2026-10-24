@@ -32,4 +32,24 @@ final class PWELoginItemRulesTests: XCTestCase {
         XCTAssertFalse(canRegister("/Applications/PWE Screen Encore"))
         XCTAssertFalse(canRegister("/ApplicationsBackup/PWE Screen Encore.app"))
     }
+
+    /// A7 (RC8 W11.4): from the disk image the switch showed on, with "Move the
+    /// app to Applications" under it. It shows the real status; the hint only
+    /// when off.
+    func testTheSwitchNeverShowsOnWithTheMoveHint() {
+        let fromImageRegistered = PWELoginItemRules.display(registered: true, canRegister: false)
+        XCTAssertEqual(fromImageRegistered, .init(isOn: true, isEnabled: true, showsMoveHint: false))
+        let fromImageOff = PWELoginItemRules.display(registered: false, canRegister: false)
+        XCTAssertEqual(fromImageOff, .init(isOn: false, isEnabled: false, showsMoveHint: true))
+        XCTAssertEqual(PWELoginItemRules.display(registered: false, canRegister: true),
+                       .init(isOn: false, isEnabled: true, showsMoveHint: false))
+        XCTAssertEqual(PWELoginItemRules.display(registered: true, canRegister: true),
+                       .init(isOn: true, isEnabled: true, showsMoveHint: false))
+        for registered in [true, false] {
+            for canRegister in [true, false] {
+                let display = PWELoginItemRules.display(registered: registered, canRegister: canRegister)
+                XCTAssertFalse(display.isOn && display.showsMoveHint)
+            }
+        }
+    }
 }
