@@ -815,6 +815,11 @@ private final class TBVideoPipeline: @unchecked Sendable {
     private var frameRatePacer: TBFrameRatePacer
     private var ackSent: Bool
     private var running = false
+    /// PWE (1.1.1): captured, submitted, encoded and sent per second, and encode
+    /// times, logged every 10 s while streaming (PWEStreamStats).
+    private var streamStats = PWEStreamStats()
+    private var streamStatsTimer: DispatchSourceTimer?
+    private var streamStatsSince: TimeInterval = 0
 
     // Read from the main thread (fps timer / watchdog); guarded by `lock`.
     private let lock = NSLock()
@@ -852,10 +857,11 @@ private final class TBVideoPipeline: @unchecked Sendable {
         queue.sync {
             if usesRawNV12 {
                 running = true
-                return true
+            } else {
+                setupEncoder()
+                running = vtEncoder != nil
             }
-            setupEncoder()
-            running = vtEncoder != nil
+            if running { startStreamStats() }
             return running
         }
     }
@@ -866,6 +872,8 @@ private final class TBVideoPipeline: @unchecked Sendable {
     func stop() {
         queue.sync {
             running = false
+            streamStatsTimer?.cancel()
+            streamStatsTimer = nil
             if let encoder = vtEncoder { VTCompressionSessionInvalidate(encoder) }
             vtEncoder = nil
             vtEncoderRef?.release()
@@ -904,8 +912,28 @@ private final class TBVideoPipeline: @unchecked Sendable {
         }
     }
 
+    /// PWE: one line per window on `queue`, from its own timer, so neither a
+    /// busy main thread nor an open menu delays or drops it.
+    private func startStreamStats() {
+        streamStats = PWEStreamStats()
+        streamStatsSince = ProcessInfo.processInfo.systemUptime
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + PWEStreamStats.window, repeating: PWEStreamStats.window,
+                       leeway: .milliseconds(100))
+        timer.setEventHandler { [weak self] in
+            guard let self, self.running else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            let line = self.streamStats.summary(label: self.preset.rawValue, elapsed: now - self.streamStatsSince)
+            self.streamStatsSince = now
+            PWELog.note("[pwe] " + line)
+        }
+        streamStatsTimer = timer
+        timer.resume()
+    }
+
     private func markCaptureFrame() {
         capturedFrames += 1
+        streamStats.recordCaptured()
         lock.lock()
         captureHealth.recordFrame(now: ProcessInfo.processInfo.systemUptime)
         lock.unlock()
@@ -926,12 +954,15 @@ private final class TBVideoPipeline: @unchecked Sendable {
         let retained = Unmanaged.passRetained(self)
         vtEncoderRef = retained
 
-        let callback: VTCompressionOutputCallback = { ref, _, status, _, sampleBuffer in
+        let callback: VTCompressionOutputCallback = { ref, frameRef, status, _, sampleBuffer in
             guard let ref else { return }
             let pipeline = Unmanaged<TBVideoPipeline>.fromOpaque(ref).takeUnretainedValue()
+            // PWE: the encode's start rides in the frame reference (PWEStreamStats.startToken).
+            let encodeMilliseconds = PWEStreamStats.milliseconds(since: frameRef)
             pipeline.queue.async {
                 pipeline.inFlightEncodeFrames = max(0, pipeline.inFlightEncodeFrames - 1)
                 guard status == noErr, let sampleBuffer else { return }
+                pipeline.streamStats.recordEncoded(milliseconds: encodeMilliseconds)
                 pipeline.handleEncoded(sampleBuffer)
             }
         }
@@ -1065,11 +1096,13 @@ private final class TBVideoPipeline: @unchecked Sendable {
             presentationTimeStamp: pts,
             duration: .invalid,
             frameProperties: nil,
-            sourceFrameRefcon: nil,
+            sourceFrameRefcon: PWEStreamStats.startToken(),
             infoFlagsOut: nil
         )
         if status != noErr {
             inFlightEncodeFrames = max(0, inFlightEncodeFrames - 1)
+        } else {
+            streamStats.recordSubmitted()
         }
     }
 
@@ -1111,6 +1144,7 @@ private final class TBVideoPipeline: @unchecked Sendable {
                 }
             }))
             lock.lock(); _sentFrames += 1; lock.unlock()
+            streamStats.recordSent()
         }
     }
 
@@ -1167,6 +1201,7 @@ private final class TBVideoPipeline: @unchecked Sendable {
         payload.append(UnsafeBufferPointer(start: uvBase.assumingMemoryBound(to: UInt8.self), count: uvSize))
 
         let packet = TBMonitorProtocol.makePacket(type: .rawFrame, payload: payload)
+        streamStats.recordSubmitted()
         pendingVideoPackets += 1
         connection.send(content: packet, completion: .contentProcessed({ [weak self] _ in
             guard let self else { return }
@@ -1175,6 +1210,7 @@ private final class TBVideoPipeline: @unchecked Sendable {
             }
         }))
         lock.lock(); _sentFrames += 1; lock.unlock()
+        streamStats.recordSent()
     }
 
     private func buildParamSetsPacket(from format: CMVideoFormatDescription, codecType: CMVideoCodecType) -> Data? {
