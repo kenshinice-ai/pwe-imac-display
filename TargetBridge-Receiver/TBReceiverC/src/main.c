@@ -637,6 +637,14 @@ static void tb_receiver_update_forwarding(struct app *a) {
     atomic_store(&g_listen_probe_allowed, on);   /* A8: the probe only in receiverMaster */
 }
 
+/* PWE (1.1.1, A10): how big a clipboard sync was, as a class, not a count:
+ * enough to see that a sync happened and roughly what, and no more. */
+static const char *tb_receiver_clipboard_size_class(size_t bytes) {
+    if (bytes < 100) return "under 100 bytes";
+    if (bytes <= 10 * 1024) return "100 bytes to 10 KB";
+    return "over 10 KB";
+}
+
 /* PWE (T40): the clipboard is read and written on its own thread
  * (tb_clipboard.m); upstream ran pbpaste and pbcopy on this loop. This sends
  * text the worker found. */
@@ -650,11 +658,12 @@ static void tb_receiver_send_clipboard_text(struct app *a, const char *text) {
     int len = snprintf(json, sizeof(json), "{\"text\":\"%s\"}", escaped);
     if (len <= 0 || (size_t)len >= sizeof(json)) return;
 
-    /* PWE (1.1.1, A10): one line per sync, the length only, never the text. */
+    /* PWE (1.1.1, A10): one line per sync, a size class only, never the text. */
     if (tb_receiver_send(a, TB_PKT_CLIPBOARD, (const uint8_t *)json, (size_t)len) == 0) {
-        fprintf(stderr, "[clipboard] iMac -> Mac: %zu bytes\n", strlen(text));
+        fprintf(stderr, "[clipboard] iMac -> Mac: %s\n", tb_receiver_clipboard_size_class(strlen(text)));
     } else {
-        fprintf(stderr, "[clipboard] iMac -> Mac: %zu bytes not sent (the connection refused it)\n", strlen(text));
+        fprintf(stderr, "[clipboard] iMac -> Mac: %s, not sent (the connection refused it)\n",
+                tb_receiver_clipboard_size_class(strlen(text)));
     }
 }
 
@@ -1531,8 +1540,8 @@ static void on_packet_body(uint8_t type, const uint8_t *payload, size_t len, str
             char text[TB_CLIPBOARD_MAX_TEXT];
             extract_json_string_field(payload, len, "\"text\"", text, sizeof(text));
             tb_clipboard_write(a->clipboard, text);   /* PWE (T40): written on the clipboard thread */
-            /* PWE (1.1.1, A10): one line per sync, the length only, never the text. */
-            fprintf(stderr, "[clipboard] Mac -> iMac: %zu bytes\n", strlen(text));
+            /* PWE (1.1.1, A10): one line per sync, a size class only, never the text. */
+            fprintf(stderr, "[clipboard] Mac -> iMac: %s\n", tb_receiver_clipboard_size_class(strlen(text)));
         }
         break;
     case TB_PKT_VOLUME:

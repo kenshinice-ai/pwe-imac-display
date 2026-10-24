@@ -328,13 +328,16 @@ else
     fi
     expect_log "[input] control mode updated to receiverMaster" "receiver switched to receiverMaster"
     expect_log "[clipboard] the clipboard took 3." "slow clipboard reads ran on the clipboard thread"
-    # PWE (1.1.1, A10): one line per sync with its length, never the text.
-    expect_log "[clipboard] Mac -> iMac: " "receiver logged the Mac's clipboard by length"
-    expect_log "[clipboard] iMac -> Mac: " "receiver logged the iMac's clipboard by length"
+    # PWE (1.1.1, A10): one line per sync with a size class, never the text
+    # or its exact length (the test texts are under 100 bytes).
+    expect_log "[clipboard] Mac -> iMac: under 100 bytes" "receiver logged the Mac's clipboard by size class"
+    expect_log "[clipboard] iMac -> Mac: under 100 bytes" "receiver logged the iMac's clipboard by size class"
     if grep -qF "copied on the" "$LOG"; then
         fail "the clipboard text itself reached the receiver's log"
+    elif grep -qE '^\[clipboard\] (Mac -> iMac|iMac -> Mac): [0-9]+ bytes' "$LOG"; then
+        fail "the receiver's log gives the clipboard's exact length"
     else
-        pass "no clipboard text in the receiver's log"
+        pass "no clipboard text or exact length in the receiver's log"
     fi
     if grep -qF "[watchdog] main loop stuck" "$LOG"; then
         fail "main loop stalled: $(grep -F "[watchdog] main loop stuck" "$LOG" | head -1)"
