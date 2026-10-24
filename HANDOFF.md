@@ -94,7 +94,7 @@
 | 10-28～11-04 | 第一周：看 issue 和 support 邮件，填 COMPATIBILITY.md；先攒 bug，不逐个发版 | Claude | 每个 issue 48 小时内有回复 |
 | 约 11-11（T+14） | 宣传可以提配对和加密；上游 PR 一周一个，先提不涉及安全的 | Claude，Lee 定 | — |
 | 11 月中 | 1.1.1：汇总 bug 一次修完，再测一轮（ISSUES「RC8」、复盘里的清单；加上菜单实时帧率显示发送端帧数、不是 iMac 实际帧数的问题） | Claude | 一轮真机测试通过 |
-| 1.1.1 期间 | Mac mini / Mac Studio 当发送端、iMac 是唯一屏幕：真机测 H1–H7（方案 `docs/pwe/PLAN-headless-mac-2026-10-24.md`，不入库）；锁屏时 iMac 别停在最后一帧 | Claude，要一台 Apple 芯片的 Mac mini 或 Studio | H1–H7 有结果 |
+| Lee 设置好 Mac Studio 后 | Mac Studio 当发送端、iMac 是唯一屏幕：按 `docs/pwe/TEST-headless-mac-studio-2026-10-24.md` 做 H0–H7（方案 `PLAN-headless-mac-2026-10-24.md`，都不入库）；结果决定 1.2 改什么、宣传能不能提 Mac mini / Studio | Lee（Mac Studio、密码、插拔）、Claude（看结果） | H0–H7 有结果 |
 | 发布稳定后 | 仓库移出 iCloud（Lee 2026-10-23 定：之后再做）；先给测试机换一种拿测试文档的办法 | Claude 出方案，Lee 定 | — |
 | 约 12-27（T+60） | 定价复盘；Windows 版要不要做（2.0） | Lee 定 | — |
 
