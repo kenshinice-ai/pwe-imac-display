@@ -104,6 +104,22 @@ enum TBSenderAutomation {
 
     /// Handle a `targetbridge://` URL (from `.onOpenURL`).
     static func handle(url: URL) {
+        pweHandle(url: url, own: false)
+    }
+
+    /// PWE (T54): a connect URL from outside (a script, `open`) goes to PWE's
+    /// model first, which applies it like its own Picture and display-mode
+    /// choices and keeps its own reconnect rules. Upstream's handling cancelled
+    /// the running retry loop and, without `retry=1`, connected once without
+    /// one, so automatic reconnect stayed off. Returns true when handled.
+    static var pweConnectURLHandler: (@MainActor ([String: String]) -> Bool)?
+
+    /// PWE: the model's own connections, which must not come back to it.
+    static func pweHandleOwn(url: URL) {
+        pweHandle(url: url, own: true)
+    }
+
+    private static func pweHandle(url: URL, own: Bool) {
         guard url.scheme?.lowercased() == "targetbridge" else { return }
         let action = (url.host ?? "").lowercased()
         var params: [String: String] = [:]
@@ -112,6 +128,7 @@ enum TBSenderAutomation {
                 params[item.name.lowercased()] = item.value
             }
         }
+        if !own, action == "connect", let handler = pweConnectURLHandler, handler(params) { return }
         run(action: action, params: params)
     }
 

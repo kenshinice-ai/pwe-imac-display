@@ -230,6 +230,33 @@ enum PWEPollRules {
     }
 }
 
+/// T54: what a connect URL from outside does (PWESenderModel.handleConnectURL).
+/// A plain automatic one (no named receiver, transport, path or session) for
+/// the iMac PWE already knows is PWE's to apply: like the Picture menu, a
+/// changed picture or display mode reconnects to apply it, an unchanged one
+/// does nothing, and with no connection it connects under PWE's own rules
+/// (retrying when "connect automatically" is on; a `retry` in the URL is not
+/// read). Anything else keeps upstream's handling (PWEConnectURLTests).
+enum PWEConnectURLRules {
+    enum Plan: Equatable { case notOurs, nothing, reconnect, connect }
+
+    static func isPlainAutomatic(_ params: [String: String]) -> Bool {
+        let receiver = params["receiver"] ?? ""
+        guard receiver.isEmpty || receiver.lowercased() == "auto" else { return false }
+        return ["transport", "path", "connection-path", "connection", "session", "localip", "local-ip"]
+            .allSatisfy { params[$0] == nil }
+    }
+
+    static func plan(plainAutomatic: Bool, knowsIMac: Bool, connected: Bool,
+                     picture: TBDisplayCapturePreset, wantedPicture: TBDisplayCapturePreset?,
+                     mode: PWEDisplayMode, wantedMode: PWEDisplayMode?) -> Plan {
+        guard plainAutomatic, knowsIMac else { return .notOurs }
+        guard connected else { return .connect }
+        let changes = (wantedPicture.map { $0 != picture } ?? false) || (wantedMode.map { $0 != mode } ?? false)
+        return changes ? .reconnect : .nothing
+    }
+}
+
 /// The first connection's two extra lines in the window: where the menu bar
 /// controls are, and Open at login (PWEPhaseRulesTests).
 enum PWEFirstConnectionRules {
@@ -314,7 +341,9 @@ final class PWESenderModel: ObservableObject {
     @Published var displayMode: PWEDisplayMode {
         didSet {
             defaults.set(displayMode.rawValue, forKey: Keys.displayMode)
-            if displayMode != oldValue { reconnectIfShowing(because: "display mode changed to \(displayMode.rawValue)") }
+            if displayMode != oldValue, !applyingConnectURL {
+                reconnectIfShowing(because: "display mode changed to \(displayMode.rawValue)")
+            }
         }
     }
     /// An iMac has been a display on this Mac before: the first connection's
@@ -389,6 +418,8 @@ final class PWESenderModel: ObservableObject {
     private var asleep = false
     private var awokeAt = Date.distantPast
     private static let wakeSettleTime: TimeInterval = 15
+    /// T54: a connect URL's picture and mode are being applied together; one reconnect follows.
+    private var applyingConnectURL = false
     /// A1: a Disconnect (or Cancel) happened in this run; no automatic pairing after it.
     private var disconnectedThisRun = false
     /// A1: iMacs automatic pairing has been started for in this run.
@@ -465,6 +496,7 @@ final class PWESenderModel: ObservableObject {
         resetNetworkLinkOnce()
         migratePicturesOnce()
         screenSharingWatch = PWEScreenSharingWatch { [weak self] viewing in self?.viewedWithScreenSharing = viewing }
+        TBSenderAutomation.pweConnectURLHandler = { [weak self] params in self?.handleConnectURL(params) ?? false }
 
         service.objectWillChange
             .receive(on: Self.engineUpdates)
@@ -782,11 +814,44 @@ final class PWESenderModel: ObservableObject {
         }
         syncRendering()
         if let session { Self.prepareForPWEConnection(session) }
-        if let url = components.url { TBSenderAutomation.handle(url: url) }
+        if let url = components.url { TBSenderAutomation.pweHandleOwn(url: url) }
         // The engine has started (or, with retry=0, ended) its retrying already;
         // that change is ours, not one to read as a Disconnect.
         wasRetrying = TBSenderAutomation.isConnectingAutomatically
         refresh()
+    }
+
+    /// T54: a `connect` URL from outside, applied like the menu's own choices
+    /// (PWEConnectURLRules). False leaves it to upstream's handling.
+    func handleConnectURL(_ params: [String: String]) -> Bool {
+        let wantedPicture = params["preset"].flatMap { TBSenderAutomation.parsePreset($0) }
+        let wantedMode = params["mode"].flatMap { TBSenderAutomation.parseMode($0) }
+            .map { $0 == .desktopMirror ? PWEDisplayMode.mirror : .extended }
+        let plan = PWEConnectURLRules.plan(
+            plainAutomatic: PWEConnectURLRules.isPlainAutomatic(params), knowsIMac: receiverKey != nil,
+            connected: session.map { $0.isConnected || $0.isStreaming } ?? false,
+            picture: picture, wantedPicture: wantedPicture, mode: displayMode, wantedMode: wantedMode)
+        switch plan {
+        case .notOurs:
+            return false
+        case .nothing:
+            PWELog.note("[pwe] connect URL: already showing \(picture.rawValue), \(displayMode.rawValue)")
+            return true
+        case .reconnect, .connect:
+            applyingConnectURL = true
+            if let wantedPicture, wantedPicture != picture, let key = receiverKey { remember(wantedPicture, for: key) }
+            if let wantedMode, wantedMode != displayMode { displayMode = wantedMode }
+            applyingConnectURL = false
+            objectWillChange.send()
+            let what = "picture \(picture.rawValue), \(displayMode.rawValue)"
+            if plan == .reconnect {
+                reconnectIfShowing(because: "connect URL: \(what)")
+            } else {
+                PWELog.note("[pwe] connect URL: connecting with \(what)")
+                startConnecting()
+            }
+            return true
+        }
     }
 
     func disconnect() {
