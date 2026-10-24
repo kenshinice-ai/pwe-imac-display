@@ -66,6 +66,34 @@ void tb_loopwatch_iteration(void);
 /* Stop the thread (at exit). */
 void tb_loopwatch_stop(void);
 
+/* ---- A slow call: what it was doing (PWE 1.1.1) -------------------------- *
+ *
+ * The watchdog names the call a stall is in; this says what the call was
+ * doing meanwhile, from the calling thread's CPU time and the process's
+ * page-ins over the call. A decoder that spends 2.8 s in memmove with 2.7 s
+ * of CPU is working; with 0.1 s of CPU and thousands of page-ins it waited
+ * for memory; with neither, the thread did not run (the whole Mac paused).
+ *
+ *   struct tb_slowcall s; tb_slowcall_begin(&s);
+ *   ... the call ...
+ *   uint64_t cpu_ms; long pageins;
+ *   if (tb_slowcall_end(&s, &cpu_ms, &pageins) >= 500) log it, with
+ *       tb_slowcall_verdict(wall_ms, cpu_ms, pageins)
+ *
+ * About 1 µs per begin/end pair. */
+struct tb_slowcall {
+    uint64_t wall_ns;   /* uptime at begin */
+    uint64_t cpu_ns;    /* this thread's CPU time at begin */
+    long     pageins;   /* the process's page-ins (major faults) at begin */
+};
+
+void     tb_slowcall_begin(struct tb_slowcall *s);
+/* Wall-clock ms since begin; *cpu_ms gets this thread's CPU time over it and
+ * *pageins the process's page-ins over it (either may be NULL). */
+uint64_t tb_slowcall_end(const struct tb_slowcall *s, uint64_t *cpu_ms, long *pageins);
+/* A few words for the log: working, waiting for memory, or not running. */
+const char *tb_slowcall_verdict(uint64_t wall_ms, uint64_t cpu_ms, long pageins);
+
 /* ---- The decision, separate so the unit test can drive it ---------------- */
 
 enum tb_loopwatch_event {

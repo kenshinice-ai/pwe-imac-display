@@ -40,4 +40,6 @@ test_clipboard
 test_sysinfo
 smoke_peer
 pboard_tool
+# PWE (1.1.1)
+test_ratelimit
 *.dSYM/

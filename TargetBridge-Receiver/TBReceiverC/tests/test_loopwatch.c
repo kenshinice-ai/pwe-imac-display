@@ -95,8 +95,35 @@ __attribute__((noinline)) static void test_real_stall(void) {
 #endif
 }
 
+/* PWE (1.1.1): what a slow call was doing. */
+static void test_slowcall(void) {
+    CHECK(strncmp(tb_slowcall_verdict(2800, 2700, 0), "working", 7) == 0);
+    CHECK(strncmp(tb_slowcall_verdict(2800, 100, 5000), "waiting for memory", 18) == 0);
+    CHECK(strncmp(tb_slowcall_verdict(2800, 10, 0), "not running", 11) == 0);
+    CHECK(strncmp(tb_slowcall_verdict(2800, 1000, 0), "partly", 6) == 0);
+    CHECK(strncmp(tb_slowcall_verdict(0, 0, 0), "working", 7) == 0);
+
+    /* A sleep is wall time without CPU time; a spin is both. */
+    struct tb_slowcall s;
+    uint64_t cpu_ms = 99;
+    long pageins = -1;
+    tb_slowcall_begin(&s);
+    usleep(120 * 1000);
+    uint64_t wall_ms = tb_slowcall_end(&s, &cpu_ms, &pageins);
+    CHECK(wall_ms >= 110 && wall_ms < 2000);
+    CHECK(cpu_ms < 60);
+    CHECK(pageins >= 0);
+    tb_slowcall_begin(&s);
+    volatile unsigned long spin = 0;
+    while (tb_slowcall_end(&s, NULL, NULL) < 120) spin++;
+    wall_ms = tb_slowcall_end(&s, &cpu_ms, NULL);
+    CHECK(wall_ms >= 120);
+    CHECK(cpu_ms >= 40);   /* most of it, allowing for a busy test machine */
+}
+
 int main(void) {
     test_decide();
+    test_slowcall();
     test_real_stall();
     if (failures) {
         fprintf(stderr, "test_loopwatch: %d of %d checks failed\n", failures, checks);

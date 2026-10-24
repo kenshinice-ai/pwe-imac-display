@@ -22,6 +22,7 @@
 #include <time.h>
 
 #include "tb_loopwatch.h"
+#include "tb_ratelimit.h"
 #include "tb_sysinfo.h"
 #include "tb_trace.h"
 
@@ -32,6 +33,16 @@
 
 #define ANNEXB_START   "\x00\x00\x00\x01"
 #define ANNEXB_START_N 4
+
+/* PWE (1.1.1): the kinds of decode error, each logged in its own window. */
+enum tb_dec_error_kind {
+    TB_DEC_ERR_SEND = 0,
+    TB_DEC_ERR_RECV,
+    TB_DEC_ERR_HW_TRANSFER,
+    TB_DEC_ERR_SW_ALLOC,
+    TB_DEC_ERR_SW_CONVERT,
+    TB_DEC_ERR_COUNT
+};
 
 struct tb_decoder {
     const AVCodec    *codec;
@@ -63,7 +74,21 @@ struct tb_decoder {
      * They are dropped instead, and the screen keeps the last good picture. */
     int               await_keyframe;
     unsigned long     dropped_awaiting;
+
+    /* PWE (1.1.1): each kind of decode error has its own 10 s log window, so
+     * a flood of one kind cannot hide the first line of another. */
+    struct tb_ratelimit error_limit[TB_DEC_ERR_COUNT];
+
+    /* PWE (1.1.1): what a slow decode call was given, for its log line. */
+    uint64_t          opened_ns;          /* uptime when the decoder (re)opened */
+    unsigned long     packets_since_open;
 };
+
+static uint64_t dec_now_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
 
 /* Detect available HW device type (platform-specific). */
 static enum AVHWDeviceType pick_hwdev(void) {
@@ -315,6 +340,8 @@ static int open_decoder(struct tb_decoder *d) {
     d->opened = 1;
     d->await_keyframe = 1;
     d->dropped_awaiting = 0;
+    d->opened_ns = dec_now_ns();
+    d->packets_since_open = 0;
     return 0;
 }
 
@@ -360,10 +387,22 @@ static int nal_is_keyframe(enum AVCodecID codec, uint8_t header) {
     return (header & 0x1F) == 5;
 }
 
+/* The NAL unit type in a header byte, and whether it carries picture data
+ * (a slice): H.264 types 1-5, HEVC types 0-31. */
+static int nal_type(enum AVCodecID codec, uint8_t header) {
+    return codec == AV_CODEC_ID_HEVC ? (header >> 1) & 0x3F : header & 0x1F;
+}
+
+static int nal_is_slice(enum AVCodecID codec, int type) {
+    return codec == AV_CODEC_ID_HEVC ? type <= 31 : type >= 1 && type <= 5;
+}
+
+/* *first_slice_type: the type of the first slice NAL unit, or -1. */
 static int avcc_to_annexb(struct tb_decoder *d,
                           const uint8_t *in, size_t in_len,
-                          uint8_t **out, size_t *out_len, int *is_keyframe) {
+                          uint8_t **out, size_t *out_len, int *is_keyframe, int *first_slice_type) {
     *is_keyframe = 0;
+    *first_slice_type = -1;
     if (d->scratch_cap < in_len + AV_INPUT_BUFFER_PADDING_SIZE) {
         size_t nc = in_len + AV_INPUT_BUFFER_PADDING_SIZE;
         uint8_t *nb = (uint8_t *)realloc(d->scratch, nc);
@@ -382,6 +421,9 @@ static int avcc_to_annexb(struct tb_decoder *d,
         if (off + nal > in_len) return -1;
         if (dst + 4 + nal > d->scratch_cap) return -1;
         if (nal > 0 && nal_is_keyframe(d->codec_id, in[off])) *is_keyframe = 1;
+        if (nal > 0 && *first_slice_type < 0 && nal_is_slice(d->codec_id, nal_type(d->codec_id, in[off]))) {
+            *first_slice_type = nal_type(d->codec_id, in[off]);
+        }
         memcpy(d->scratch + dst, ANNEXB_START, ANNEXB_START_N);
         dst += ANNEXB_START_N;
         memcpy(d->scratch + dst, in + off, nal);
@@ -395,16 +437,12 @@ static int avcc_to_annexb(struct tb_decoder *d,
 }
 
 /* PWE (1.1.1): a decode error on every frame of a bad stretch (60 a second)
- * would flood the log and rotate it away within minutes. One line every 10 s,
- * with how many more there were since the last one, as main.c does for
- * refused senders. `r`: FFmpeg's error code, or 0 when there is none. */
-static void tb_dec_log_error(const char *what, int r) {
-    static uint64_t last_ms;
-    static unsigned long quiet;
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    const uint64_t t = (uint64_t)ts.tv_sec * 1000ull + (uint64_t)ts.tv_nsec / 1000000ull;
-    if (last_ms && t - last_ms < 10000) { quiet++; return; }
+ * would flood the log and rotate it away within minutes. One line every 10 s
+ * per kind of error, with how many more of that kind there were since its last
+ * line. `r`: FFmpeg's error code, or 0 when there is none. */
+static void tb_dec_log_error(struct tb_decoder *d, enum tb_dec_error_kind kind, const char *what, int r) {
+    unsigned long quiet = 0;
+    if (!tb_ratelimit_allow(&d->error_limit[kind], dec_now_ns() / 1000000ull, 10000, &quiet)) return;
     if (r) {
         char why[AV_ERROR_MAX_STRING_SIZE];
         av_strerror(r, why, sizeof(why));
@@ -412,10 +450,28 @@ static void tb_dec_log_error(const char *what, int r) {
     } else {
         fprintf(stderr, "[dec] %s", what);
     }
-    if (quiet) fprintf(stderr, "; %lu more decode errors since the last report", quiet);
+    if (quiet) fprintf(stderr, "; %lu more of these since the last report", quiet);
     fputc('\n', stderr);
-    last_ms = t;
-    quiet = 0;
+}
+
+/* PWE (1.1.1): a decode call that held up the loop for half a second or more
+ * (twice 2-2.8 s on an iMac18,3, 2026-10-24, inside VideoToolbox's slice
+ * copy): what it was given and what the thread was doing meanwhile, so the
+ * next log tells a decoder problem from a Mac that paused. */
+static void tb_dec_log_slow(const struct tb_decoder *d, const char *call, const struct tb_slowcall *s,
+                            size_t bytes, int keyframe, int slice_type) {
+    uint64_t cpu_ms = 0;
+    long pageins = 0;
+    const uint64_t wall_ms = tb_slowcall_end(s, &cpu_ms, &pageins);
+    if (wall_ms < 500) return;
+    const uint64_t now_ns = dec_now_ns();
+    fprintf(stderr, "[dec] %s took %llu ms (CPU %llu ms, %ld page-ins: %s); %s packet %zu bytes, "
+                    "slice NAL type %d%s, packet %lu since the decoder opened %.1f s ago\n",
+            call, (unsigned long long)wall_ms, (unsigned long long)cpu_ms, pageins,
+            tb_slowcall_verdict(wall_ms, cpu_ms, pageins),
+            d->codec_id == AV_CODEC_ID_HEVC ? "HEVC" : "H.264", bytes, slice_type,
+            keyframe ? " (keyframe)" : "", d->packets_since_open,
+            d->opened_ns && now_ns > d->opened_ns ? (double)(now_ns - d->opened_ns) / 1e9 : 0.0);
 }
 
 /* PWE (1.1.1): after a decode error, forget the broken references and hold
@@ -436,7 +492,8 @@ int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len, uin
     uint8_t *anb = NULL;
     size_t   anb_len = 0;
     int      keyframe = 0;
-    if (avcc_to_annexb(d, avcc, len, &anb, &anb_len, &keyframe) < 0) return -1;
+    int      slice_type = -1;
+    if (avcc_to_annexb(d, avcc, len, &anb, &anb_len, &keyframe, &slice_type) < 0) return -1;
 
     if (d->await_keyframe) {
         if (!keyframe) {
@@ -455,20 +512,26 @@ int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len, uin
     d->pkt->size = (int)anb_len;
     d->pkt->pts  = trace_id ? (int64_t)trace_id : AV_NOPTS_VALUE;
 
+    d->packets_since_open++;
+    struct tb_slowcall slow;
+    tb_slowcall_begin(&slow);
     const char *outer = TB_LOOP_ENTER("decoder: avcodec_send_packet (VideoToolbox decode)");
     int r = avcodec_send_packet(d->ctx, d->pkt);
     TB_LOOP_LEAVE(outer);
+    tb_dec_log_slow(d, "avcodec_send_packet", &slow, anb_len, keyframe, slice_type);
     if (r < 0 && r != AVERROR(EAGAIN)) {
-        tb_dec_log_error("send_packet", r);
+        tb_dec_log_error(d, TB_DEC_ERR_SEND, "send_packet", r);
         tb_dec_hold_until_keyframe(d);
         return -1;
     }
 
     while (1) {
+        tb_slowcall_begin(&slow);
         r = avcodec_receive_frame(d->ctx, d->hw_frame);
+        tb_dec_log_slow(d, "avcodec_receive_frame", &slow, anb_len, keyframe, slice_type);
         if (r == AVERROR(EAGAIN) || r == AVERROR_EOF) return 0;
         if (r < 0) {
-            tb_dec_log_error("recv_frame", r);
+            tb_dec_log_error(d, TB_DEC_ERR_RECV, "recv_frame", r);
             tb_dec_hold_until_keyframe(d);
             return -1;
         }
@@ -495,7 +558,7 @@ int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len, uin
         if (d->hw_frame->format == d->hw_pix_fmt) {
             d->sw_frame->format = AV_PIX_FMT_NV12;
             if (av_hwframe_transfer_data(d->sw_frame, d->hw_frame, 0) < 0) {
-                tb_dec_log_error("hwframe_transfer failed", 0);
+                tb_dec_log_error(d, TB_DEC_ERR_HW_TRANSFER, "hwframe_transfer failed", 0);
                 av_frame_unref(d->hw_frame);
                 continue;
             }
@@ -520,10 +583,10 @@ int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len, uin
             d->nv12_frame->width = out->width;
             d->nv12_frame->height = out->height;
             if (!d->sws || av_frame_get_buffer(d->nv12_frame, 32) < 0) {
-                tb_dec_log_error("could not allocate NV12 software frame", 0);
+                tb_dec_log_error(d, TB_DEC_ERR_SW_ALLOC, "could not allocate NV12 software frame", 0);
             } else if (sws_scale(d->sws, (const uint8_t * const *)out->data, out->linesize,
                                  0, out->height, d->nv12_frame->data, d->nv12_frame->linesize) <= 0) {
-                tb_dec_log_error("software frame conversion failed", 0);
+                tb_dec_log_error(d, TB_DEC_ERR_SW_CONVERT, "software frame conversion failed", 0);
             } else {
                 struct tb_frame f = {
                     .y = d->nv12_frame->data[0], .y_stride = d->nv12_frame->linesize[0],

@@ -161,6 +161,8 @@ $(TEST_RECEIVER_PROFILE_BIN): tests/test_receiver_profile.c src/receiver_profile
 
 # Receiver rendering (PWE 1.1): tests for the pure-C parts.
 PWE_RENDER_TEST_BINS = test_trace test_metal_video test_cursor_image test_log test_loopwatch
+# PWE (1.1.1): log windows per kind of event.
+PWE_RENDER_TEST_BINS += test_ratelimit
 
 
 # ---- PWE: secure layer tests (need libsodium; AddressSanitizer on) -----------
@@ -223,6 +225,9 @@ test_log: tests/test_log.c src/tb_log.c src/tb_log.h
 
 test_loopwatch: tests/test_loopwatch.c src/tb_loopwatch.c src/tb_loopwatch.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_loopwatch.c src/tb_loopwatch.c -o $@
+
+test_ratelimit: tests/test_ratelimit.c src/tb_ratelimit.h
+	$(CC) $(TEST_CFLAGS) -Isrc tests/test_ratelimit.c -o $@
 
 test_cursor_image: tests/test_cursor_image.c src/tb_cursor_image.c src/tb_cursor_image.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_cursor_image.c src/tb_cursor_image.c -o $@
