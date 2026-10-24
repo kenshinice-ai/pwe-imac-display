@@ -1,3 +1,4 @@
+import ApplicationServices
 import Foundation
 
 private final class TBAsyncInputDebugLogWriter: @unchecked Sendable {
@@ -42,15 +43,23 @@ private final class TBAsyncInputDebugLogWriter: @unchecked Sendable {
 
         // PWE: at most TBInputDebugLog.maxBytes, then one older part, and the
         // new part says so on its first line: nothing goes without a trace.
+        // If the older part cannot be replaced, the file starts over in place
+        // (and says so) rather than growing and retrying on every line.
         let size = (try? fileManager.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
+        var startedOver = false
         if TBInputDebugLog.shouldRotate(size: size) {
             let old = url.appendingPathExtension("old")
             try? fileManager.removeItem(at: old)
-            try? fileManager.moveItem(at: url, to: old)
-            line = "\(timestamp) log rotated at \(TBInputDebugLog.maxBytes) bytes; the part before is \(old.lastPathComponent), and any older part was removed\n" + line
+            if (try? fileManager.moveItem(at: url, to: old)) != nil {
+                line = "\(timestamp) log rotated at \(TBInputDebugLog.maxBytes) bytes; the part before is \(old.lastPathComponent), and any older part was removed\n" + line
+            } else {
+                try? Data().write(to: url)
+                startedOver = true
+                line = "\(timestamp) log started over: \(old.lastPathComponent) could not be replaced\n" + line
+            }
         }
 
-        if !fileManager.fileExists(atPath: url.path) {
+        if startedOver || !fileManager.fileExists(atPath: url.path) {
             line = "\(timestamp) \(TBInputDebugLog.formatMarker)\n" + line
         }
         guard let data = line.data(using: .utf8) else { return }
@@ -92,6 +101,47 @@ enum TBInputDebugLog {
     static func log(_ message: String) {
         writer.enqueue(message)
     }
+
+    /// PWE (1.1.1): an event from the iMac. With PWE_INPUT_DEBUG=1, the first
+    /// 20 and every 100th are written in full. Otherwise none is written on its
+    /// own: they are counted, one line per 10 s at most (InputTally), so the
+    /// log shows neither which keys nor when each was pressed.
+    static func receivedEvent(count: UInt64, kind: String, dx: Int?, dy: Int?, scrollX: Int?, scrollY: Int?,
+                              keyCode: UInt16?) {
+        if detailed {
+            guard count <= inputEventBurstLimit || count.isMultiple(of: inputEventSampleInterval) else { return }
+            log(receivedEventLine(count: count, kind: kind, dx: dx, dy: dy, scrollX: scrollX, scrollY: scrollY,
+                                  keyCode: keyCode, detailed: true))
+        } else if let line = tally.add(now: ProcessInfo.processInfo.systemUptime) {
+            log(line)
+        }
+    }
+
+    private static var tally = InputTally()
+
+    /// PWE: whether this Mac lets the app inject input, written when it changes
+    /// (read at most every 5 s), not for each event as upstream did. With
+    /// PWE_INPUT_DEBUG=1, upstream's line for each event.
+    static func injectionState(context: String) {
+        let now = ProcessInfo.processInfo.systemUptime
+        if detailed {
+            if context == "mouseMove" {
+                logInputEvent("sender input injection state trusted=\(AXIsProcessTrusted()) context=\(context)")
+            } else {
+                log("sender input injection state trusted=\(AXIsProcessTrusted()) context=\(context)")
+            }
+            return
+        }
+        if let checked = trustedCheckedAt, now - checked < 5 { return }
+        trustedCheckedAt = now
+        let trusted = AXIsProcessTrusted()
+        guard trusted != lastTrusted else { return }
+        lastTrusted = trusted
+        log("sender input injection trusted=\(trusted)")
+    }
+
+    private static var trustedCheckedAt: TimeInterval?
+    private static var lastTrusted: Bool?
 
     /// Mouse motion can arrive hundreds of times per second. Keep the first few
     /// records plus a periodic sample, without putting file I/O on the input path.
@@ -137,6 +187,8 @@ enum TBInputDebugLog {
     }
 
     /// `modifiersHeld`: how many modifier keys are down after the change.
+    /// Written only with PWE_INPUT_DEBUG=1 (the detailed form); the short form
+    /// stays for a caller that needs one.
     nonisolated static func remoteModifierLine(keyCode: UInt16, isDown: Bool, flags: UInt64, modifiersHeld: Int,
                                                detailed: Bool = detailed) -> String {
         guard detailed else { return "sender remote modifier change (\(modifiersHeld) held)" }
@@ -154,5 +206,23 @@ enum TBInputDebugLog {
         if detailed { return "system-events inject error: \(info)" }
         let number = (info[NSAppleScript.errorNumber] as? NSNumber).map { "\($0)" } ?? "?"
         return "system-events inject error \(number)"
+    }
+}
+
+/// PWE (1.1.1): counts the iMac's input events and gives one line per window
+/// (10 s by default) once the window has passed and another event arrives.
+struct InputTally {
+    static let window: TimeInterval = 10
+    private(set) var count = 0
+    private var since: TimeInterval?
+
+    mutating func add(now: TimeInterval, window: TimeInterval = InputTally.window) -> String? {
+        if since == nil { since = now }
+        count += 1
+        guard let start = since, now - start >= window else { return nil }
+        let line = "input: \(count) events from the iMac in \(Int((now - start).rounded())) s"
+        count = 0
+        since = nil
+        return line
     }
 }

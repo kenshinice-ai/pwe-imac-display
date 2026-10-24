@@ -2700,12 +2700,10 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                 if inputControlRole == .receiverMaster,
                    let event = TBMonitorProtocol.decodeJSON(TBMonitorInputEvent.self, from: payload) {
                     receivedInputEventCount += 1
-                    if receivedInputEventCount <= 20 || receivedInputEventCount.isMultiple(of: 100) {
-                        // PWE: no key codes or movements unless PWE_INPUT_DEBUG=1.
-                        TBInputDebugLog.log(TBInputDebugLog.receivedEventLine(
-                            count: receivedInputEventCount, kind: event.kind, dx: event.dx, dy: event.dy,
-                            scrollX: event.scrollX, scrollY: event.scrollY, keyCode: event.keyCode))
-                    }
+                    // PWE: counted, not written one by one, unless PWE_INPUT_DEBUG=1.
+                    TBInputDebugLog.receivedEvent(
+                        count: receivedInputEventCount, kind: event.kind, dx: event.dx, dy: event.dy,
+                        scrollX: event.scrollX, scrollY: event.scrollY, keyCode: event.keyCode)
                     if event.kind == "switchPrevTarget" {
                         releaseInjectedModifiersIfNeeded()
                         onRemoteSwitchRequest?(-1)
@@ -2797,11 +2795,8 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     }
 
     private func logLocalInputInjectionStateIfNeeded(context: String) {
-        if context == "mouseMove" {
-            TBInputDebugLog.logInputEvent("sender input injection state trusted=\(AXIsProcessTrusted()) context=\(context)")
-        } else {
-            TBInputDebugLog.log("sender input injection state trusted=\(AXIsProcessTrusted()) context=\(context)")
-        }
+        // PWE: per event only with PWE_INPUT_DEBUG=1; otherwise when it changes.
+        TBInputDebugLog.injectionState(context: context)
     }
 
     private func postLocalMouseMove(dx: Int, dy: Int, type: CGEventType = .mouseMoved, button: CGMouseButton = .left) {
@@ -2882,11 +2877,13 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         if TBInputBindingEngine.modifierBit(for: keyCode) != nil {
             let flags = currentInjectedModifierFlags()
             localPointerModifierBridge.update(inputControlRole == .receiverMaster ? flags : [])
-            // PWE: which modifier only with PWE_INPUT_DEBUG=1.
-            let held = [CGEventFlags.maskShift, .maskControl, .maskAlternate, .maskCommand, .maskAlphaShift]
-                .filter { flags.contains($0) }.count
-            TBInputDebugLog.log(TBInputDebugLog.remoteModifierLine(keyCode: keyCode, isDown: isDown,
-                                                                   flags: flags.rawValue, modifiersHeld: held))
+            // PWE: a line per modifier change only with PWE_INPUT_DEBUG=1.
+            if TBInputDebugLog.detailed {
+                let held = [CGEventFlags.maskShift, .maskControl, .maskAlternate, .maskCommand, .maskAlphaShift]
+                    .filter { flags.contains($0) }.count
+                TBInputDebugLog.log(TBInputDebugLog.remoteModifierLine(keyCode: keyCode, isDown: isDown,
+                                                                       flags: flags.rawValue, modifiersHeld: held))
+            }
         }
         guard let event = CGEvent(keyboardEventSource: localInputEventSource(), virtualKey: CGKeyCode(keyCode), keyDown: isDown) else { return }
         event.flags = currentInjectedModifierFlags()
@@ -2963,10 +2960,13 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     }
 
     private func applyIncomingInputEvent(_ event: TBMonitorInputEvent, payload: Data) {
-        if event.kind == "move" || event.kind.hasSuffix("Drag") || event.kind == "scroll" {
-            TBInputDebugLog.logInputEvent("sender applying incoming event kind=\(event.kind)")
-        } else {
-            TBInputDebugLog.log("sender applying incoming event kind=\(event.kind)")
+        // PWE: a line per event only with PWE_INPUT_DEBUG=1 (counted where it arrives).
+        if TBInputDebugLog.detailed {
+            if event.kind == "move" || event.kind.hasSuffix("Drag") || event.kind == "scroll" {
+                TBInputDebugLog.logInputEvent("sender applying incoming event kind=\(event.kind)")
+            } else {
+                TBInputDebugLog.log("sender applying incoming event kind=\(event.kind)")
+            }
         }
         switch event.kind {
         case "move":

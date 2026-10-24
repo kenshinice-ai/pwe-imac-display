@@ -48,7 +48,8 @@ final class TBLocalPointerModifierBridge {
     private func handle(type: CGEventType, event: CGEvent) {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
-        } else if modifiers.apply(to: event), type == .leftMouseDown {
+        } else if modifiers.apply(to: event), type == .leftMouseDown, TBInputDebugLog.detailed {
+            // PWE: a line per click only with PWE_INPUT_DEBUG=1.
             let flags = modifiers.remoteFlags.rawValue
             Task { @MainActor in
                 TBInputDebugLog.log("sender local click with remote modifiers=\(flags)")
