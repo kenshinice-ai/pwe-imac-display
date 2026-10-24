@@ -59,11 +59,22 @@ static void test_thread(void) {
     const int during = atomic_load(&calls) - before;
     CHECK(during >= 2 && during <= 6);
 
-    /* A kick checks again within the minimum gap, not the interval. */
+    /* A kick checks again within the minimum gap (100 ms), not the interval
+     * (300 ms). Kicked right after a check, so the next periodic one is far. */
     atomic_store(&granted, 1);
+    const int calls_before = atomic_load(&calls);
+    for (int i = 0; i < 2000 && atomic_load(&calls) == calls_before; i++) usleep(1000);   /* a periodic check just ran */
+    const uint64_t seq_before = tb_permwatch_read(w, &im, &ax);
     tb_permwatch_kick(w);
-    usleep(150 * 1000);
-    CHECK(tb_permwatch_read(w, &im, &ax) > 0 && im == 1);
+    uint64_t seq_after = seq_before;
+    int waited_ms = 0;
+    while (seq_after == seq_before && waited_ms < 1000) {
+        usleep(5000);
+        waited_ms += 5;
+        seq_after = tb_permwatch_read(w, &im, &ax);
+    }
+    CHECK(seq_after > seq_before && im == 1);
+    CHECK(waited_ms < 250);   /* about 100 ms; the interval would be about 300 */
     tb_permwatch_stop(w);
     tb_permwatch_stop(NULL);
     CHECK(tb_permwatch_read(NULL, &im, &ax) == 0);

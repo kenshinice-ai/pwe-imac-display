@@ -183,13 +183,17 @@ static void test_after(double *p50, double *max) {
     pthread_create(&producer, NULL, produce, &p);
     usleep(1300 * 1000);   /* the main thread in a decoder stall */
     pthread_join(producer, NULL);
+    /* A loaded machine may still be delivering the last few. */
+    for (int i = 0; i < 100 && atomic_load(&s.handled) < p.sent; i++) usleep(10000);
     const double seconds = (double)(now_ns() - start) / 1e9;
     summarise("after", &s, p.sent, seconds, p50, max);
 
     CHECK(p.sent == 400);
     CHECK(atomic_load(&s.handled) == p.sent);          /* every event, during the stall */
     CHECK(pthread_equal(s.handled_on, c.ran_on));      /* on the tap's thread */
-    CHECK(*p50 < 2.0);
+    /* Typically 0.0 ms; 10 ms leaves room for a loaded machine and is still
+     * far below the main loop's (hundreds of ms in the run before). */
+    CHECK(*p50 < 10.0);
 
     /* Once removal returns, the callback never runs again. */
     CHECK(tb_rlthread_call(t, remove_source, &c) == 0);
@@ -221,7 +225,7 @@ int main(void) {
     test_after(&after_p50, &after_max);
     /* On the main loop an event waits for the next pass; on its thread it does not. */
     CHECK(before_p50 > after_p50);
-    CHECK(before_max >= 10.0);
+    CHECK(before_max >= 10.0);   /* an event arriving just after a pass waits for the next (17 ms) */
     if (failures) {
         fprintf(stderr, "test_runloop_thread: %d of %d checks failed\n", failures, checks);
         return 1;
