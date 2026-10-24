@@ -97,23 +97,40 @@ final class PWEDirectCaptureTests: XCTestCase {
         XCTAssertFalse(Session.pweFallsBackFromDirect(usingDirect: true, canRestart: false))
     }
 
-    // MARK: - T53 (Mac Studio, 2026-10-24: pmset displaysleepnow)
+    // MARK: - T53 (Mac Studio, 2026-10-24: pmset displaysleepnow; review 2026-10-24)
 
-    func testAStallWhileTheScreensSleepIsNoFailure() {
-        XCTAssertFalse(Session.pweStallIsDirectFailure(screensAsleep: true, systemSleeping: false))
-        XCTAssertFalse(Session.pweStallIsDirectFailure(screensAsleep: false, systemSleeping: true))
+    private func trouble(asleep: Bool = false, systemSleeping: Bool = false, sinceWake: TimeInterval? = nil,
+                         retried: Bool = false) -> Session.PWEDirectTrouble {
+        Session.pweDirectTrouble(displaysAsleep: asleep, systemSleeping: systemSleeping,
+                                 secondsSinceWake: sinceWake, retriedSinceWake: retried)
+    }
+
+    func testAStallWhileTheDisplaysSleepIsNoFailure() {
+        XCTAssertEqual(trouble(asleep: true), .ignore)
+        XCTAssertEqual(trouble(systemSleeping: true), .ignore)
     }
 
     func testAStallWhileAwakeIsAFailure() {
-        XCTAssertTrue(Session.pweStallIsDirectFailure(screensAsleep: false, systemSleeping: false))
+        XCTAssertEqual(trouble(), .fallBack)
+        XCTAssertEqual(trouble(sinceWake: 120), .fallBack)
     }
 
-    func testAStallJustBeforeTheSleepNoticeIsForgottenAtTheWake() {
-        // The screens slept at 100; a stall at 95 came with it, one at 60 did not.
-        XCTAssertTrue(Session.pweStallWasTheSleep(stalledAt: 95, screensAsleepAt: 100))
-        XCTAssertTrue(Session.pweStallWasTheSleep(stalledAt: 110, screensAsleepAt: 100))
-        XCTAssertFalse(Session.pweStallWasTheSleep(stalledAt: 60, screensAsleepAt: 100))
-        XCTAssertFalse(Session.pweStallWasTheSleep(stalledAt: nil, screensAsleepAt: 100))
-        XCTAssertFalse(Session.pweStallWasTheSleep(stalledAt: 95, screensAsleepAt: nil))
+    func testJustAfterAWakeTheDirectPathGetsOneMoreTry() {
+        XCTAssertEqual(trouble(sinceWake: 2), .retryDirect)
+        XCTAssertEqual(trouble(sinceWake: 14), .retryDirect)
+        XCTAssertEqual(trouble(sinceWake: 2, retried: true), .fallBack)
+        XCTAssertEqual(trouble(sinceWake: 15), .fallBack)
+    }
+
+    func testOnlyAStallWithinTheSleepIsForgiven() {
+        // The sleep began at 100 and ended at 400.
+        XCTAssertTrue(Session.pweStallWasTheSleep(stalledAt: 95, sleepStartedAt: 100, wokeAt: 400))
+        XCTAssertTrue(Session.pweStallWasTheSleep(stalledAt: 110, sleepStartedAt: 100, wokeAt: 400))
+        XCTAssertFalse(Session.pweStallWasTheSleep(stalledAt: 60, sleepStartedAt: 100, wokeAt: 400))
+        // After the wake: a real stall.
+        XCTAssertFalse(Session.pweStallWasTheSleep(stalledAt: 401, sleepStartedAt: 100, wokeAt: 400))
+        XCTAssertFalse(Session.pweStallWasTheSleep(stalledAt: nil, sleepStartedAt: 100, wokeAt: 400))
+        XCTAssertFalse(Session.pweStallWasTheSleep(stalledAt: 95, sleepStartedAt: nil, wokeAt: 400))
+        XCTAssertFalse(Session.pweStallWasTheSleep(stalledAt: 95, sleepStartedAt: 100, wokeAt: nil))
     }
 }
