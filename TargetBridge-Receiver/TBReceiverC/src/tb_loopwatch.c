@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <sys/resource.h>
 #include <unistd.h>
 
 #if defined(__APPLE__)
@@ -65,6 +66,46 @@ enum tb_loopwatch_event tb_loopwatch_decide(struct tb_loopwatch_track *t, uint64
     t->next_report_ms = now_ms + repeat_ms;
     *for_ms = now_ms - started_ms;
     return TB_LOOPWATCH_STUCK;
+}
+
+void tb_slowcall_begin(struct tb_slowcall *s) {
+    if (!s) return;
+#if defined(__APPLE__)
+    s->wall_ns = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    /* thread_info, not CLOCK_THREAD_CPUTIME_ID: under Rosetta that clock
+     * reports Apple-silicon ticks as nanoseconds (41x too little, measured
+     * 2026-10-24). */
+    thread_basic_info_data_t info;
+    mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+    s->cpu_ns = thread_info(pthread_mach_thread_np(pthread_self()), THREAD_BASIC_INFO,
+                            (thread_info_t)&info, &count) == KERN_SUCCESS
+        ? ((uint64_t)info.user_time.seconds + (uint64_t)info.system_time.seconds) * 1000000000u +
+          ((uint64_t)info.user_time.microseconds + (uint64_t)info.system_time.microseconds) * 1000u
+        : 0;
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    s->wall_ns = (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec;
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+    s->cpu_ns = (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec;
+#endif
+    struct rusage ru;
+    s->pageins = getrusage(RUSAGE_SELF, &ru) == 0 ? ru.ru_majflt : 0;
+}
+
+uint64_t tb_slowcall_end(const struct tb_slowcall *s, uint64_t *cpu_ms, long *pageins) {
+    struct tb_slowcall now;
+    tb_slowcall_begin(&now);
+    if (cpu_ms) *cpu_ms = now.cpu_ns > s->cpu_ns ? (now.cpu_ns - s->cpu_ns) / 1000000u : 0;
+    if (pageins) *pageins = now.pageins > s->pageins ? now.pageins - s->pageins : 0;
+    return now.wall_ns > s->wall_ns ? (now.wall_ns - s->wall_ns) / 1000000u : 0;
+}
+
+const char *tb_slowcall_verdict(uint64_t wall_ms, uint64_t cpu_ms, long pageins) {
+    if (wall_ms == 0 || cpu_ms * 10 >= wall_ms * 6) return "working: the CPU was busy for most of it";
+    if (pageins > 0) return "waiting for memory: pages were read back from disk";
+    if (cpu_ms * 10 < wall_ms * 2) return "not running: waiting, or the whole Mac paused";
+    return "partly working, partly waiting";
 }
 
 void tb_loopwatch_iteration(void) {

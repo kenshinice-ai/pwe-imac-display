@@ -31,12 +31,12 @@
 #include "tb_trace.h"
 #include "tb_metal_video.h"
 #include "tb_vsync.h"
+#include "tb_brightness.h"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreGraphics/CoreGraphics.h>
 #include <CoreText/CoreText.h>
 #include <SDL.h>
-#include <dlfcn.h>
 
 #include <math.h>
 #include <stdio.h>
@@ -1965,6 +1965,10 @@ static int tb_disp_rebuild_renderer(struct tb_display *d, const char *wish) {
     tb_disp_destroy_status_texture(d);
     if (d->cursor_tex) SDL_DestroyTexture(d->cursor_tex);
     d->cursor_tex = NULL;
+    /* PWE (1.1.1, A16): the pointer bitmap lived in the Metal renderer just
+     * destroyed. Forget which one was uploaded, or a new Metal renderer that
+     * sees the same picture again never gets it and draws no pointer. */
+    d->metal_cursor_key = 0;
     if (d->tex) SDL_DestroyTexture(d->tex);
     d->tex = NULL;
     d->tex_w = d->tex_h = 0;
@@ -2339,6 +2343,9 @@ unsigned int tb_disp_poll_actions(struct tb_display *d) {
         /* PWE (1.1.1): the window moved to another display: tick with that one. */
         else if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_DISPLAY_CHANGED) {
             if (d->vsync && d->mtl) tb_vsync_set_display(d->vsync, tb_mtl_display_id(d->mtl));
+        }
+        else if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) {
+            actions |= TB_DISP_ACTION_FOCUS_GAINED;   /* PWE (1.1.1): main.c re-checks permissions */
         }
         else if (own_keys &&
                  tb_disp_is_shortcut(&ev, SDLK_ESCAPE, SDL_SCANCODE_ESCAPE)) tb_disp_escape(d);
@@ -2746,34 +2753,36 @@ void tb_disp_set_login_item_state(struct tb_display *d, enum tb_display_login_it
     d->login_item_state = state;
 }
 
+/* PWE (1.1.1, A6): only the display this window is on (tb_brightness.h). */
 void tb_disp_set_brightness(struct tb_display *d, double level) {
-    (void)d;
-    if (level < 0.0) level = 0.0;
-    if (level > 1.0) level = 1.0;
-
-    void *lib = dlopen("/System/Library/PrivateFrameworks/DisplayServices.framework/Versions/A/DisplayServices", RTLD_LAZY);
-    if (!lib) {
-        fprintf(stderr, "[disp] failed to dlopen DisplayServices\n");
-        return;
-    }
-
-    typedef int (*SetBrightnessFunc)(CGDirectDisplayID display, float brightness);
-    SetBrightnessFunc set_brightness = (SetBrightnessFunc)dlsym(lib, "DisplayServicesSetBrightness");
-    if (!set_brightness) {
-        fprintf(stderr, "[disp] failed to find DisplayServicesSetBrightness symbol\n");
-        dlclose(lib);
-        return;
-    }
-
-    CGDirectDisplayID displays[16];
-    uint32_t count = 0;
-    if (CGGetActiveDisplayList(16, displays, &count) == kCGErrorSuccess) {
-        for (uint32_t i = 0; i < count; i++) {
-            set_brightness(displays[i], (float)level);
+    CGDirectDisplayID target = CGMainDisplayID();
+    if (d && d->win) {
+        int x = 0, y = 0, w = 0, h = 0;
+        SDL_GetWindowPosition(d->win, &x, &y);
+        SDL_GetWindowSize(d->win, &w, &h);
+        CGDirectDisplayID ids[16];
+        CGRect bounds[16];
+        uint32_t count = 0;
+        if (CGGetActiveDisplayList(16, ids, &count) == kCGErrorSuccess) {
+            for (uint32_t i = 0; i < count; i++) bounds[i] = CGDisplayBounds(ids[i]);
+            target = tb_brightness_pick_display(CGRectMake(x, y, w, h), ids, bounds, count, target);
         }
-    } else {
-        set_brightness(CGMainDisplayID(), (float)level);
     }
-
-    dlclose(lib);
+    /* Displays mirroring it show the same picture: they follow (as in 1.1.0). */
+    CGDirectDisplayID online[16], primaries[16], targets[16];
+    uint32_t online_count = 0;
+    if (CGGetOnlineDisplayList(16, online, &online_count) != kCGErrorSuccess) online_count = 0;
+    for (uint32_t i = 0; i < online_count; i++) primaries[i] = CGDisplayPrimaryDisplay(online[i]);
+    const uint32_t n = tb_brightness_mirror_set(target, CGDisplayPrimaryDisplay(target), online, primaries,
+                                                online_count, targets, 16);
+    static CGDirectDisplayID last_target;
+    static uint32_t last_n;
+    if (target != last_target || n != last_n) {
+        last_target = target;
+        last_n = n;
+        fprintf(stderr, "[disp] brightness goes to display %u (%s), the one this window is on%s\n",
+                (unsigned)target, CGDisplayIsBuiltin(target) ? "built in" : "external",
+                n > 1 ? ", and the displays mirroring it" : "");
+    }
+    for (uint32_t i = 0; i < n; i++) (void)tb_brightness_set(targets[i], level);
 }

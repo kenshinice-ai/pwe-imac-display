@@ -218,7 +218,7 @@
   "sender.input_bindings.details": "仅在“由接收端控制”时可用。触发键在接收端上按下，操作在这台 Mac 上执行。触发键不能是 macOS 保留的快捷键，比如切换空间用的 Ctrl+左箭头，请改用 Ctrl+Option+左箭头。操作可以使用保留快捷键，比如用 Ctrl+左箭头切换这台 Mac 的空间。",
   "sender.input_bindings.record": "请按下快捷键…",
   "receiver.pairing.code": "配对码 %{code}",
-  "receiver.pairing.enter_on_mac": "在 Mac 上输入这 6 位数字",
+  "receiver.pairing.enter_on_mac": "在 Mac 的键盘上输入这 6 位数字，然后按回车",
   "receiver.pairing.not_you": "不是你在配对？拔掉线即可。",
   "receiver.pairing.paired": "已与“%{name}”配对",
   "receiver.pairing.locked": "尝试次数太多，请 1 分钟后再试。",

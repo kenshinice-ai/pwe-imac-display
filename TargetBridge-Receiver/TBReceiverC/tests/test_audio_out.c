@@ -112,7 +112,7 @@ static void test_quit_while_closing(void) {
 #if TB_RECEIVER_TEST_HOOKS
     setenv("SDL_AUDIODRIVER", "dummy", 1);
     if (SDL_Init(SDL_INIT_AUDIO) < 0) return;
-    setenv("TB_RECEIVER_TEST_AUDIO_CLOSE_DELAY_MS", "2000", 1);
+    setenv("TB_RECEIVER_TEST_AUDIO_CLOSE_DELAY_MS", "4000", 1);
     struct tb_audio_out *o = tb_audio_out_create();
     CHECK(o != NULL);
     if (!o) return;
@@ -123,7 +123,11 @@ static void test_quit_while_closing(void) {
     const uint64_t t0 = now_ms();
     CHECK(tb_audio_out_destroy(o, 300) == 0);   /* left behind, not freed */
     const uint64_t took = now_ms() - t0;
-    CHECK(took >= 280 && took < 1000);
+    /* It waited its 300 ms (30 sleeps of 10 ms never take less), and gave up
+     * well before the 4 s close ended. PWE (1.1.1, B1): the upper bound was
+     * 1 s and failed once on a loaded machine, where each of the 30 sleeps
+     * can overrun; 3.5 s still proves it did not wait for the close. */
+    CHECK(took >= 280 && took < 3500);
 #endif
 }
 

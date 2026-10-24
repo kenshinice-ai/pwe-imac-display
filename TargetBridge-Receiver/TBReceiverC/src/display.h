@@ -28,7 +28,9 @@ enum tb_display_action {
     TB_DISP_ACTION_NONE = 0,
     TB_DISP_ACTION_QUIT = 1 << 0,
     TB_DISP_ACTION_CYCLE_LANGUAGE = 1 << 1,
-    TB_DISP_ACTION_TOGGLE_LOGIN_ITEM = 1 << 2
+    TB_DISP_ACTION_TOGGLE_LOGIN_ITEM = 1 << 2,
+    /* PWE (1.1.1): the window came to the front (back from System Settings, say). */
+    TB_DISP_ACTION_FOCUS_GAINED = 1 << 3
 };
 
 /* What the details screen says about opening at login. HIDDEN keeps the

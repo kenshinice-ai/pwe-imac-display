@@ -218,7 +218,7 @@
   "sender.input_bindings.details": "Available when Receiver is Master. Trigger is pressed on the receiver; Action runs on this Mac. The trigger cannot be a macOS-reserved shortcut, such as Ctrl+Left for Spaces: use Ctrl+Option+Left instead. The action may use reserved shortcuts, including Ctrl+Left to switch this Mac's Space.",
   "sender.input_bindings.record": "Press keys...",
   "receiver.pairing.code": "Pairing code %{code}",
-  "receiver.pairing.enter_on_mac": "Enter these 6 digits on your Mac",
+  "receiver.pairing.enter_on_mac": "Type these 6 digits on the Mac’s keyboard, then press Return",
   "receiver.pairing.not_you": "Not you? Just unplug the cable.",
   "receiver.pairing.paired": "Paired with “%{name}”",
   "receiver.pairing.locked": "Too many attempts. Try again in a minute.",

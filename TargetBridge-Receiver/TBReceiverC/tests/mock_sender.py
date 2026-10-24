@@ -22,7 +22,10 @@ Modes (--mode):
                 between the video frames.
     stall       test builds only (TEST_HOOKS=1): handshake, then ask the
                 receiver to hold up its main loop for --stall-ms, so its
-                watchdog has a stall to report (PWE, T40).
+                watchdog has a stall to report (PWE, T40). With stream,
+                --stall-at S asks for the stall S seconds into the stream and
+                keeps streaming through it, so the receiver has a backlog to
+                catch up on (PWE 1.1.1).
     cycles      a picture-preset change, --cycles times: stream for
                 --duration (with --audio, silent PCM too), end the session the
                 way a sender does, dial again at once with the next size from
@@ -212,7 +215,8 @@ def audio_packet(seconds: float) -> bytes:
 
 
 def stream_video(sock: socket.socket, duration_s: int, fps: int = 30, size: str = "1280x720",
-                 pointer: bool = False, audio: bool = False) -> None:
+                 pointer: bool = False, audio: bool = False, stall_at: float = -1.0,
+                 stall_ms: int = 0) -> None:
     nals = split_annexb(generate_h264(duration_s, fps, size))
     width, height = (int(v) for v in size.split("x"))
 
@@ -242,6 +246,11 @@ def stream_video(sock: socket.socket, duration_s: int, fps: int = 30, size: str 
         ntype = nal[0] & 0x1F if nal else 0
         if ntype not in (1, 5):
             continue
+        if stall_at >= 0 and time.monotonic() - start >= stall_at:
+            # Test builds: the receiver's loop stops for stall_ms; frames keep coming.
+            sock.sendall(packet(PKT_TEST_DATA, f"stall {stall_ms}".encode()))
+            print(f"[mock] asked the receiver to stall {stall_ms} ms mid-stream")
+            stall_at = -1.0
         # FRAME payload: AVCC — 4-byte BE length-prefixed NAL units.
         sock.sendall(packet(PKT_FRAME, struct.pack(">I", len(nal)) + nal))
         frames_sent += 1
@@ -474,7 +483,7 @@ def run(args) -> int:
 
         elif args.mode in ("stream", "pointer"):
             stream_video(sock, args.duration, args.fps, args.size, pointer=args.mode == "pointer",
-                         audio=args.audio)
+                         audio=args.audio, stall_at=args.stall_at, stall_ms=args.stall_ms)
             sock.sendall(json_packet(PKT_TEARDOWN, {"reason": "mock stream done"}))
 
         elif args.mode == "stall":
@@ -531,6 +540,8 @@ def main() -> int:
     ap.add_argument("--size", default="1280x720", help="stream/pointer: frame size, WxH")
     ap.add_argument("--audio", action="store_true", help="stream/pointer/cycles: silent PCM audio too")
     ap.add_argument("--stall-ms", type=int, default=3000, help="stall: how long the receiver's loop stalls")
+    ap.add_argument("--stall-at", type=float, default=-1.0,
+                    help="stream: seconds into the stream to ask for a --stall-ms stall (test builds)")
     ap.add_argument("--cycles", type=int, default=6, help="cycles: how many preset changes")
     ap.add_argument("--sizes", default="1280x720,1920x1080,2560x1440", help="cycles: sizes in turn")
     ap.add_argument("--max-change-s", type=float, default=5.0, help="cycles: slowest change allowed")
