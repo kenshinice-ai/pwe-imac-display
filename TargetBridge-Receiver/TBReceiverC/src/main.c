@@ -100,14 +100,13 @@ struct app {
 
     uint64_t frames;   /* pictures shown */
     /* PWE (1.1.1): behind the sender after a stall (tb_catchup.h). While
-     * `catchup_holding`, decoded pictures wait in `catchup_frame`, newest
-     * first, and the read pass shows the newest when it ends. */
-    struct tb_catchup catchup;
-    int               catchup_holding;
-    CVPixelBufferRef  catchup_frame;
-    uint32_t          catchup_trace_id;
-    unsigned long     catchup_skipped;   /* decoded, never shown; since the last report */
-    unsigned long     catchup_passes;    /* read passes that skipped any */
+     * `catchup_holding`, decoded pictures wait in `catchup_slot` (a retained
+     * CVPixelBuffer), newest first, and the read pass shows the newest when
+     * it ends. catchup_slot.skipped: decoded, never shown, since the report. */
+    struct tb_catchup      catchup;
+    int                    catchup_holding;
+    struct tb_catchup_slot catchup_slot;
+    unsigned long          catchup_passes;    /* read passes that skipped any */
     uint64_t last_fps_tick_ms;
     uint64_t last_fps_count;
     /* PWE (1.1.1): per-second counts gathered into one line every 10 s. */
@@ -434,27 +433,39 @@ static int tb_receiver_listen_probe(void) {
     return 1;
 }
 
+/* PWE (1.1.1, A8): whether the listen probe may run: only while a Mac has
+ * handed control to this iMac (receiverMaster). Creating an event tap can make
+ * macOS show its Input Monitoring prompt when the permission was removed with
+ * "−" (back to never asked), and an idle receiver never prompts. */
+static atomic_int g_listen_probe_allowed;
+
+/* Carbon (HIToolbox): Secure Keyboard Entry is on somewhere (a password
+ * field, Terminal's menu item). */
+extern Boolean IsSecureEventInputEnabled(void);
+
 /* PWE (1.1.1, A8): what the watcher thread asks (any thread). In 1.1.0 a
  * removed permission still read as allowed until the receiver was reopened
- * (RC8, 2026-10-22), so Input Monitoring that macOS reports as allowed is
- * also tried: when the window server refuses a listening tap twice in a row
- * (10 s), it counts as removed. A refused tap means input capture cannot work
- * anyway, so this never takes away anything that worked. */
+ * (RC8, 2026-10-22). During receiverMaster, Input Monitoring that macOS
+ * reports as allowed is also tried: when the window server refuses a
+ * listening tap twice in a row (10 s), it counts as removed. A refused tap
+ * means input capture cannot work anyway, so this never takes away anything
+ * that worked. Not while Secure Keyboard Entry is on, which is no sign of a
+ * removed permission. */
 static void tb_receiver_check_permissions(int *input_monitoring, int *accessibility) {
     static int refused;   /* the watcher's thread (or the main thread without one) */
     int listen = tb_receiver_input_monitoring_trusted();
-    if (listen) {
-        if (tb_receiver_listen_probe()) {
-            refused = 0;
-        } else if (++refused >= 2) {
-            if (refused == 2) {
-                fprintf(stderr, "[input] macOS reports Input Monitoring as allowed, but the window server "
-                                "refuses an event tap: counted as not allowed\n");
-            }
-            listen = 0;
-        }
-    } else {
+    if (!listen) {
         refused = 0;
+    } else if (!atomic_load(&g_listen_probe_allowed) || IsSecureEventInputEnabled()) {
+        if (refused >= 2) listen = 0;   /* the last verdict stands until a probe can run again */
+    } else if (tb_receiver_listen_probe()) {
+        refused = 0;
+    } else if (++refused >= 2) {
+        if (refused == 2) {
+            fprintf(stderr, "[input] macOS reports Input Monitoring as allowed, but the window server "
+                            "refuses an event tap: counted as not allowed\n");
+        }
+        listen = 0;
     }
     *input_monitoring = listen;
     *accessibility = tb_receiver_accessibility_trusted();
@@ -596,8 +607,12 @@ static void tb_json_escape_string(const char *src, char *dest, size_t size) {
 
 /* PWE (1.1.1): every send to the Mac goes through these two. The event tap's
  * thread sends input while the main thread sends everything else; tx_lock
- * keeps their records whole and in order. Receiving (tb_conn_feed, main
- * thread) uses the session's receive state only, so it needs no lock. */
+ * keeps their records whole and in order. The main thread also holds tx_lock
+ * whenever it is inside the connection's own code (tb_conn_feed, _tick,
+ * _init, _close), so the session's flags and keys are never read by one
+ * thread while the other writes them; it lets go while a packet is handled
+ * (on_packet: decoding, drawing), so the tap waits at most for one record to
+ * be parsed and decrypted, never for a frame. */
 static int tb_receiver_send(struct app *a, uint8_t type, const uint8_t *payload, size_t len) {
     pthread_mutex_lock(&a->tx_lock);
     const int r = tb_conn_send(&a->conn, type, payload, len);
@@ -619,6 +634,7 @@ static void tb_receiver_update_forwarding(struct app *a) {
     pthread_mutex_lock(&a->tx_lock);
     atomic_store(&a->forwarding, on);
     pthread_mutex_unlock(&a->tx_lock);
+    atomic_store(&g_listen_probe_allowed, on);   /* A8: the probe only in receiverMaster */
 }
 
 /* PWE (T40): the clipboard is read and written on its own thread
@@ -1252,30 +1268,33 @@ static void tb_receiver_present(struct app *a, const struct tb_frame *frame) {
     a->frames++;
 }
 
-/* PWE (1.1.1): the waiting picture is not shown: a newer one replaces it. */
-static void tb_receiver_skip_waiting_frame(struct app *a) {
-    if (!a->catchup_frame) return;
-    tb_trace_frame_replaced(a->catchup_trace_id);
-    CVPixelBufferRelease(a->catchup_frame);
-    a->catchup_frame = NULL;
-    a->catchup_trace_id = 0;
-    a->catchup_skipped++;
+/* PWE (1.1.1): the slot's callbacks (tb_catchup.h); each takes the reference. */
+static void tb_receiver_drop_frame(void *frame, uint32_t trace_id, void *ctx) {
+    (void)ctx;
+    tb_trace_frame_replaced(trace_id);
+    CVPixelBufferRelease((CVPixelBufferRef)frame);
 }
 
-/* PWE (1.1.1): the read pass ended: show the newest waiting picture. */
-static void tb_receiver_show_waiting_frame(struct app *a) {
-    CVPixelBufferRef pb = a->catchup_frame;
-    if (!pb) return;
-    a->catchup_frame = NULL;
+static void tb_receiver_show_frame_ref(void *frame, uint32_t trace_id, void *ctx) {
+    CVPixelBufferRef pb = (CVPixelBufferRef)frame;
     const struct tb_frame f = {
         .width = (int)CVPixelBufferGetWidth(pb),
         .height = (int)CVPixelBufferGetHeight(pb),
         .pixel_buffer = pb,
-        .trace_id = a->catchup_trace_id,
+        .trace_id = trace_id,
     };
-    a->catchup_trace_id = 0;
-    tb_receiver_present(a, &f);
+    tb_receiver_present((struct app *)ctx, &f);
     CVPixelBufferRelease(pb);
+}
+
+/* PWE (1.1.1): the waiting picture is not shown: a newer one replaces it. */
+static void tb_receiver_skip_waiting_frame(struct app *a) {
+    tb_catchup_drop(&a->catchup_slot, tb_receiver_drop_frame, a);
+}
+
+/* PWE (1.1.1): the read pass ended: show the newest waiting picture. */
+static void tb_receiver_show_waiting_frame(struct app *a) {
+    tb_catchup_show(&a->catchup_slot, tb_receiver_show_frame_ref, a);
 }
 
 static void on_frame(const struct tb_frame *frame, void *ud) {
@@ -1286,9 +1305,8 @@ static void on_frame(const struct tb_frame *frame, void *ud) {
      * kept past this call by a retain. CPU pictures (software decode) are
      * valid only now and are shown as before. */
     if (a->catchup_holding && frame->pixel_buffer) {
-        tb_receiver_skip_waiting_frame(a);
-        a->catchup_frame = CVPixelBufferRetain((CVPixelBufferRef)frame->pixel_buffer);
-        a->catchup_trace_id = frame->trace_id;
+        tb_catchup_hold(&a->catchup_slot, (void *)CVPixelBufferRetain((CVPixelBufferRef)frame->pixel_buffer),
+                        frame->trace_id, tb_receiver_drop_frame, a);
         return;
     }
     tb_receiver_skip_waiting_frame(a);
@@ -1319,6 +1337,9 @@ static void handle_raw_frame(struct app *a, const uint8_t *p, size_t len) {
     const uint8_t *uv = y + y_size;
     const uint32_t trace_id = tb_trace_frame_arrived();
     tb_trace_mark_now(trace_id, TB_TRACE_DECODED);   /* nothing to decode */
+    /* PWE (1.1.1): an older waiting picture must not replace this one when
+     * the read pass ends. */
+    tb_receiver_skip_waiting_frame(a);
 
     if (!a->have_video_frame) tb_receiver_wake_screen_for_session();
     a->have_video_frame = 1;
@@ -1346,8 +1367,19 @@ static void handle_raw_frame(struct app *a, const uint8_t *p, size_t len) {
 
 /* ---- Callbacks: parser → decoder ------------------------------------- */
 
+static void on_packet_body(uint8_t type, const uint8_t *payload, size_t len, struct app *a);
+
+/* PWE (1.1.1): called from inside tb_conn_feed, which the main thread runs
+ * with tx_lock held once (drain_socket_pass): let it go while the packet is
+ * handled, take it back for the connection's code. */
 static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud) {
     struct app *a = (struct app *)ud;
+    pthread_mutex_unlock(&a->tx_lock);
+    on_packet_body(type, payload, len, a);
+    pthread_mutex_lock(&a->tx_lock);
+}
+
+static void on_packet_body(uint8_t type, const uint8_t *payload, size_t len, struct app *a) {
 #if TB_RECEIVER_TEST_HOOKS
     a->pwe_test_counts[type]++;
 #endif
@@ -1558,21 +1590,28 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
  * decoded from a chunk wait and only the newest is shown when the pass ends;
  * a pass that has decoded for TB_CATCHUP_PASS_BUDGET_MS ends early, so a long
  * backlog still lets the loop show a picture and answer the window and the
- * keyboard every 50 ms. Every frame is decoded either way. */
+ * keyboard every 50 ms. Every frame is decoded either way. The budget is
+ * checked between reads (the parser hands over a whole chunk's packets
+ * before it returns); while behind, a read asks for about one frame, so it is
+ * checked about once a frame and a pass overruns by at most one decode. */
 static int drain_socket_pass(struct app *a) {
-    uint8_t buf[1024 * 1024];
+    static uint8_t buf[1024 * 1024];   /* main thread only */
     int saw_data = 0;
+    size_t want = sizeof(buf);
     const uint64_t started_ms = now_ms();
     for (;;) {
         TB_LOOP_PHASE("socket read");
-        ssize_t n = read(a->client_fd, buf, sizeof(buf));
+        ssize_t n = read(a->client_fd, buf, want);
         if (n > 0) {
             saw_data = 1;
             int waiting = 0;   /* bytes the kernel still holds after this chunk */
             if (ioctl(a->client_fd, FIONREAD, &waiting) < 0 || waiting < 0) waiting = 0;
             a->catchup_holding = tb_catchup_behind(&a->catchup, (uint64_t)n + (uint64_t)waiting);
             TB_LOOP_PHASE("connection: secure layer (handshake, keychain, decrypt)");
+            pthread_mutex_lock(&a->tx_lock);   /* PWE (1.1.1): see tb_receiver_send */
             const int fed = tb_conn_feed(&a->conn, buf, (size_t)n, now_ms());
+            pthread_mutex_unlock(&a->tx_lock);
+            want = tb_catchup_read_size(&a->catchup, a->catchup_holding, sizeof(buf));
             a->catchup_holding = 0;
             if (fed < 0) return -1;
             if (waiting > 0 && now_ms() - started_ms >= TB_CATCHUP_PASS_BUDGET_MS) return saw_data;
@@ -1587,7 +1626,7 @@ static int drain_socket_pass(struct app *a) {
 }
 
 static int drain_socket(struct app *a) {
-    const unsigned long skipped_before = a->catchup_skipped;
+    const unsigned long skipped_before = a->catchup_slot.skipped;
     const int r = drain_socket_pass(a);
     if (r < 0) {
         tb_receiver_skip_waiting_frame(a);   /* the session is ending */
@@ -1595,7 +1634,7 @@ static int drain_socket(struct app *a) {
         TB_LOOP_PHASE("display: the newest picture of a backlog");
         tb_receiver_show_waiting_frame(a);
     }
-    if (a->catchup_skipped != skipped_before) a->catchup_passes++;
+    if (a->catchup_slot.skipped != skipped_before) a->catchup_passes++;
     return r;
 }
 
@@ -2090,6 +2129,7 @@ static void tb_receiver_stop_input_tap_here(void *ctx) {
 static void tb_receiver_stop_input_tap(struct app *a) {
     if (!a || (!a->input_tap && !a->input_tap_source)) return;
     tb_receiver_tap_call(a, tb_receiver_stop_input_tap_here, a);
+    atomic_store(&a->tap_switched_off, 0);   /* PWE (1.1.1): that tap is gone */
 }
 
 struct tb_receiver_tap_start {
@@ -2361,12 +2401,24 @@ static void close_client(struct app *a) {
     }
     memset(a->pwe_test_counts, 0, sizeof(a->pwe_test_counts));
 #endif
-    /* PWE (1.1.1): the tap's thread stops sending before the connection goes. */
+    /* PWE (1.1.1): the tap's thread stops sending before the connection goes;
+     * no modifier key stays down for the next session; no listen probe. */
     pthread_mutex_lock(&a->tx_lock);
     atomic_store(&a->forwarding, 0);
+    a->sent_command_down = 0;
+    a->sent_shift_down = 0;
+    a->sent_option_down = 0;
+    a->sent_control_down = 0;
+    a->sent_caps_down = 0;
     pthread_mutex_unlock(&a->tx_lock);
+    atomic_store(&g_listen_probe_allowed, 0);
+    atomic_store(&a->tap_switched_off, 0);
     TB_LOOP_PHASE("session end: close the connection");
-    if (a->client_fd >= 0) tb_conn_close(&a->conn, now_ms());   /* PWE: closes the socket, wipes keys */
+    if (a->client_fd >= 0) {
+        pthread_mutex_lock(&a->tx_lock);   /* PWE (1.1.1): see tb_receiver_send */
+        tb_conn_close(&a->conn, now_ms());   /* PWE: closes the socket, wipes keys */
+        pthread_mutex_unlock(&a->tx_lock);
+    }
     a->client_fd = -1;
     a->session_plaintext = 0;
     a->session_active = 0;
@@ -2546,7 +2598,9 @@ static void tb_pwe_adopt_client(struct app *a, int c, const char *ifname, int is
     struct tb_conn_config conn_cfg = {
         a->have_keys ? &a->identity : NULL, &a->store, &a->gate, policy.pairing, policy.plaintext
     };
+    pthread_mutex_lock(&a->tx_lock);   /* PWE (1.1.1): see tb_receiver_send */
     tb_conn_init(&a->conn, c, &conn_cfg, on_packet, tb_pwe_on_conn_event, a);
+    pthread_mutex_unlock(&a->tx_lock);
     a->session_plaintext = 0;
     a->pwe_test_frames_at_connect = a->frames;
     fprintf(stderr, "[main] client connected (%s%s%s)\n", ifname[0] ? ifname : "?",
@@ -3177,7 +3231,9 @@ int main(int argc, char **argv) {
             }
         } else {
             TB_LOOP_PHASE("connection tick");
+            pthread_mutex_lock(&a.tx_lock);   /* PWE (1.1.1): see tb_receiver_send */
             tb_conn_tick(&a.conn);   /* PWE: an older sender that waits for the profile */
+            pthread_mutex_unlock(&a.tx_lock);
             TB_LOOP_PHASE("socket read");
             int drain_result = drain_socket(&a);
             if (drain_result < 0) {
@@ -3384,11 +3440,11 @@ int main(int argc, char **argv) {
                             a.fps_seconds, (double)a.fps_sum / a.fps_seconds, a.fps_min, a.fps_max);
                 }
                 /* PWE (1.1.1): at most one line per 10 s about catching up. */
-                if (a.catchup_skipped > 0) {
+                if (a.catchup_slot.skipped > 0) {
                     fprintf(stderr, "[main] behind the sender in %lu read passes: %lu decoded pictures "
                                     "skipped, the newest of each backlog shown\n",
-                            a.catchup_passes, a.catchup_skipped);
-                    a.catchup_skipped = 0;
+                            a.catchup_passes, a.catchup_slot.skipped);
+                    a.catchup_slot.skipped = 0;
                     a.catchup_passes = 0;
                 }
                 a.fps_report_ms = t;
