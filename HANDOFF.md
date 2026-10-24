@@ -89,11 +89,12 @@
 | 10-23 19:05 后 | 工具站部署，「真 5K」措辞上线 | 工具站会话 | /screenencore/ 不再有「48 Hz 和 60 Hz 下都是真 5K」 |
 | 10-23～25 | 收测试者反馈；Lee 发测试者名单，Claude 记进 roster | Lee、Claude | roster 有人名和机型 |
 | 10-26 晚 | go/no-go，只核对门槛；必须修的问题出现才重打包。定了之后马上给「YouTube 频道管理」会话发一句：go 就写发布日期和 App 大约几点上线（GitHub release、站点下载按钮），no-go 就写新日期。它收到才设定时（产品片 ENCORE001 定在发布日 21:00 墨尔本，不早于发布） | Lee 定；Claude 发消息 | Lee 说 go 或给新日期；YouTube 会话回复已设定时 |
-| 10-28 | 发布步骤 1–9；7a 给工具站发 go、sha256、DMG 大小；7c 通知小红书会话 | Claude；Lee 在工具站说「部署」 | `brew fetch --cask` ✔；产品页显示 1.1.0 |
+| 10-28 | 发布步骤 1–9；7a 给工具站发 go、sha256、DMG 大小，并请它把 Mac 一行的「Apple silicon or Intel」改成只写 Apple 芯片（Intel 没测过，上游说不支持；2026-10-24 工具站会话不在线，没发出）；7c 通知小红书会话 | Claude；Lee 在工具站说「部署」 | `brew fetch --cask` ✔；产品页显示 1.1.0 |
 | 10-29 12:00 | 小红书 T+1 图文 | 小红书会话（定时） | 已发 |
 | 10-28～11-04 | 第一周：看 issue 和 support 邮件，填 COMPATIBILITY.md；先攒 bug，不逐个发版 | Claude | 每个 issue 48 小时内有回复 |
 | 约 11-11（T+14） | 宣传可以提配对和加密；上游 PR 一周一个，先提不涉及安全的 | Claude，Lee 定 | — |
 | 11 月中 | 1.1.1：汇总 bug 一次修完，再测一轮（ISSUES「RC8」、复盘里的清单；加上菜单实时帧率显示发送端帧数、不是 iMac 实际帧数的问题） | Claude | 一轮真机测试通过 |
+| 1.1.1 期间 | Mac mini / Mac Studio 当发送端、iMac 是唯一屏幕：真机测 H1–H7（方案 `docs/pwe/PLAN-headless-mac-2026-10-24.md`，不入库）；锁屏时 iMac 别停在最后一帧 | Claude，要一台 Apple 芯片的 Mac mini 或 Studio | H1–H7 有结果 |
 | 发布稳定后 | 仓库移出 iCloud（Lee 2026-10-23 定：之后再做）；先给测试机换一种拿测试文档的办法 | Claude 出方案，Lee 定 | — |
 | 约 12-27（T+60） | 定价复盘；Windows 版要不要做（2.0） | Lee 定 | — |
 
