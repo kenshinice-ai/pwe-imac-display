@@ -1654,6 +1654,29 @@ static void write_be32(uint8_t *dst, uint32_t value) {
     dst[3] = (uint8_t)(value & 0xff);
 }
 
+/* PWE (1.1.1): the sampled line for input sent to the Mac (the first 20, then
+ * every 100th). The log is a file, and what is typed may be a password, so a
+ * release build writes the event's kind, its number and the mode only: no
+ * movement, no scroll, not even whether it carried a key code, and never
+ * which key (no build ever writes that). The detailed line (movement, scroll,
+ * key yes/no) only in test builds, or with TB_RECEIVER_INPUT_DEBUG=1 for a
+ * developer chasing an input problem. */
+static void tb_receiver_log_input_sent(uint64_t count, const char *kind, int dx, int dy, int sx, int sy,
+                                       int has_key_code) {
+    static int detailed = -1;   /* under tx_lock */
+    if (detailed < 0) {
+        const char *v = getenv("TB_RECEIVER_INPUT_DEBUG");
+        detailed = TB_RECEIVER_TEST_HOOKS || (v && strcmp(v, "1") == 0);
+    }
+    if (!detailed) {
+        tb_receiver_input_log("[input][receiver->sender] send #%llu kind=%s mode=receiverMaster",
+                              (unsigned long long)count, kind ? kind : "?");
+        return;
+    }
+    tb_receiver_input_log("[input][receiver->sender] send #%llu kind=%s dx=%d dy=%d sx=%d sy=%d key=%s mode=receiverMaster",
+                          (unsigned long long)count, kind ? kind : "?", dx, dy, sx, sy, has_key_code ? "yes" : "no");
+}
+
 static void tb_receiver_send_input_event(struct app *a,
                                          const char *kind,
                                          int has_dx, int dx,
@@ -1688,16 +1711,9 @@ static void tb_receiver_send_input_event(struct app *a,
     }
     a->input_events_sent += 1;
     if (tb_should_log_input_event(a->input_events_sent)) {
-        /* PWE: whether a key was sent, never which: the log is a file now,
-         * and the keys typed may be a password. */
-        tb_receiver_input_log("[input][receiver->sender] send #%llu kind=%s dx=%d dy=%d sx=%d sy=%d key=%s mode=receiverMaster",
-                              (unsigned long long)a->input_events_sent,
-                              kind ? kind : "?",
-                              has_dx ? dx : 0,
-                              has_dy ? dy : 0,
-                              has_scroll_x ? scroll_x : 0,
-                              has_scroll_y ? scroll_y : 0,
-                              has_key_code ? "yes" : "no");
+        tb_receiver_log_input_sent(a->input_events_sent, kind,
+                                   has_dx ? dx : 0, has_dy ? dy : 0,
+                                   has_scroll_x ? scroll_x : 0, has_scroll_y ? scroll_y : 0, has_key_code);
     }
     (void)tb_conn_send_packet(&a->conn, pkt, 5 + (size_t)len);
     pthread_mutex_unlock(&a->tx_lock);
@@ -1729,14 +1745,7 @@ static void tb_receiver_send_input_button_event(struct app *a,
     }
     a->input_events_sent += 1;
     if (tb_should_log_input_event(a->input_events_sent)) {
-        tb_receiver_input_log("[input][receiver->sender] send #%llu kind=%s dx=%d dy=%d sx=%d sy=%d key=%s mode=receiverMaster",
-                              (unsigned long long)a->input_events_sent,
-                              kind ? kind : "?",
-                              0,
-                              0,
-                              0,
-                              0,
-                              "no");
+        tb_receiver_log_input_sent(a->input_events_sent, kind, 0, 0, 0, 0, 0);
     }
     (void)tb_conn_send_packet(&a->conn, pkt, 5 + (size_t)len);
     pthread_mutex_unlock(&a->tx_lock);

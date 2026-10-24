@@ -101,6 +101,7 @@
 | `pwe-1.1.1-receiver`（待合并） | `TargetBridge-Shared/Languages/*.json`：`receiver.pairing.enter_on_mac` 改为「在 Mac 的键盘上输入这 6 位数字，然后按回车」/「Type these 6 digits on the Mac’s keyboard, then press Return」，de/fr/it 同义翻译；五种语言都在 980×620 窗口里渲染过，德语最长，约占宽度一半 | 无屏配对（A1）：只接 iMac 的 Mac 要在自己的键盘上输入、按回车，iMac 上要说清楚 | 待提 | 1.1.1 |
 | `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderService.swift`：屏幕睡眠或系统睡眠时，直采卡住或没有第一帧不算失败、也不重启（`pweStallIsDirectFailure`）；醒来后忘掉睡前 15 秒内记下的卡住，并按规则重新选采集路径（`pweAfterWake`）；直采相关的告警和回退同时写 `PWELog` | T53：Mac Studio 上 `pmset displaysleepnow` 10 秒后直采被记为失败，之后整段会话停在 ScreenCaptureKit，5K 从约 53 帧掉到约 35 帧 | 待提 | 本地提交，未推 |
 | `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderAutomation.swift`：`handle(url:)` 的 connect 先交给 `pweConnectURLHandler`（PWE 的模型）；模型自己的连接走 `pweHandleOwn(url:)`，不回到它 | T54：已连接时 `open "pweimacdisplay://connect?…&preset=…"` 只记住了画面不生效，还因上游取消重试循环、没有 retry=1 时只连一次，使自动重连停掉 | 待提 | 本地提交，未推 |
+| `pwe-1.1.1-receiver`（待合并） | 接收端 `main.c`：发给 Mac 的输入事件抽样日志（前 20 个，之后每第 100 个，频率不变）在正式版只记序号、种类和模式（`send #N kind=… mode=receiverMaster`），不记位移、滚动，也不记是否带按键；带这些的详细行只在测试构建或 `TB_RECEIVER_INPUT_DEBUG=1` 时写。任何构建都不记是哪个键 | Mac Studio 测试（2026-10-24）：日志是文件，打字时抽样到的事件可能是密码的一部分，留最少的数据 | 待提 | 1.1.1 |
 
 打包时的改名（`pwe/rebrand.py`）不改仓库里的文件，所以不在这张表里。它的锚点由脚本自己检查：上游改了对应的文字，脚本就会停下。
 
