@@ -634,7 +634,12 @@ static void tb_receiver_send_clipboard_text(struct app *a, const char *text) {
     int len = snprintf(json, sizeof(json), "{\"text\":\"%s\"}", escaped);
     if (len <= 0 || (size_t)len >= sizeof(json)) return;
 
-    (void)tb_receiver_send(a, TB_PKT_CLIPBOARD, (const uint8_t *)json, (size_t)len);
+    /* PWE (1.1.1, A10): one line per sync, the length only, never the text. */
+    if (tb_receiver_send(a, TB_PKT_CLIPBOARD, (const uint8_t *)json, (size_t)len) == 0) {
+        fprintf(stderr, "[clipboard] iMac -> Mac: %zu bytes\n", strlen(text));
+    } else {
+        fprintf(stderr, "[clipboard] iMac -> Mac: %zu bytes not sent (the connection refused it)\n", strlen(text));
+    }
 }
 
 static void tb_format_i18n(char *dest,
@@ -1494,6 +1499,8 @@ static void on_packet(uint8_t type, const uint8_t *payload, size_t len, void *ud
             char text[TB_CLIPBOARD_MAX_TEXT];
             extract_json_string_field(payload, len, "\"text\"", text, sizeof(text));
             tb_clipboard_write(a->clipboard, text);   /* PWE (T40): written on the clipboard thread */
+            /* PWE (1.1.1, A10): one line per sync, the length only, never the text. */
+            fprintf(stderr, "[clipboard] Mac -> iMac: %zu bytes\n", strlen(text));
         }
         break;
     case TB_PKT_VOLUME:
