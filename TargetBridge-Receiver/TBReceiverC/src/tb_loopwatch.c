@@ -72,7 +72,16 @@ void tb_slowcall_begin(struct tb_slowcall *s) {
     if (!s) return;
 #if defined(__APPLE__)
     s->wall_ns = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
-    s->cpu_ns = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID);
+    /* thread_info, not CLOCK_THREAD_CPUTIME_ID: under Rosetta that clock
+     * reports Apple-silicon ticks as nanoseconds (41x too little, measured
+     * 2026-10-24). */
+    thread_basic_info_data_t info;
+    mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+    s->cpu_ns = thread_info(pthread_mach_thread_np(pthread_self()), THREAD_BASIC_INFO,
+                            (thread_info_t)&info, &count) == KERN_SUCCESS
+        ? ((uint64_t)info.user_time.seconds + (uint64_t)info.system_time.seconds) * 1000000000u +
+          ((uint64_t)info.user_time.microseconds + (uint64_t)info.system_time.microseconds) * 1000u
+        : 0;
 #else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
