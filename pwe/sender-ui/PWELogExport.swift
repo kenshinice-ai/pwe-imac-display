@@ -91,14 +91,25 @@ enum PWELogExport {
             formatter.dateFormat = "HH:mm:ss.SSS"
             // A store that refuses the predicate is read in full and filtered here.
             let entries = try (try? store.getEntries(at: since, matching: ownPredicate)) ?? store.getEntries(at: since)
-            return entries
+            let own = entries
                 .compactMap { $0 as? OSLogEntryLog }
                 .filter { isOwn(subsystem: $0.subsystem, sender: $0.sender) }
+                .map { (date: $0.date, message: $0.composedMessage) }
+            return droppingRepeats(own)
                 .suffix(3000)
-                .map { "\(formatter.string(from: $0.date)) \($0.composedMessage)" }
+                .map { "\(formatter.string(from: $0.date)) \($0.message)" }
         } catch {
             return ["(could not read the log: \(error.localizedDescription))"]
         }
+    }
+
+    /// The store can return the newest entries twice, once from memory and once
+    /// from disk: the RC6 report ended with its last four lines each repeated
+    /// at the same millisecond (U1, 2026-10-22). An entry with the same time
+    /// and text as one already kept is that copy (PWELogExportTests).
+    static func droppingRepeats(_ entries: [(date: Date, message: String)]) -> [(date: Date, message: String)] {
+        var seen = Set<String>()
+        return entries.filter { seen.insert("\($0.date.timeIntervalSinceReferenceDate)|\($0.message)").inserted }
     }
 
     /// Asks where to save at once, then reads the log off the main thread and

@@ -52,4 +52,18 @@ final class PWELogExportTests: XCTestCase {
         XCTAssertEqual(PWELogExport.receiverLine(receiver()),
                        "Receiver: Studio iMac version=1.1.1 hevc=true panel=5120x2880 tb=yes")
     }
+
+    /// A11: the report's newest lines came twice, at the same millisecond.
+    func testRepeatedEntriesAreDropped() {
+        let t = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        let entries: [(date: Date, message: String)] = [
+            (t, "[pwe] a"), (t.addingTimeInterval(1), "[pwe] b"),
+            (t.addingTimeInterval(1), "[pwe] b"), (t, "[pwe] a"),
+            // The same text at another time is a new line.
+            (t.addingTimeInterval(2), "[pwe] a"),
+        ]
+        let kept = PWELogExport.droppingRepeats(entries)
+        XCTAssertEqual(kept.map(\.message), ["[pwe] a", "[pwe] b", "[pwe] a"])
+        XCTAssertEqual(kept.map(\.date), [t, t.addingTimeInterval(1), t.addingTimeInterval(2)])
+    }
 }
