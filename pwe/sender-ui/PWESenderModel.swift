@@ -732,6 +732,7 @@ final class PWESenderModel: ObservableObject {
             components.queryItems?.append(URLQueryItem(name: "preset", value: preset.rawValue))
         }
         syncRendering()
+        if let session { Self.prepareForPWEConnection(session) }
         if let url = components.url { TBSenderAutomation.handle(url: url) }
         // The engine has started (or, with retry=0, ended) its retrying already;
         // that change is ours, not one to read as a Disconnect.
@@ -916,6 +917,17 @@ final class PWESenderModel: ObservableObject {
             objectWillChange.send()
             reconnectIfShowing(because: "picture changed to \(newValue.rawValue)")
         }
+    }
+
+    /// Render matching sizes the virtual display to the stream: with Smooth ·
+    /// 4K 60 that is a 1920 × 1080 desktop instead of the iMac's 5K one. PWE
+    /// offers no switch for it, but the engine keeps it per session and the
+    /// Full Console (or its Work 5K profile) can leave it on; every connection
+    /// PWE starts turns it off (PWEPictureRules.choices).
+    static func prepareForPWEConnection(_ session: TBDisplaySenderSession) {
+        guard session.matchRenderToStream else { return }
+        session.matchRenderToStream = false
+        PWELog.note("[pwe] render matching was on; turned off so the iMac keeps its 5K desktop")
     }
 
     /// A choice the engine reads only when a connection starts: start it again.
