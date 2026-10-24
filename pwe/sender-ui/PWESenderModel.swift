@@ -337,6 +337,9 @@ final class PWESenderModel: ObservableObject {
             }
         }
     }
+    /// The menu bar item is not on screen (PWEStatusMenu says so). The first
+    /// connection's tip then does not point at it (T19).
+    @Published var menuBarIconHidden = false
     /// A one-line notice while a changed setting reconnects ("Reconnecting to apply…").
     @Published private(set) var reconnectNotice = false
     /// While the iMac plays this Mac's sound, keep the Mac's own speakers muted

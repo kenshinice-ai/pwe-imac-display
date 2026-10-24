@@ -69,6 +69,17 @@ final class PWEStringsTests: XCTestCase {
         XCTAssertEqual(en.liveLine(.smooth1440p60, fps: 0), "1440p")
     }
 
+    /// T19: with the menu bar item hidden, the tip does not point at it.
+    func testTheHiddenMenuBarTip() {
+        let en = PWEStrings(language: .english), zh = PWEStrings(language: .chinese)
+        XCTAssertTrue(en.menuBarHiddenTip(macOS: 26).hasSuffix("Show it in System Settings › Menu Bar."))
+        XCTAssertFalse(en.menuBarHiddenTip(macOS: 15).contains("System Settings"))
+        XCTAssertTrue(zh.menuBarHiddenTip(macOS: 27).contains("菜单栏"))
+        XCTAssertFalse(PWEMenuBarPresence.isHidden(itemVisible: true, windowVisible: true))
+        XCTAssertTrue(PWEMenuBarPresence.isHidden(itemVisible: false, windowVisible: true))
+        XCTAssertTrue(PWEMenuBarPresence.isHidden(itemVisible: true, windowVisible: false))
+    }
+
     /// The permission goes by System Settings' name for it, which macOS 15
     /// changed (Privacy & Security).
     func testScreenRecordingIsCalledWhatSystemSettingsCallsIt() {

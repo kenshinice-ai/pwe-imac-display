@@ -236,12 +236,19 @@ struct PWEMainView: View {
     private var firstConnectionTips: some View {
         VStack(alignment: .leading, spacing: 10) {
             Divider()
-            let tip = strings.menuBarTip
-            // The glyph the menu bar shows (PWEStatusMenu.updateButton).
-            Text("\(tip.before)\(Image("PWEMenuBarReady"))\(tip.after)")
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityLabel(strings.menuBarTipSpoken)
+            if model.menuBarIconHidden {
+                // T19: the icon the tip points at is not there to see.
+                Text(strings.menuBarHiddenTip())
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                let tip = strings.menuBarTip
+                // The glyph the menu bar shows (PWEStatusMenu.updateButton).
+                Text("\(tip.before)\(Image("PWEMenuBarReady"))\(tip.after)")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(strings.menuBarTipSpoken)
+            }
             Toggle(strings.launchAtLogin, isOn: Binding(
                 get: { model.launchAtLogin },
                 set: { model.setLaunchAtLogin($0) }))

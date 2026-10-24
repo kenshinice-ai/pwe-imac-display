@@ -119,6 +119,38 @@ final class PWEStatusMenu: NSObject {
         item.menu = menu
         statusItem = item
         updateButton(model.phase)
+        watchPresence(item)
+    }
+
+    /// T19: whether the item is on screen. macOS 26 lets System Settings ›
+    /// Menu Bar hide it, and other apps can too; the window's first-connection
+    /// tip then says so instead of pointing at it. Read when AppKit reports a
+    /// change to the item or its window, never polled.
+    private var presenceWatch: NSKeyValueObservation?
+    private func watchPresence(_ item: NSStatusItem) {
+        presenceWatch = item.observe(\.isVisible) { [weak self] _, _ in
+            DispatchQueue.main.async { [weak self] in self?.updatePresence() }
+        }
+        for name in [NSWindow.didChangeOcclusionStateNotification, NSApplication.didChangeScreenParametersNotification] {
+            NotificationCenter.default.publisher(for: name)
+                .sink { [weak self] note in
+                    if let window = note.object as? NSWindow, window !== self?.statusItem?.button?.window { return }
+                    DispatchQueue.main.async { [weak self] in self?.updatePresence() }
+                }
+                .store(in: &cancellables)
+        }
+        DispatchQueue.main.async { [weak self] in self?.updatePresence() }
+    }
+
+    private func updatePresence() {
+        guard let item = statusItem else { return }
+        let hidden = PWEMenuBarPresence.isHidden(itemVisible: item.isVisible,
+                                                 // No window yet is not known to be hidden.
+                                                 windowVisible: item.button?.window.map(\.isVisible) ?? true)
+        if hidden != model.menuBarIconHidden {
+            PWELog.note("[pwe] menu bar item \(hidden ? "not on screen" : "on screen")")
+            model.menuBarIconHidden = hidden
+        }
     }
 
     /// One iMac in two states: its outline, and its screen lit while it is a
@@ -464,5 +496,14 @@ final class PWEWindows {
     func show(_ id: String) {
         NSApp.activate(ignoringOtherApps: true)
         openWindow?(id: id)
+    }
+}
+
+/// T19's rule (PWEStringsTests): the item counts as hidden when AppKit says it
+/// is not visible or its window is not on screen. Window occlusion is not
+/// used: a menu bar that hides itself would read as a hidden item.
+enum PWEMenuBarPresence {
+    static func isHidden(itemVisible: Bool, windowVisible: Bool) -> Bool {
+        !itemVisible || !windowVisible
     }
 }

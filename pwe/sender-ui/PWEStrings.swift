@@ -183,6 +183,15 @@ struct PWEStrings {
         zh ? ("以后在菜单栏的 ", " 里调亮度、画面和声音。")
            : ("From now on, brightness, picture and sound are under ", " in the menu bar.")
     }
+    /// T19: the same tip when the menu bar item is not on screen (hidden in
+    /// System Settings › Menu Bar on macOS 26 and later, or by another app).
+    func menuBarHiddenTip(macOS major: Int = ProcessInfo.processInfo.operatingSystemVersion.majorVersion) -> String {
+        major >= 26
+            ? t("Brightness, picture and sound are under the PWE Screen Encore icon, which is hidden from the menu bar. Show it in System Settings › Menu Bar.",
+                "亮度、画面和声音在 PWE Screen Encore 的菜单栏图标里，它现在被隐藏了。可在 系统设置 › 菜单栏 里让它显示。")
+            : t("Brightness, picture and sound are under the PWE Screen Encore icon, which is hidden from the menu bar.",
+                "亮度、画面和声音在 PWE Screen Encore 的菜单栏图标里，它现在被隐藏了。")
+    }
     var menuBarTipSpoken: String {
         t("From now on, brightness, picture and sound are under the PWE Screen Encore icon in the menu bar.",
           "以后在菜单栏的 PWE Screen Encore 图标里调亮度、画面和声音。")
