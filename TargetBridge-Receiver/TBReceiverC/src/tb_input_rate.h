@@ -4,8 +4,12 @@
  * tap notes every event it forwards and how old the event was when it was
  * sent (from the event's own timestamp). Every 10 s with input, one line:
  *
- *   [input] forwarded to the Mac over 8 s with input: 2310 events, avg 289/s,
- *           busiest second 498; event to send p50 0.1 ms, p95 0.4 ms, max 1.9 ms
+ *   [input] forwarded to the Mac over 8 s with input: 2310 events (keys 40),
+ *           avg 289/s, busiest second 498; event to send p50 0.1 ms, p95 0.4 ms,
+ *           max 1.9 ms
+ *
+ * Key events are only counted here: a release build writes no line per key
+ * (main.c, tb_receiver_log_input_sent).
  *
  * With the tap on the main run loop (1.1.0) events left in bursts at the frame
  * rate and waited up to a frame (17-35 ms) or a whole decoder stall; on its own
@@ -30,6 +34,7 @@ struct tb_input_rate {
     unsigned      busiest_second;
     unsigned      seconds_with_input;
     unsigned long events;
+    unsigned long keys;              /* of which key events */
     int           delay_count;
     double        delays_ms[TB_INPUT_RATE_SAMPLES];
     double        max_delay_ms;
@@ -38,8 +43,9 @@ struct tb_input_rate {
 void tb_input_rate_reset(struct tb_input_rate *r);
 
 /* One event forwarded at `now_ns` (any monotonic clock); `delay_ms` is how old
- * it was, or negative when unknown. */
-void tb_input_rate_note(struct tb_input_rate *r, uint64_t now_ns, double delay_ms);
+ * it was, or negative when unknown; `is_key`: a key event (keyDown, keyUp,
+ * modifiers). */
+void tb_input_rate_note(struct tb_input_rate *r, uint64_t now_ns, double delay_ms, int is_key);
 
 /* When `window_ns` has passed since the report's first event: write the line
  * (without the "[input] " prefix) into `line`, start a new report and return

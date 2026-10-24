@@ -103,6 +103,7 @@
 | `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderAutomation.swift`：`handle(url:)` 的 connect 先交给 `pweConnectURLHandler`（PWE 的模型）；模型自己的连接走 `pweHandleOwn(url:)`，不回到它 | T54：已连接时 `open "pweimacdisplay://connect?…&preset=…"` 只记住了画面不生效，还因上游取消重试循环、没有 retry=1 时只连一次，使自动重连停掉 | 待提 | 本地提交，未推 |
 | `pwe-1.1.1-receiver`（待合并） | 接收端 `main.c`：发给 Mac 的输入事件抽样日志（前 20 个，之后每第 100 个，频率不变）在正式版只记序号、种类和模式（`send #N kind=… mode=receiverMaster`），不记位移、滚动，也不记是否带按键；带这些的详细行只在测试构建或 `TB_RECEIVER_INPUT_DEBUG=1` 时写。任何构建都不记是哪个键 | Mac Studio 测试（2026-10-24）：日志是文件，打字时抽样到的事件可能是密码的一部分，留最少的数据 | 待提 | 1.1.1 |
 | `pwe-1.1.1-sender`（待合并） | 发送端 `TBInputDebugLog.swift`、`TBDisplaySenderService.swift`：输入日志（`~/Library/Application Support/PWE iMac Display/Logs/input-debug.log`）默认只记事件种类和计数；键码、位移、哪个修饰键、快捷键组合和 System Events 的完整报错只在环境变量 `PWE_INPUT_DEBUG=1` 时写；文件满 1 MB 轮转为一个 `.old`，新文件第一行注明 | 发布版写 iMac 键盘的键码（前 20 个，之后每第 100 个）和修饰键键码，连起来能看出部分输入内容；文件不限大小 | 待提 | 本地提交，未推 |
+| `pwe-1.1.1-receiver`（待合并） | 接收端 `main.c`：正式版不再为按键事件（keyDown、keyUp、修饰键，含同步修饰键时补发的）写逐条日志，发和收两个方向都不写；只在每 10 秒的 `[input] forwarded …` 行里计数（`tb_input_rate.c`/`.h`：`(keys N)`，`test_input_rate.c`）。收到的按键行（仅测试构建或 `TB_RECEIVER_INPUT_DEBUG=1`）不再带包长。鼠标和滚轮的抽样行不变 | 评审 2026-10-24：每个会话的前 20 个事件有毫秒时间戳，只接 iMac 的 Mac 上这多半是在 iMac 键盘上输入的密码，日志会露出长度、节奏和 Shift；包长随键码位数变化 | 待提 | 1.1.1 |
 
 打包时的改名（`pwe/rebrand.py`）不改仓库里的文件，所以不在这张表里。它的锚点由脚本自己检查：上游改了对应的文字，脚本就会停下。
 

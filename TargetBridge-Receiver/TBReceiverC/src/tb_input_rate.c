@@ -20,7 +20,7 @@ static void close_second(struct tb_input_rate *r) {
     r->second_count = 0;
 }
 
-void tb_input_rate_note(struct tb_input_rate *r, uint64_t now_ns, double delay_ms) {
+void tb_input_rate_note(struct tb_input_rate *r, uint64_t now_ns, double delay_ms, int is_key) {
     if (r->window_start_ns == 0) {
         r->window_start_ns = now_ns ? now_ns : 1;
         r->second_start_ns = r->window_start_ns;
@@ -32,6 +32,7 @@ void tb_input_rate_note(struct tb_input_rate *r, uint64_t now_ns, double delay_m
     }
     r->second_count++;
     r->events++;
+    if (is_key) r->keys++;
     if (delay_ms >= 0) {
         if (r->delay_count < TB_INPUT_RATE_SAMPLES) r->delays_ms[r->delay_count++] = delay_ms;
         if (delay_ms > r->max_delay_ms) r->max_delay_ms = delay_ms;
@@ -56,9 +57,9 @@ int tb_input_rate_report(struct tb_input_rate *r, uint64_t now_ns, uint64_t wind
     if (r->window_start_ns == 0 || now_ns < r->window_start_ns + window_ns) return 0;
     close_second(r);
     const unsigned seconds = r->seconds_with_input ? r->seconds_with_input : 1;
-    int len = snprintf(line, size, "forwarded to the Mac over %u s with input: %lu events, avg %lu/s, "
-                                   "busiest second %u",
-                       seconds, r->events, r->events / seconds, r->busiest_second);
+    int len = snprintf(line, size, "forwarded to the Mac over %u s with input: %lu events (keys %lu), "
+                                   "avg %lu/s, busiest second %u",
+                       seconds, r->events, r->keys, r->events / seconds, r->busiest_second);
     if (r->delay_count > 0 && len > 0 && (size_t)len < size) {
         qsort(r->delays_ms, (size_t)r->delay_count, sizeof(double), cmp_double);
         snprintf(line + len, size - (size_t)len, "; event to send p50 %.1f ms, p95 %.1f ms, max %.1f ms",

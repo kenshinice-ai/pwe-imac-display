@@ -278,6 +278,8 @@ static int tb_receiver_input_monitoring_trusted(void);
 static int tb_receiver_accessibility_trusted(void);
 static void send_receiver_info(struct app *a);
 static void tb_receiver_apply_input_event(struct app *a, const uint8_t *payload, size_t len);
+static int  tb_receiver_input_detail(void);
+static int  tb_receiver_input_kind_is_key(const char *kind);
 static void tb_receiver_apply_input_control_mode(struct app *a, const uint8_t *payload, size_t len);
 static void tb_receiver_refresh_input_capture(struct app *a);
 static void tb_receiver_send_clipboard_text(struct app *a, const char *text);
@@ -1135,11 +1137,19 @@ static void tb_receiver_apply_input_event(struct app *a, const uint8_t *payload,
     kind[0] = '\0';
     extract_json_string_field(payload, len, "\"kind\"", kind, sizeof(kind));
     if (kind[0] == '\0') return;
-    /* PWE: sampled like the events sent, not one log line per mouse move. */
+    /* PWE: sampled like the events sent, not one log line per mouse move.
+     * PWE (1.1.1): as for keys sent (tb_receiver_log_input_sent), a release
+     * build writes no line for a key event, and no build gives a key event's
+     * length (it varies with the key code's digits). */
     a->input_events_received += 1;
     if (tb_should_log_input_event(a->input_events_received)) {
-        tb_receiver_input_log("[input][sender->receiver] received #%llu kind=%s len=%zu",
-                              (unsigned long long)a->input_events_received, kind, len);
+        if (!tb_receiver_input_kind_is_key(kind)) {
+            tb_receiver_input_log("[input][sender->receiver] received #%llu kind=%s len=%zu",
+                                  (unsigned long long)a->input_events_received, kind, len);
+        } else if (tb_receiver_input_detail()) {
+            tb_receiver_input_log("[input][sender->receiver] received #%llu kind=%s",
+                                  (unsigned long long)a->input_events_received, kind);
+        }
     }
 
     if (strcmp(kind, "move") == 0) {
@@ -1654,21 +1664,36 @@ static void write_be32(uint8_t *dst, uint32_t value) {
     dst[3] = (uint8_t)(value & 0xff);
 }
 
+/* PWE (1.1.1): whether input lines may carry detail: test builds, or
+ * TB_RECEIVER_INPUT_DEBUG=1 for a developer chasing an input problem. */
+static int tb_receiver_input_detail(void) {
+    static atomic_int detailed = -1;
+    int d = atomic_load(&detailed);
+    if (d < 0) {
+        const char *v = getenv("TB_RECEIVER_INPUT_DEBUG");
+        d = TB_RECEIVER_TEST_HOOKS || (v && strcmp(v, "1") == 0);
+        atomic_store(&detailed, d);
+    }
+    return d;
+}
+
+/* PWE (1.1.1): a key event (keyDown, keyUp, modifier changes). */
+static int tb_receiver_input_kind_is_key(const char *kind) {
+    return kind && (strncmp(kind, "key", 3) == 0 || strncmp(kind, "flags", 5) == 0);
+}
+
 /* PWE (1.1.1): the sampled line for input sent to the Mac (the first 20, then
- * every 100th). The log is a file, and what is typed may be a password, so a
- * release build writes the event's kind, its number and the mode only: no
- * movement, no scroll, not even whether it carried a key code, and never
- * which key (no build ever writes that). The detailed line (movement, scroll,
- * key yes/no) only in test builds, or with TB_RECEIVER_INPUT_DEBUG=1 for a
- * developer chasing an input problem. */
+ * every 100th). The log is a file with millisecond stamps, and the first keys
+ * of a session are often a password typed on the iMac. A release build writes
+ * no line for a key event at all (its length, timing and Shift use would
+ * show); the 10 s "[input] forwarded …" line counts them. For the pointer and
+ * the wheel it writes the number, kind and mode only. The detailed line
+ * (movement, scroll, key yes/no; never which key, in any build) only with
+ * tb_receiver_input_detail. */
 static void tb_receiver_log_input_sent(uint64_t count, const char *kind, int dx, int dy, int sx, int sy,
                                        int has_key_code) {
-    static int detailed = -1;   /* under tx_lock */
-    if (detailed < 0) {
-        const char *v = getenv("TB_RECEIVER_INPUT_DEBUG");
-        detailed = TB_RECEIVER_TEST_HOOKS || (v && strcmp(v, "1") == 0);
-    }
-    if (!detailed) {
+    if (!tb_receiver_input_detail()) {
+        if (tb_receiver_input_kind_is_key(kind)) return;
         tb_receiver_input_log("[input][receiver->sender] send #%llu kind=%s mode=receiverMaster",
                               (unsigned long long)count, kind ? kind : "?");
         return;
@@ -1875,7 +1900,8 @@ static CGEventRef tb_receiver_input_tap_callback(CGEventTapProxy proxy,
         if (test_window_ms > 0) rate_window_ns = (uint64_t)test_window_ms * 1000000ull;
     }
 #endif
-    tb_input_rate_note(&a->tap_rate, tb_trace_now_ns(), tb_receiver_event_age_ms(event));
+    tb_input_rate_note(&a->tap_rate, tb_trace_now_ns(), tb_receiver_event_age_ms(event),
+                       type == kCGEventKeyDown || type == kCGEventKeyUp || type == kCGEventFlagsChanged);
     char rate_line[256];
     if (tb_input_rate_report(&a->tap_rate, tb_trace_now_ns(), rate_window_ns, rate_line, sizeof(rate_line))) {
         tb_receiver_input_log("[input] %s%s", rate_line, a->tap_thread ? "" : " (tap on the main run loop)");
