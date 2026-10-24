@@ -2701,7 +2701,10 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                    let event = TBMonitorProtocol.decodeJSON(TBMonitorInputEvent.self, from: payload) {
                     receivedInputEventCount += 1
                     if receivedInputEventCount <= 20 || receivedInputEventCount.isMultiple(of: 100) {
-                        TBInputDebugLog.log("sender received #\(receivedInputEventCount) kind=\(event.kind) dx=\(event.dx ?? 0) dy=\(event.dy ?? 0) sx=\(event.scrollX ?? 0) sy=\(event.scrollY ?? 0) key=\(event.keyCode ?? 0)")
+                        // PWE: no key codes or movements unless PWE_INPUT_DEBUG=1.
+                        TBInputDebugLog.log(TBInputDebugLog.receivedEventLine(
+                            count: receivedInputEventCount, kind: event.kind, dx: event.dx, dy: event.dy,
+                            scrollX: event.scrollX, scrollY: event.scrollY, keyCode: event.keyCode))
                     }
                     if event.kind == "switchPrevTarget" {
                         releaseInjectedModifiersIfNeeded()
@@ -2879,7 +2882,11 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         if TBInputBindingEngine.modifierBit(for: keyCode) != nil {
             let flags = currentInjectedModifierFlags()
             localPointerModifierBridge.update(inputControlRole == .receiverMaster ? flags : [])
-            TBInputDebugLog.log("sender remote modifier key=\(keyCode) down=\(isDown) flags=\(flags.rawValue)")
+            // PWE: which modifier only with PWE_INPUT_DEBUG=1.
+            let held = [CGEventFlags.maskShift, .maskControl, .maskAlternate, .maskCommand, .maskAlphaShift]
+                .filter { flags.contains($0) }.count
+            TBInputDebugLog.log(TBInputDebugLog.remoteModifierLine(keyCode: keyCode, isDown: isDown,
+                                                                   flags: flags.rawValue, modifiersHeld: held))
         }
         guard let event = CGEvent(keyboardEventSource: localInputEventSource(), virtualKey: CGKeyCode(keyCode), keyDown: isDown) else { return }
         event.flags = currentInjectedModifierFlags()
@@ -3021,7 +3028,8 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             return false
         }
         suppressedTriggerKeyCode = keyCode
-        TBInputDebugLog.log("binding MATCH: trigger=\(binding.trigger.displayString) -> inject \(binding.action.displayString)")
+        TBInputDebugLog.log(TBInputDebugLog.bindingLine(trigger: binding.trigger.displayString,
+                                                        action: binding.action.displayString))
         injectActionViaSystemEvents(binding.action)
         return true
     }
@@ -3048,10 +3056,10 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         DispatchQueue.global(qos: .userInitiated).async {
             var errorInfo: NSDictionary?
             NSAppleScript(source: source)?.executeAndReturnError(&errorInfo)
-            let failure: String? = errorInfo.map { "\($0)" }
+            let failure: String? = errorInfo.map { TBInputDebugLog.injectErrorLine($0) }
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                if let failure { TBInputDebugLog.log("system-events inject error: \(failure)") }
+                if let failure { TBInputDebugLog.log(failure) }
                 guard self.inputControlRole == .receiverMaster else { return }
                 for keyCode in self.currentlyHeldRemoteModifierKeyCodes() {
                     self.postLocalKey(keyCode: keyCode, isDown: true)
