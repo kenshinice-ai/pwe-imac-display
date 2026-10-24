@@ -279,11 +279,17 @@ enum PWEConnection: String, CaseIterable, Identifiable {
 /// "receiverRenderer". On iMac18,3 (2026-10-20, BASELINE "E 组") Metal used
 /// 25–40 % less of the iMac's CPU; OpenGL measured 11–13 ms lower and dropped
 /// no frames, but its trace stops at the hand-off to the window server while
-/// Metal's runs to the screen. Lee: keep both, OpenGL by default.
+/// Metal's runs to the screen. Lee then kept both, OpenGL by default.
+/// 2026-10-24 receiver trace on iMac18,3 with a Mac Studio: Metal paces frames
+/// to the refresh and hands off ~2.4 ms sooner; Lee chose Metal as the default.
+/// A choice made in Settings › Advanced (per iMac, or the last one) is kept.
 enum PWERendering: String, CaseIterable, Identifiable {
     case openGL = "opengl"
     case metal
     var id: String { rawValue }
+
+    /// For a Mac where nobody has chosen.
+    static let `default`: PWERendering = .metal
 }
 
 @MainActor
@@ -503,8 +509,10 @@ final class PWESenderModel: ObservableObject {
     var showingPreset: TBDisplayCapturePreset { session?.capturePreset ?? picture }
 
     /// Frames sent in the last second (the engine's `senderFPS`), and its
-    /// once-a-second updates. Snapshots have no engine and show a steady 60.
-    var framesPerSecond: Int { service == nil ? 60 : session?.liveMetrics.senderFPS ?? 0 }
+    /// once-a-second updates. Snapshots have no engine and show none: the menu's
+    /// line then gives the size alone. A sample "60" in release pictures read
+    /// as a measured claim (film team, 2026-10-24).
+    var framesPerSecond: Int { service == nil ? 0 : session?.liveMetrics.senderFPS ?? 0 }
     var framesPerSecondUpdates: AnyPublisher<Int, Never>? {
         session?.liveMetrics.$senderFPS.removeDuplicates().eraseToAnyPublisher()
     }
@@ -910,7 +918,7 @@ final class PWESenderModel: ObservableObject {
            let remembered = PWERendering(rawValue: raw) {
             return remembered
         }
-        return PWERendering(rawValue: defaults.string(forKey: Keys.rendering) ?? "") ?? .openGL
+        return PWERendering(rawValue: defaults.string(forKey: Keys.rendering) ?? "") ?? .default
     }
 
     /// The engine sends it in every hello, whichever path connects: here, the

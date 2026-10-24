@@ -126,6 +126,9 @@ struct PWEStrings {
     /// size and the frames this Mac sent in the last second (the engine's
     /// `senderFPS`). A still screen sends no frames; then only the size shows,
     /// never "0 fps" (PWEStringsTests).
+    ///
+    /// It says "sent" (A3, 1.1.1): it counts what leaves this Mac, not what the
+    /// iMac shows. RC8 W6 had the menu at 60 while the iMac showed about 21.
     func liveLine(_ preset: TBDisplayCapturePreset, fps rawFPS: Int) -> String {
         // The engine's counter catches up after a pause (a menu held open), so a
         // reading above the panel's refresh is that, not the picture.
@@ -138,7 +141,7 @@ struct PWEStrings {
         default: size = preset.title
         }
         guard fps > 0 else { return size }
-        return "\(size) · " + t("\(fps) fps", "\(fps) 帧/秒")
+        return "\(size) · " + t("\(fps) fps sent", "已发送 \(fps) 帧/秒")
     }
 
     // Interrupted

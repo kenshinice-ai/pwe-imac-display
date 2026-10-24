@@ -28,15 +28,25 @@ final class PWERenderingTests: XCTestCase {
         XCTAssertEqual(PWERendering.metal.rawValue, "metal")
     }
 
-    func testOpenGLByDefaultAndTheLastChoiceIsKept() {
+    /// 1.1.1: Metal for a Mac where nobody chose (Lee 2026-10-24); a choice,
+    /// OpenGL included, is kept.
+    func testMetalByDefaultAndTheLastChoiceIsKept() {
         let defaults = UserDefaults(suiteName: "pwe.preview")!
         defaults.removeObject(forKey: PWESenderModel.Keys.rendering)
         defer { defaults.removeObject(forKey: PWESenderModel.Keys.rendering) }
         let model = PWESenderModel(preview: .searching)
-        XCTAssertEqual(model.rendering, .openGL)
-        // No iMac known yet: the choice still sticks, for the next iMac.
-        model.rendering = .metal
         XCTAssertEqual(model.rendering, .metal)
-        XCTAssertEqual(PWESenderModel(preview: .searching).rendering, .metal)
+        // No iMac known yet: the choice still sticks, for the next iMac.
+        model.rendering = .openGL
+        XCTAssertEqual(model.rendering, .openGL)
+        XCTAssertEqual(PWESenderModel(preview: .searching).rendering, .openGL)
+        XCTAssertEqual(defaults.string(forKey: PWESenderModel.Keys.rendering), "opengl")
+    }
+
+    func testAnEarlierOpenGLChoiceSurvivesTheNewDefault() {
+        let defaults = UserDefaults(suiteName: "pwe.preview")!
+        defaults.set("opengl", forKey: PWESenderModel.Keys.rendering)
+        defer { defaults.removeObject(forKey: PWESenderModel.Keys.rendering) }
+        XCTAssertEqual(PWESenderModel(preview: .searching).rendering, .openGL)
     }
 }

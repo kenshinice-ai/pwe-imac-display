@@ -34,15 +34,25 @@ final class PWEStringsTests: XCTestCase {
     }
 
     /// The menu's line while the picture is up: size, then frames sent in the
-    /// last second; a still screen shows the size alone, never "0 fps".
+    /// last second, said to be sent (A3); a still screen shows the size alone,
+    /// never "0 fps".
     func testTheLiveLine() {
         let en = PWEStrings(language: .english), zh = PWEStrings(language: .chinese)
-        XCTAssertEqual(en.liveLine(.native5k60Experimental, fps: 60), "5K · 60 fps")
-        XCTAssertEqual(en.liveLine(.native5k, fps: 48), "5K · 48 fps")
-        XCTAssertEqual(en.liveLine(.retina4k60, fps: 59), "4K · 59 fps")
-        XCTAssertEqual(en.liveLine(.standard1440p, fps: 30), "1440p · 30 fps")
+        XCTAssertEqual(en.liveLine(.native5k60Experimental, fps: 35), "5K · 35 fps sent")
+        XCTAssertEqual(en.liveLine(.native5k, fps: 48), "5K · 48 fps sent")
+        XCTAssertEqual(en.liveLine(.retina4k60, fps: 59), "4K · 59 fps sent")
+        XCTAssertEqual(en.liveLine(.crisp2160p60, fps: 60), "4K · 60 fps sent")
+        XCTAssertEqual(en.liveLine(.smooth1440p60, fps: 60), "1440p · 60 fps sent")
         XCTAssertEqual(en.liveLine(.native5k60Experimental, fps: 0), "5K")
-        XCTAssertEqual(zh.liveLine(.native5k60Experimental, fps: 60), "5K · 60 帧/秒")
+        XCTAssertEqual(zh.liveLine(.native5k60Experimental, fps: 35), "5K · 已发送 35 帧/秒")
+        // The engine's count catching up after a pause never reads above 60.
+        XCTAssertEqual(en.liveLine(.native5k60Experimental, fps: 140), "5K · 60 fps sent")
+    }
+
+    /// Snapshots (`--pwe-snapshot`) have no engine: no frame count, so no
+    /// sample number in pictures that go on the product page.
+    @MainActor func testSnapshotsShowNoFrameCount() {
+        XCTAssertEqual(PWESenderModel(preview: .searching).framesPerSecond, 0)
     }
 
     /// The Picture menu's names (1.1.1): Standard is the 60-frame 1440p, and
