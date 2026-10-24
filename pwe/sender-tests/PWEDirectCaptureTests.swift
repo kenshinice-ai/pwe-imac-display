@@ -96,4 +96,24 @@ final class PWEDirectCaptureTests: XCTestCase {
         XCTAssertFalse(Session.pweFallsBackFromDirect(usingDirect: false, canRestart: true))
         XCTAssertFalse(Session.pweFallsBackFromDirect(usingDirect: true, canRestart: false))
     }
+
+    // MARK: - T53 (Mac Studio, 2026-10-24: pmset displaysleepnow)
+
+    func testAStallWhileTheScreensSleepIsNoFailure() {
+        XCTAssertFalse(Session.pweStallIsDirectFailure(screensAsleep: true, systemSleeping: false))
+        XCTAssertFalse(Session.pweStallIsDirectFailure(screensAsleep: false, systemSleeping: true))
+    }
+
+    func testAStallWhileAwakeIsAFailure() {
+        XCTAssertTrue(Session.pweStallIsDirectFailure(screensAsleep: false, systemSleeping: false))
+    }
+
+    func testAStallJustBeforeTheSleepNoticeIsForgottenAtTheWake() {
+        // The screens slept at 100; a stall at 95 came with it, one at 60 did not.
+        XCTAssertTrue(Session.pweStallWasTheSleep(stalledAt: 95, screensAsleepAt: 100))
+        XCTAssertTrue(Session.pweStallWasTheSleep(stalledAt: 110, screensAsleepAt: 100))
+        XCTAssertFalse(Session.pweStallWasTheSleep(stalledAt: 60, screensAsleepAt: 100))
+        XCTAssertFalse(Session.pweStallWasTheSleep(stalledAt: nil, screensAsleepAt: 100))
+        XCTAssertFalse(Session.pweStallWasTheSleep(stalledAt: 95, screensAsleepAt: nil))
+    }
 }

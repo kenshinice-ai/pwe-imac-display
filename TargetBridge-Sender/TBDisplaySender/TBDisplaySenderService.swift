@@ -1697,6 +1697,9 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     private var pweDirectFailed = false
     /// PWE: the screens slept or locked and have not woken since.
     private var pweScreensAsleep = false
+    /// PWE (T53): when the direct path last stalled, so a wake can tell a stall
+    /// that only came from the screens going to sleep.
+    private var pweDirectStalledAt: TimeInterval?
     private var pweCapturePathCheck: DispatchWorkItem?
     private var cursorDisplayID: CGDirectDisplayID = kCGNullDirectDisplay
     private var lastCursorPacket: TBMonitorCursor?
@@ -2392,6 +2395,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         headlessMirrorUsesVirtualDisplay = false
         pweExtendedUsesDirect = false
         pweDirectFailed = false
+        pweDirectStalledAt = nil
         pweCapturePathCheck?.cancel()
         pweCapturePathCheck = nil
         cursorDisplayID = kCGNullDirectDisplay
@@ -3363,6 +3367,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                     }
                     pweDirectFailed = true
                     TBLog.connection.warning("capture: direct stream for the extended desktop did not start; using ScreenCaptureKit for this connection")
+                    PWELog.note("[pwe] capture: direct stream for the extended desktop did not start; using ScreenCaptureKit for this connection")
                 }
                 let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
                 if session.displayID != kCGNullDirectDisplay,
@@ -4180,6 +4185,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             Task { @MainActor [weak self] in
                 self?.pweScreensAsleep = false
                 self?.handleSystemWake()
+                self?.pweAfterWake()
             }
         }
         // PWE: the other half of each wake signal, so a wake can tell whether
@@ -4343,9 +4349,16 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         guard health.shouldRestart(now: now) else { return }
         NSLog("TargetBridge: capture watchdog tripped — state=%@ frames=%llu idleEvents=%llu", health.state.rawValue, health.frameCount, health.idleCount)
         if pweExtendedUsesDirect {
+            // PWE (T53): a display stream sends nothing while the screens sleep.
+            // That is not a failure, and restarting it then gains nothing: the
+            // wake restarts capture on the path the rule picks.
+            guard Self.pweStallIsDirectFailure(screensAsleep: pweScreensAsleep,
+                                               systemSleeping: TBSystemSleepGate.isSleeping) else { return }
             // PWE: the restart goes to ScreenCaptureKit for the rest of this connection.
             pweDirectFailed = true
+            pweDirectStalledAt = now
             TBLog.connection.warning("capture: the extended desktop's direct stream stalled; restarting on ScreenCaptureKit")
+            PWELog.note("[pwe] capture: the extended desktop's direct stream stalled; restarting on ScreenCaptureKit for this connection")
         }
         scheduleCaptureRestart(reason: "watchdog (\(health.state.rawValue))", delaySeconds: 0.5, onlyIfUnhealthy: true)
     }
@@ -4502,6 +4515,35 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         return online == [virtualDisplayID]
     }
 
+    /// PWE (T53): a direct stream that stalls while the screens sleep (or the
+    /// Mac sleeps) has not failed: a display stream sends nothing then.
+    nonisolated static func pweStallIsDirectFailure(screensAsleep: Bool, systemSleeping: Bool) -> Bool {
+        !screensAsleep && !systemSleeping
+    }
+
+    /// PWE (T53): a stall recorded within this many seconds before the screens
+    /// slept is taken as the sleep's doing (the notice can arrive after the
+    /// stream already stopped) and is forgotten at the wake.
+    nonisolated static let pweStallBeforeSleepGrace: TimeInterval = 15
+
+    nonisolated static func pweStallWasTheSleep(stalledAt: TimeInterval?, screensAsleepAt: TimeInterval?) -> Bool {
+        guard let stalledAt, let screensAsleepAt else { return false }
+        return stalledAt >= screensAsleepAt - pweStallBeforeSleepGrace
+    }
+
+    /// PWE (T53): after a wake, forget a direct-path failure the sleep caused,
+    /// and look again at which path the extended desktop should use; the
+    /// check (pweCheckExtendedCapturePath) restarts on the direct stream if it
+    /// is the rule's choice and capture is not already being restarted.
+    private func pweAfterWake() {
+        if pweDirectFailed, Self.pweStallWasTheSleep(stalledAt: pweDirectStalledAt, screensAsleepAt: pweScreensAsleepAt) {
+            pweDirectFailed = false
+            pweDirectStalledAt = nil
+            PWELog.note("[pwe] capture: the direct stream's stall came with the screens' sleep; the direct path may be used again")
+        }
+        pweReconsiderExtendedCapturePath()
+    }
+
     /// PWE: the first-frame watchdog restarts on ScreenCaptureKit instead of
     /// ending the session when the direct stream is what sent nothing.
     nonisolated static func pweFallsBackFromDirect(usingDirect: Bool, canRestart: Bool) -> Bool {
@@ -4651,9 +4693,17 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                 TBLog.connection.error("capture: first-frame timeout preset=\(self.capturePreset.rawValue, privacy: .public) source=\(String(describing: self.captureSource), privacy: .public) connected=\(self.isConnected, privacy: .public) sentFrames=\(sentFrames, privacy: .public)")
                 // PWE: a direct stream that sent nothing gets one more try on
                 // ScreenCaptureKit, watched the same way, before the session stops.
+                // PWE (T53): asleep, no stream sends a frame; keep waiting for one.
+                if self.pweExtendedUsesDirect,
+                   !Self.pweStallIsDirectFailure(screensAsleep: self.pweScreensAsleep,
+                                                 systemSleeping: TBSystemSleepGate.isSleeping) {
+                    self.startFirstFrameWatchdog()
+                    return
+                }
                 if Self.pweFallsBackFromDirect(usingDirect: self.pweExtendedUsesDirect, canRestart: self.canRestartCapture) {
                     self.pweDirectFailed = true
                     TBLog.connection.warning("capture: the extended desktop's direct stream sent no frame; restarting on ScreenCaptureKit")
+                    PWELog.note("[pwe] capture: the extended desktop's direct stream sent no frame; restarting on ScreenCaptureKit for this connection")
                     self.scheduleCaptureRestart(reason: "direct stream sent no frame", delaySeconds: 0,
                                                 rearmFirstFrameWatchdog: true)
                     return

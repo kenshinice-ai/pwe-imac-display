@@ -99,6 +99,8 @@
 | `pwe-1.1.1-receiver`（待合并） | 接收端 `main.c`：剪贴板每次同步记一行，只记方向和大小档（`under 100 bytes` / `100 bytes to 10 KB` / `over 10 KB`，发不出去也记），不记确切字节数，从不记内容；smoke 11 阶段检查这两行在、内容和确切字节数不在日志里 | A10：T48 时两边日志都没有剪贴板的行，判断不了同步有没有发生 | 待提 | 1.1.1 |
 | `pwe-1.1.1-receiver`（待合并） | 接收端 `main.c`：主线程进入连接自己的代码时（`tb_conn_feed`、`_tick`、`_init`、`_close`）持有 `tx_lock`，处理每个包时（`on_packet`：解码、显示）放开；监听线程发送时也持有它，所以会话的标志和密钥不会一边读一边写。监听线程最多等一个记录解析解密完，不等一帧。会话结束时松开记着按下的修饰键、清掉监听被关的标记 | 评审 2026-10-24：监听线程发送时不加锁地读 `want_close`、`mode`、`sec->st`，主线程同时可能在写。没改 `tb_conn.c` 和加密层 | 待提 | 1.1.1 |
 | `pwe-1.1.1-receiver`（待合并） | `TargetBridge-Shared/Languages/*.json`：`receiver.pairing.enter_on_mac` 改为「在 Mac 的键盘上输入这 6 位数字，然后按回车」/「Type these 6 digits on the Mac’s keyboard, then press Return」，de/fr/it 同义翻译；五种语言都在 980×620 窗口里渲染过，德语最长，约占宽度一半 | 无屏配对（A1）：只接 iMac 的 Mac 要在自己的键盘上输入、按回车，iMac 上要说清楚 | 待提 | 1.1.1 |
+| `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderService.swift`：屏幕睡眠或系统睡眠时，直采卡住或没有第一帧不算失败、也不重启（`pweStallIsDirectFailure`）；醒来后忘掉睡前 15 秒内记下的卡住，并按规则重新选采集路径（`pweAfterWake`）；直采相关的告警和回退同时写 `PWELog` | T53：Mac Studio 上 `pmset displaysleepnow` 10 秒后直采被记为失败，之后整段会话停在 ScreenCaptureKit，5K 从约 53 帧掉到约 35 帧 | 待提 | 本地提交，未推 |
+| `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderAutomation.swift`：`handle(url:)` 的 connect 先交给 `pweConnectURLHandler`（PWE 的模型）；模型自己的连接走 `pweHandleOwn(url:)`，不回到它 | T54：已连接时 `open "pweimacdisplay://connect?…&preset=…"` 只记住了画面不生效，还因上游取消重试循环、没有 retry=1 时只连一次，使自动重连停掉 | 待提 | 本地提交，未推 |
 
 打包时的改名（`pwe/rebrand.py`）不改仓库里的文件，所以不在这张表里。它的锚点由脚本自己检查：上游改了对应的文字，脚本就会停下。
 
