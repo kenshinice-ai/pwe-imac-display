@@ -14,14 +14,42 @@ import CoreGraphics
 enum PWEScreenSharingRules {
     static let bundleID = "com.apple.ScreenSharing"
 
-    /// A window of Screen Sharing names this iMac: its title contains one of
-    /// the iMac's names or addresses. Case, ".local", hyphens and underscores
-    /// do not count ("LL-iMac-2017.local" and "LL iMac 2017" are one name).
-    /// Names shorter than 3 characters match too much and are ignored.
+    /// A window of Screen Sharing names this iMac. A name must be the whole
+    /// of the title's name part (what comes before a bracketed note such as
+    /// "(Observe)" or a dash separator); case, ".local", hyphens and
+    /// underscores do not count, so "LL-iMac-2017.local" and "LL iMac 2017" are
+    /// one name, while "iMac" is not "Office iMac". An address must be a whole
+    /// word of the title: "10.0.0.5" is not "10.0.0.51".
     static func isViewing(windowTitles: [String], names: [String]) -> Bool {
-        let wanted = names.map(normalized).filter { $0.count >= 3 }
-        guard !wanted.isEmpty else { return false }
-        return windowTitles.map(normalized).contains { title in wanted.contains { title.contains($0) } }
+        let cores = Set(windowTitles.map(namePart).filter { !$0.isEmpty })
+        let words = Set(windowTitles.flatMap(self.words))
+        return names.contains { name in
+            if isAddress(name) { return words.contains(name.lowercased()) }
+            let wanted = normalized(name)
+            return wanted.count >= 3 && cores.contains(wanted)
+        }
+    }
+
+    /// The title before a bracketed note or a dash separator, normalised.
+    static func namePart(_ title: String) -> String {
+        var part = title
+        for marker in ["(", "[", " — ", " – "] {
+            if let range = part.range(of: marker) { part = String(part[..<range.lowerBound]) }
+        }
+        return normalized(part)
+    }
+
+    static func words(_ title: String) -> [String] {
+        title.lowercased()
+            .split(whereSeparator: { $0.isWhitespace || "()[],;".contains($0) })
+            .map(String.init)
+    }
+
+    /// An IPv4 or IPv6 address, as the receiver announces its addresses.
+    static func isAddress(_ text: String) -> Bool {
+        if text.contains(":") { return true }
+        let parts = text.split(separator: ".", omittingEmptySubsequences: false)
+        return parts.count == 4 && parts.allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isNumber) }
     }
 
     static func normalized(_ text: String) -> String {

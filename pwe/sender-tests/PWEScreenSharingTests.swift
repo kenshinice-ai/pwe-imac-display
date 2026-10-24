@@ -12,6 +12,17 @@ final class PWEScreenSharingTests: XCTestCase {
         XCTAssertTrue(PWEScreenSharingRules.isViewing(windowTitles: ["Other", "169.254.6.224 (Observe)"], names: names))
     }
 
+    func testAPartialNameOrAddressDoesNot() {
+        // Review 2026-10-24: "iMac" matched "Office iMac", "10.0.0.5" matched "10.0.0.51".
+        XCTAssertFalse(PWEScreenSharingRules.isViewing(windowTitles: ["Office iMac"], names: ["iMac"]))
+        XCTAssertFalse(PWEScreenSharingRules.isViewing(windowTitles: ["10.0.0.51"], names: ["10.0.0.5"]))
+        XCTAssertFalse(PWEScreenSharingRules.isViewing(windowTitles: ["LL iMac 2017 Pro"], names: names))
+        XCTAssertTrue(PWEScreenSharingRules.isViewing(windowTitles: ["LL iMac 2017 (Observe)"], names: names))
+        XCTAssertTrue(PWEScreenSharingRules.isViewing(windowTitles: ["10.0.0.5"], names: ["10.0.0.5"]))
+        XCTAssertTrue(PWEScreenSharingRules.isAddress("fe80::1%bridge0"))
+        XCTAssertFalse(PWEScreenSharingRules.isAddress("iMac 2017"))
+    }
+
     func testAnotherMacDoesNot() {
         XCTAssertFalse(PWEScreenSharingRules.isViewing(windowTitles: ["Office Mac mini"], names: names))
         XCTAssertFalse(PWEScreenSharingRules.isViewing(windowTitles: [], names: names))
