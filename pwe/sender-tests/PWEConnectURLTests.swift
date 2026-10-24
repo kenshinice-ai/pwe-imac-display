@@ -36,4 +36,16 @@ final class PWEConnectURLTests: XCTestCase {
         XCTAssertEqual(plan(["session": "2"]), .notOurs)
         XCTAssertEqual(plan(["receiver": "auto"], knowsIMac: false), .notOurs)
     }
+
+    /// Review 2026-10-24: only the Picture menu's choices for this iMac.
+    func testOnlyOfferedPicturesAreAccepted() {
+        let fiveK = PWEPictureRules.choices(panelWidth: 5120)
+        let fourK = PWEPictureRules.choices(panelWidth: 4096)
+        XCTAssertEqual(Rules.acceptedPicture(.crisp2160p60, choices: fiveK), .crisp2160p60)
+        // The 30-frame 1440p is taken as the menu's Standard · 1440p.
+        XCTAssertEqual(Rules.acceptedPicture(.standard1440p, choices: fiveK), .smooth1440p60)
+        // 5K on a 21.5-inch 4K iMac, or a preset no menu offers: ignored.
+        XCTAssertNil(Rules.acceptedPicture(.native5k60Experimental, choices: fourK))
+        XCTAssertNil(Rules.acceptedPicture(.smooth1800p60, choices: fiveK))
+    }
 }

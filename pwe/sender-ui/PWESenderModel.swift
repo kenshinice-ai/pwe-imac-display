@@ -247,6 +247,13 @@ enum PWEConnectURLRules {
             .allSatisfy { params[$0] == nil }
     }
 
+    /// The picture a URL may ask for: one of the Picture menu's choices for
+    /// this iMac, under the menu's name for it (PWEPictureRules.offered).
+    static func acceptedPicture(_ asked: TBDisplayCapturePreset, choices: [TBDisplayCapturePreset]) -> TBDisplayCapturePreset? {
+        let offered = PWEPictureRules.offered(asked)
+        return choices.contains(offered) ? offered : nil
+    }
+
     static func plan(plainAutomatic: Bool, knowsIMac: Bool, connected: Bool,
                      picture: TBDisplayCapturePreset, wantedPicture: TBDisplayCapturePreset?,
                      mode: PWEDisplayMode, wantedMode: PWEDisplayMode?) -> Plan {
@@ -420,6 +427,9 @@ final class PWESenderModel: ObservableObject {
     private static let wakeSettleTime: TimeInterval = 15
     /// T54: a connect URL's picture and mode are being applied together; one reconnect follows.
     private var applyingConnectURL = false
+    /// T54: a connect URL's picture for the next connection. It is remembered
+    /// only once it shows (rememberShowingPicture), like any picture that works.
+    private var urlPicture: TBDisplayCapturePreset?
     /// A1: a Disconnect (or Cancel) happened in this run; no automatic pairing after it.
     private var disconnectedThisRun = false
     /// A1: iMacs automatic pairing has been started for in this run.
@@ -809,9 +819,10 @@ final class PWESenderModel: ObservableObject {
         ]
         // The engine applies this after the receiver's saved display profile, on
         // every attempt of this connection: reconnects, replugs and wakes alike.
-        if let preset = rememberedPicture(for: receiverKey) ?? defaultPicture {
+        if let preset = urlPicture ?? rememberedPicture(for: receiverKey) ?? defaultPicture {
             components.queryItems?.append(URLQueryItem(name: "preset", value: preset.rawValue))
         }
+        urlPicture = nil
         syncRendering()
         if let session { Self.prepareForPWEConnection(session) }
         if let url = components.url { TBSenderAutomation.pweHandleOwn(url: url) }
@@ -824,7 +835,14 @@ final class PWESenderModel: ObservableObject {
     /// T54: a `connect` URL from outside, applied like the menu's own choices
     /// (PWEConnectURLRules). False leaves it to upstream's handling.
     func handleConnectURL(_ params: [String: String]) -> Bool {
-        let wantedPicture = params["preset"].flatMap { TBSenderAutomation.parsePreset($0) }
+        // Only what the Picture menu offers this iMac, as the menu names it
+        // (the 30-frame 1440p is the 60-frame one); anything else is ignored.
+        let asked = params["preset"].flatMap { TBSenderAutomation.parsePreset($0) }
+        let choices = PWEPictureRules.choices(panelWidth: service.flatMap { current($0) }?.panelWidth)
+        let wantedPicture = asked.flatMap { PWEConnectURLRules.acceptedPicture($0, choices: choices) }
+        if let asked, wantedPicture == nil {
+            PWELog.note("[pwe] connect URL: picture \(asked.rawValue) is not offered for this iMac; ignored")
+        }
         let wantedMode = params["mode"].flatMap { TBSenderAutomation.parseMode($0) }
             .map { $0 == .desktopMirror ? PWEDisplayMode.mirror : .extended }
         let plan = PWEConnectURLRules.plan(
@@ -839,11 +857,11 @@ final class PWESenderModel: ObservableObject {
             return true
         case .reconnect, .connect:
             applyingConnectURL = true
-            if let wantedPicture, wantedPicture != picture, let key = receiverKey { remember(wantedPicture, for: key) }
+            if let wantedPicture, wantedPicture != picture { urlPicture = wantedPicture }
             if let wantedMode, wantedMode != displayMode { displayMode = wantedMode }
             applyingConnectURL = false
             objectWillChange.send()
-            let what = "picture \(picture.rawValue), \(displayMode.rawValue)"
+            let what = "picture \((urlPicture ?? picture).rawValue), \(displayMode.rawValue)"
             if plan == .reconnect {
                 reconnectIfShowing(because: "connect URL: \(what)")
             } else {
