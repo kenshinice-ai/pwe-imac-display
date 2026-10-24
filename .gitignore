@@ -43,4 +43,7 @@ pboard_tool
 # PWE (1.1.1)
 test_ratelimit
 test_catchup
+test_runloop_thread
+test_input_rate
+post_moves
 *.dSYM/

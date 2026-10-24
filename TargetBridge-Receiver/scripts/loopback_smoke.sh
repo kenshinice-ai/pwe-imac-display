@@ -38,6 +38,11 @@
 #                       held up 3 s (test hook) never stall the main loop, and
 #                       quitting during one does not hang (PWE, T40). Uses a
 #                       named test pasteboard, never the system clipboard
+#   11b. event tap   -> in receiverMaster the global tap (listen-only, test
+#                       hook) forwards still mouse moves (post_moves) on its own
+#                       thread, also while the main loop is stalled for 1.5 s;
+#                       with TB_RECEIVER_TAP_ON_MAIN=1 (the 1.1.0 arrangement)
+#                       none get through during the stall (PWE 1.1.1, A15)
 #   9. log file      -> every receiver above also wrote a stamped receiver.log
 #
 # The receiver runs with TB_RECEIVER_NO_BONJOUR=1 on TB_RECEIVER_TEST_PORT, so a
@@ -343,6 +348,50 @@ else
     RECEIVER_PID=""
     expect_log "[main] bye (clipboard thread still waiting for the clipboard)" "receiver left the stuck clipboard read behind"
     rm -f "$CODE_FILE"
+fi
+
+phase "Phase 11b: the event tap on its own thread (1.1.1, A15)"
+# Still mouse moves (post_moves) stand in for the iMac's mouse; the tap only
+# listens (test hook), so the Mac running the smoke keeps its keyboard and
+# pointer. Halfway, the receiver's main loop stalls for 1.5 s (test hook).
+if ! make -C "$SRC" smoke_peer post_moves >/dev/null; then
+    fail "could not build the event-tap phase's helpers"
+else
+    tap_check() {   # <label> [relaunch env...]: prints the events that came during the stall
+        local label="$1"; shift
+        CODE_FILE="$(mktemp -t tb_smoke_code)"
+        rm -f "$CODE_FILE"
+        PEER_LOG="$(mktemp -t tb_smoke_peer)"
+        relaunch TB_RECEIVER_TEST_LOOPBACK_IS_CABLE=1 TB_RECEIVER_TEST_CODE_FILE="$CODE_FILE" \
+            TB_RECEIVER_TEST_TAP_LISTEN_ONLY=1 TB_RECEIVER_TEST_INPUT_RATE_MS=2000 "$@"
+        "$SRC/post_moves" 1000 4 &
+        local poster=$!
+        "$SRC/smoke_peer" --port "$PORT" --service "$PEER_SERVICE" --code-file "$CODE_FILE" \
+            --input-check 4000 --stall-ms 1500 >"$PEER_LOG" 2>&1
+        wait "$poster" 2>/dev/null
+        rm -f "$CODE_FILE"
+        TAP_DURING="$(sed -n 's/^PEER input events [0-9]*, \([0-9]*\) while.*/\1/p' "$PEER_LOG")"
+        TAP_TOTAL="$(sed -n 's/^PEER input events \([0-9]*\),.*/\1/p' "$PEER_LOG")"
+    }
+    tap_check "own thread"
+    if grep -qF "[test] receiverMaster: listen-only tap unavailable" "$LOG"; then
+        print "tap check not run: this process may not create an event tap (Input Monitoring)"
+    else
+        expect_log "(consume=false, own thread)" "the tap runs on its own thread"
+        if [[ -n "$TAP_TOTAL" ]] && (( TAP_TOTAL > 0 && TAP_DURING > 0 )); then
+            pass "input reached the Mac during a 1.5 s main-loop stall ($TAP_DURING of $TAP_TOTAL events)"
+        else
+            fail "no input during the stall (events: ${TAP_TOTAL:-none}, during: ${TAP_DURING:-none}): $(tail -1 "$PEER_LOG")"
+        fi
+        expect_log "[input] forwarded to the Mac over " "the tap logs how fast input reaches the Mac"
+        tap_check "main run loop" TB_RECEIVER_TAP_ON_MAIN=1
+        expect_log "(consume=false, main run loop)" "TB_RECEIVER_TAP_ON_MAIN puts the tap on the main run loop"
+        if [[ -n "$TAP_DURING" ]] && (( TAP_DURING == 0 )); then
+            pass "with the tap on the main run loop (1.1.0), none came during the stall (of $TAP_TOTAL)"
+        else
+            fail "the main-run-loop tap forwarded during a stall (${TAP_DURING:-none}): the comparison is broken"
+        fi
+    fi
 fi
 
 phase "Phase 9: log file"

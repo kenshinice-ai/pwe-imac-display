@@ -76,6 +76,8 @@ C_SRC += src/tb_cursor_image.c
 C_SRC += src/tb_log.c
 # The main loop's watchdog: names a call that blocks the loop (PWE 1.1, T40).
 C_SRC += src/tb_loopwatch.c
+# The global event tap on its own run-loop thread, and its rate line (PWE 1.1.1, A15).
+C_SRC += src/tb_runloop_thread.c src/tb_input_rate.c
 # Sound output and volume on their own thread, off the main loop (PWE 1.1, T40).
 C_SRC += src/audio_out.c
 # Hardware decode as VideoToolbox reports it, and the [sys] start-up line (PWE 1.1).
@@ -108,7 +110,7 @@ src/pwe_%.o: $(SEC_DIR)/pwe_%.c $(SEC_DIR)/pwe_secure.h
 
 clean:
 	rm -f $(OBJ) $(BIN) $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEIVER_PROFILE_BIN) $(TEST_AUDIO_RING_BIN) $(TEST_AUDIO_OUT_BIN) $(TEST_CLIPBOARD_BIN) $(TEST_SYSINFO_BIN) test_monitor_shield
-	rm -f smoke_peer pboard_tool
+	rm -f smoke_peer pboard_tool post_moves
 	rm -f $(PWE_RENDER_TEST_BINS)
 	rm -f $(TEST_SECURE_BIN) bench_secure secure_receiver secure_peer
 	rm -rf *.dSYM
@@ -165,6 +167,8 @@ PWE_RENDER_TEST_BINS = test_trace test_metal_video test_cursor_image test_log te
 PWE_RENDER_TEST_BINS += test_ratelimit
 # PWE (1.1.1): only the newest picture of a backlog is shown.
 PWE_RENDER_TEST_BINS += test_catchup
+# PWE (1.1.1): the event tap on its own run-loop thread, and its rate line.
+PWE_RENDER_TEST_BINS += test_runloop_thread test_input_rate
 
 
 # ---- PWE: secure layer tests (need libsodium; AddressSanitizer on) -----------
@@ -189,6 +193,10 @@ secure_peer: tests/secure_peer.c $(SEC_TEST_SRC) $(SEC_DIR)/pwe_keystore.h
 smoke_peer: tests/secure_peer.c $(SEC_TEST_SRC) $(SEC_DIR)/pwe_secure.h $(SEC_DIR)/pwe_keystore.h
 	$(CC) $(TEST_CFLAGS) -D_DARWIN_C_SOURCE -Isrc -I$(SEC_DIR) $(SODIUM_CFLAGS) \
 	  tests/secure_peer.c $(SEC_TEST_SRC) $(SEC_TEST_LIBS) -o $@
+
+# PWE (1.1.1): input for the smoke's event-tap phase (still mouse moves).
+post_moves: tests/post_moves.c
+	$(CC) -O2 -g -Wall -Wextra tests/post_moves.c -framework ApplicationServices -o $@
 
 pboard_tool: tests/pboard_tool.m
 	$(CC) -O2 -g -Wall -Wextra -fobjc-arc tests/pboard_tool.m -framework Foundation -framework AppKit -o $@
@@ -233,6 +241,12 @@ test_ratelimit: tests/test_ratelimit.c src/tb_ratelimit.h
 
 test_catchup: tests/test_catchup.c src/tb_catchup.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_catchup.c -o $@
+
+test_runloop_thread: tests/test_runloop_thread.c src/tb_runloop_thread.c src/tb_runloop_thread.h
+	$(CC) $(TEST_CFLAGS) -Isrc tests/test_runloop_thread.c src/tb_runloop_thread.c -framework CoreFoundation -o $@
+
+test_input_rate: tests/test_input_rate.c src/tb_input_rate.c src/tb_input_rate.h
+	$(CC) $(TEST_CFLAGS) -Isrc tests/test_input_rate.c src/tb_input_rate.c -o $@
 
 test_cursor_image: tests/test_cursor_image.c src/tb_cursor_image.c src/tb_cursor_image.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_cursor_image.c src/tb_cursor_image.c -o $@

@@ -28,6 +28,8 @@
 #include "tb_loopwatch.h"
 #include "tb_trace.h"
 #include "tb_catchup.h"
+#include "tb_input_rate.h"
+#include "tb_runloop_thread.h"
 #include "tb_clipboard.h"
 #include "tb_sysinfo.h"
 #include "tb_running_app.h"
@@ -61,6 +63,8 @@
 #include <CoreGraphics/CoreGraphics.h>
 #include <CoreVideo/CoreVideo.h>
 #include <sys/ioctl.h>
+#include <pthread.h>
+#include <stdatomic.h>
 
 #include <errno.h>
 #include <limits.h>
@@ -153,6 +157,24 @@ struct app {
     CFMachPortRef input_tap;
     CFRunLoopSourceRef input_tap_source;
     int      input_tap_consumes_events;
+    /* PWE (1.1.1, A15): the global event tap runs on its own thread, so the
+     * iMac's input reaches the Mac as it comes, not in bursts at the frame
+     * rate. NULL (thread unavailable, or TB_RECEIVER_TAP_ON_MAIN=1): on the
+     * main run loop, as in 1.1.0. */
+    struct tb_rlthread *tap_thread;
+    int      tap_thread_tried;
+    /* Recursive. Held for every send to the Mac (the tap thread sends too)
+     * and while the tap's callback reads and writes the input state below
+     * (modifier keys, switch timers, counts). */
+    pthread_mutex_t tx_lock;
+    /* receiverMaster with a session: input goes to the Mac. Written under
+     * tx_lock on the main thread; the tap reads it. */
+    atomic_int forwarding;
+    /* Whether this window is on the Space being viewed (AppKit, so asked on
+     * the main thread every 100 ms); the tap forwards nothing when it is not. */
+    atomic_int window_on_active_space;
+    uint64_t   last_space_check_ms;
+    struct tb_input_rate tap_rate;   /* the tap's thread only */
 
     /* PWE (T40): sound output and volume, on their own thread (audio_out.h). */
     struct tb_audio_out *audio;
@@ -503,6 +525,33 @@ static void tb_json_escape_string(const char *src, char *dest, size_t size) {
     dest[j] = '\0';
 }
 
+/* PWE (1.1.1): every send to the Mac goes through these two. The event tap's
+ * thread sends input while the main thread sends everything else; tx_lock
+ * keeps their records whole and in order. Receiving (tb_conn_feed, main
+ * thread) uses the session's receive state only, so it needs no lock. */
+static int tb_receiver_send(struct app *a, uint8_t type, const uint8_t *payload, size_t len) {
+    pthread_mutex_lock(&a->tx_lock);
+    const int r = tb_conn_send(&a->conn, type, payload, len);
+    pthread_mutex_unlock(&a->tx_lock);
+    return r;
+}
+
+static int tb_receiver_send_packet(struct app *a, const uint8_t *pkt, size_t len) {
+    pthread_mutex_lock(&a->tx_lock);
+    const int r = tb_conn_send_packet(&a->conn, pkt, len);
+    pthread_mutex_unlock(&a->tx_lock);
+    return r;
+}
+
+/* PWE (1.1.1): whether input goes to the Mac, from the control mode and the
+ * session. Main thread; call after either changes. */
+static void tb_receiver_update_forwarding(struct app *a) {
+    const int on = strcmp(a->input_control_mode, "receiverMaster") == 0 && a->client_fd >= 0;
+    pthread_mutex_lock(&a->tx_lock);
+    atomic_store(&a->forwarding, on);
+    pthread_mutex_unlock(&a->tx_lock);
+}
+
 /* PWE (T40): the clipboard is read and written on its own thread
  * (tb_clipboard.m); upstream ran pbpaste and pbcopy on this loop. This sends
  * text the worker found. */
@@ -516,7 +565,7 @@ static void tb_receiver_send_clipboard_text(struct app *a, const char *text) {
     int len = snprintf(json, sizeof(json), "{\"text\":\"%s\"}", escaped);
     if (len <= 0 || (size_t)len >= sizeof(json)) return;
 
-    (void)tb_conn_send(&a->conn, TB_PKT_CLIPBOARD, (const uint8_t *)json, (size_t)len);
+    (void)tb_receiver_send(a, TB_PKT_CLIPBOARD, (const uint8_t *)json, (size_t)len);
 }
 
 static void tb_format_i18n(char *dest,
@@ -1080,12 +1129,15 @@ static void tb_receiver_apply_input_control_mode(struct app *a, const uint8_t *p
         snprintf(a->input_control_mode, sizeof(a->input_control_mode), "%s", mode);
     }
     tb_receiver_input_log("[input] control mode updated to %s", a->input_control_mode);
+    tb_receiver_update_forwarding(a);
     if (strcmp(a->input_control_mode, "receiverMaster") != 0) {
+        pthread_mutex_lock(&a->tx_lock);   /* PWE (1.1.1): the tap's state */
         a->sent_command_down = 0;
         a->sent_shift_down = 0;
         a->sent_option_down = 0;
         a->sent_control_down = 0;
         a->sent_caps_down = 0;
+        pthread_mutex_unlock(&a->tx_lock);
     }
     tb_receiver_refresh_input_capture(a);
 }
@@ -1485,8 +1537,9 @@ static void tb_receiver_send_input_event(struct app *a,
                                          int has_scroll_x, int scroll_x,
                                          int has_scroll_y, int scroll_y,
                                          int has_key_code, uint16_t key_code) {
-    if (!a || a->client_fd < 0) return;
-    if (strcmp(a->input_control_mode, "receiverMaster") != 0) return;
+    /* PWE (1.1.1): called from the tap's thread too; `forwarding` stands for
+     * "receiverMaster with a session" there. */
+    if (!a || !atomic_load(&a->forwarding)) return;
 
     char json[256];
     int len = snprintf(json, sizeof(json), "{\"kind\":\"%s\"", kind ? kind : "");
@@ -1504,28 +1557,32 @@ static void tb_receiver_send_input_event(struct app *a,
     write_be32(pkt, (uint32_t)(1 + len));
     pkt[4] = TB_PKT_INPUT_EVENT;
     memcpy(pkt + 5, json, (size_t)len);
+    pthread_mutex_lock(&a->tx_lock);
+    if (!atomic_load(&a->forwarding)) {   /* the session ended meanwhile */
+        pthread_mutex_unlock(&a->tx_lock);
+        return;
+    }
     a->input_events_sent += 1;
     if (tb_should_log_input_event(a->input_events_sent)) {
         /* PWE: whether a key was sent, never which: the log is a file now,
          * and the keys typed may be a password. */
-        tb_receiver_input_log("[input][receiver->sender] send #%llu kind=%s dx=%d dy=%d sx=%d sy=%d key=%s mode=%s",
+        tb_receiver_input_log("[input][receiver->sender] send #%llu kind=%s dx=%d dy=%d sx=%d sy=%d key=%s mode=receiverMaster",
                               (unsigned long long)a->input_events_sent,
                               kind ? kind : "?",
                               has_dx ? dx : 0,
                               has_dy ? dy : 0,
                               has_scroll_x ? scroll_x : 0,
                               has_scroll_y ? scroll_y : 0,
-                              has_key_code ? "yes" : "no",
-                              a->input_control_mode);
+                              has_key_code ? "yes" : "no");
     }
     (void)tb_conn_send_packet(&a->conn, pkt, 5 + (size_t)len);
+    pthread_mutex_unlock(&a->tx_lock);
 }
 
 static void tb_receiver_send_input_button_event(struct app *a,
                                                 const char *kind,
                                                 int click_count) {
-    if (!a || a->client_fd < 0) return;
-    if (strcmp(a->input_control_mode, "receiverMaster") != 0) return;
+    if (!a || !atomic_load(&a->forwarding)) return;   /* PWE (1.1.1): as above */
 
     if (click_count < 1) click_count = 1;
     if (click_count > 3) click_count = 3;
@@ -1541,19 +1598,24 @@ static void tb_receiver_send_input_button_event(struct app *a,
     write_be32(pkt, (uint32_t)(1 + len));
     pkt[4] = TB_PKT_INPUT_EVENT;
     memcpy(pkt + 5, json, (size_t)len);
+    pthread_mutex_lock(&a->tx_lock);
+    if (!atomic_load(&a->forwarding)) {
+        pthread_mutex_unlock(&a->tx_lock);
+        return;
+    }
     a->input_events_sent += 1;
     if (tb_should_log_input_event(a->input_events_sent)) {
-        tb_receiver_input_log("[input][receiver->sender] send #%llu kind=%s dx=%d dy=%d sx=%d sy=%d key=%s mode=%s",
+        tb_receiver_input_log("[input][receiver->sender] send #%llu kind=%s dx=%d dy=%d sx=%d sy=%d key=%s mode=receiverMaster",
                               (unsigned long long)a->input_events_sent,
                               kind ? kind : "?",
                               0,
                               0,
                               0,
                               0,
-                              "no",
-                              a->input_control_mode);
+                              "no");
     }
     (void)tb_conn_send_packet(&a->conn, pkt, 5 + (size_t)len);
+    pthread_mutex_unlock(&a->tx_lock);
 }
 
 static void tb_receiver_send_target_switch(struct app *a, int direction) {
@@ -1609,6 +1671,22 @@ static void tb_receiver_send_deactivate_control(struct app *a) {
                                  0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 }
 
+/* PWE (1.1.1): how old an event is, in ms; negative when unknown. An event's
+ * timestamp is nanoseconds of uptime (CLOCK_UPTIME_RAW), on Apple silicon as
+ * on Intel (measured 2026-10-24: mach_absolute_time counts 24 MHz ticks on
+ * Apple silicon, so it is not the clock to compare with). */
+static double tb_receiver_event_age_ms(CGEventRef event) {
+    const uint64_t stamp = CGEventGetTimestamp(event);
+    const uint64_t now = tb_trace_now_ns();   /* CLOCK_UPTIME_RAW */
+    if (!stamp || now < stamp) return -1.0;
+    const double ms = (double)(now - stamp) / 1e6;
+    return ms < 10000.0 ? ms : -1.0;
+}
+
+/* PWE (1.1.1): the input state below is the tap's and is guarded by tx_lock
+ * (recursive: the sends inside take it again). */
+static int tb_receiver_input_tap_forward(struct app *a, CGEventType type, CGEventRef event);
+
 static CGEventRef tb_receiver_input_tap_callback(CGEventTapProxy proxy,
                                                  CGEventType type,
                                                  CGEventRef event,
@@ -1622,15 +1700,46 @@ static CGEventRef tb_receiver_input_tap_callback(CGEventTapProxy proxy,
         return event;
     }
 
-    if (strcmp(a->input_control_mode, "receiverMaster") != 0) return event;
+    /* PWE (1.1.1): this runs on the tap's thread; the control mode string
+     * belongs to the main thread, `forwarding` stands for it. */
+    if (!atomic_load(&a->forwarding)) return event;
 
     /* Only drive the sender while the user is actually on the shared display
      * window's Space. The global tap also sees events from other receiver
      * Spaces; forwarding those would make the sender's cursor jump while the
      * user is doing local work on the receiver. When the window is on a
-     * different Space, pass the event through untouched and forward nothing. */
-    if (!tb_disp_window_on_active_space(a->disp)) return event;
+     * different Space, pass the event through untouched and forward nothing.
+     * PWE (1.1.1): AppKit answers that on the main thread only; this reads
+     * its answer from at most 100 ms ago. */
+    if (!atomic_load(&a->window_on_active_space)) return event;
 
+    pthread_mutex_lock(&a->tx_lock);
+    const int should_consume = tb_receiver_input_tap_forward(a, type, event);
+    pthread_mutex_unlock(&a->tx_lock);
+
+    /* PWE (1.1.1): how fast input reaches the Mac, one line per 10 s. */
+    uint64_t rate_window_ns = 10000000000ull;
+#if TB_RECEIVER_TEST_HOOKS
+    {
+        /* Tests only: a shorter report window. */
+        static long test_window_ms = -1;   /* the tap's thread only */
+        if (test_window_ms < 0) {
+            const char *v = getenv("TB_RECEIVER_TEST_INPUT_RATE_MS");
+            test_window_ms = v ? strtol(v, NULL, 10) : 0;
+        }
+        if (test_window_ms > 0) rate_window_ns = (uint64_t)test_window_ms * 1000000ull;
+    }
+#endif
+    tb_input_rate_note(&a->tap_rate, tb_trace_now_ns(), tb_receiver_event_age_ms(event));
+    char rate_line[256];
+    if (tb_input_rate_report(&a->tap_rate, tb_trace_now_ns(), rate_window_ns, rate_line, sizeof(rate_line))) {
+        tb_receiver_input_log("[input] %s%s", rate_line, a->tap_thread ? "" : " (tap on the main run loop)");
+    }
+    return should_consume ? NULL : event;
+}
+
+/* Forward one event; 1 when it should not reach the iMac's own apps. */
+static int tb_receiver_input_tap_forward(struct app *a, CGEventType type, CGEventRef event) {
     int should_consume = 0;
 
     switch (type) {
@@ -1831,13 +1940,37 @@ static CGEventRef tb_receiver_input_tap_callback(CGEventTapProxy proxy,
         break;
     }
 
-    return should_consume ? NULL : event;
+    return should_consume;
 }
 
-static void tb_receiver_stop_input_tap(struct app *a) {
-    if (!a) return;
+/* PWE (1.1.1): the run-loop mode the tap's source lives in: the default mode
+ * on its own thread (which runs nothing else), all common modes on the main
+ * run loop, as in 1.1.0. */
+static CFStringRef tb_receiver_tap_mode(void) {
+    return CFRunLoopGetCurrent() == CFRunLoopGetMain() ? kCFRunLoopCommonModes : kCFRunLoopDefaultMode;
+}
+
+/* PWE (1.1.1): run `fn` where the tap lives (its thread, else here), and wait.
+ * Never with tx_lock held: the tap's callback takes it. */
+static void tb_receiver_tap_call(struct app *a, void (*fn)(void *), void *ctx) {
+    if (!a->tap_thread && !a->tap_thread_tried) {
+        a->tap_thread_tried = 1;
+        char on_main[8];
+        if (tb_disp_setting("TB_RECEIVER_TAP_ON_MAIN", "TBReceiverTapOnMain", on_main, sizeof(on_main)) &&
+            strcmp(on_main, "1") == 0) {
+            tb_receiver_input_log("[input] event tap on the main run loop (TB_RECEIVER_TAP_ON_MAIN)");
+        } else {
+            a->tap_thread = tb_rlthread_start("PWE input tap");
+            if (!a->tap_thread) tb_receiver_input_log("[input] no thread for the event tap; it runs on the main run loop");
+        }
+    }
+    if (!a->tap_thread || tb_rlthread_call(a->tap_thread, fn, ctx) != 0) fn(ctx);
+}
+
+static void tb_receiver_stop_input_tap_here(void *ctx) {
+    struct app *a = (struct app *)ctx;
     if (a->input_tap_source) {
-        CFRunLoopRemoveSource(CFRunLoopGetCurrent(), a->input_tap_source, kCFRunLoopCommonModes);
+        CFRunLoopRemoveSource(CFRunLoopGetCurrent(), a->input_tap_source, tb_receiver_tap_mode());
         CFRelease(a->input_tap_source);
         a->input_tap_source = NULL;
     }
@@ -1849,14 +1982,52 @@ static void tb_receiver_stop_input_tap(struct app *a) {
     a->input_tap_consumes_events = 0;
 }
 
-static void tb_receiver_start_input_tap(struct app *a) {
+static void tb_receiver_stop_input_tap(struct app *a) {
+    if (!a || (!a->input_tap && !a->input_tap_source)) return;
+    tb_receiver_tap_call(a, tb_receiver_stop_input_tap_here, a);
+}
+
+struct tb_receiver_tap_start {
+    struct app       *a;
+    CGEventTapOptions options;
+    CGEventMask       mask;
+    int               can_consume;
+};
+
+/* On the tap's thread (or the main thread without one): create the tap and
+ * attach it to this thread's run loop. */
+static void tb_receiver_start_input_tap_here(void *ctx) {
+    struct tb_receiver_tap_start *start = (struct tb_receiver_tap_start *)ctx;
+    struct app *a = start->a;
+    a->input_tap = CGEventTapCreate(
+        kCGHIDEventTap,
+        kCGHeadInsertEventTap,
+        start->options,
+        start->mask,
+        tb_receiver_input_tap_callback,
+        a
+    );
+    if (!a->input_tap) return;
+    a->input_tap_source = CFMachPortCreateRunLoopSource(NULL, a->input_tap, 0);
+    if (!a->input_tap_source) {
+        tb_receiver_stop_input_tap_here(a);
+        return;
+    }
+    tb_input_rate_reset(&a->tap_rate);
+    a->input_tap_consumes_events = start->can_consume;
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), a->input_tap_source, tb_receiver_tap_mode());
+    CGEventTapEnable(a->input_tap, true);
+}
+
+/* listen_only: never keep events from the iMac's own apps (tests). */
+static void tb_receiver_start_input_tap(struct app *a, int listen_only) {
     if (!a || a->input_tap) return;
 
     if (!tb_receiver_input_monitoring_trusted()) {
         return;
     }
 
-    const int can_consume = tb_receiver_accessibility_trusted() ? 1 : 0;
+    const int can_consume = !listen_only && tb_receiver_accessibility_trusted() ? 1 : 0;
     CGEventTapOptions tap_options = can_consume ? kCGEventTapOptionDefault : kCGEventTapOptionListenOnly;
 
     CGEventMask mask =
@@ -1875,30 +2046,18 @@ static void tb_receiver_start_input_tap(struct app *a) {
         CGEventMaskBit(kCGEventKeyUp) |
         CGEventMaskBit(kCGEventFlagsChanged);
 
-    a->input_tap = CGEventTapCreate(
-        kCGHIDEventTap,
-        kCGHeadInsertEventTap,
-        tap_options,
-        mask,
-        tb_receiver_input_tap_callback,
-        a
-    );
+    /* PWE (1.1.1): the window's Space before the first event, not 100 ms later. */
+    atomic_store(&a->window_on_active_space, tb_disp_window_on_active_space(a->disp));
+    a->last_space_check_ms = now_ms();
+    struct tb_receiver_tap_start start = { a, tap_options, mask, can_consume };
+    tb_receiver_tap_call(a, tb_receiver_start_input_tap_here, &start);
     if (!a->input_tap) {
         tb_receiver_input_log("[input] global event tap unavailable; will fall back to SDL window input");
         return;
     }
-
-    a->input_tap_source = CFMachPortCreateRunLoopSource(NULL, a->input_tap, 0);
-    if (!a->input_tap_source) {
-        tb_receiver_stop_input_tap(a);
-        tb_receiver_input_log("[input] failed to create runloop source for event tap; using SDL fallback");
-        return;
-    }
-    CFRunLoopAddSource(CFRunLoopGetCurrent(), a->input_tap_source, kCFRunLoopCommonModes);
-    CGEventTapEnable(a->input_tap, true);
-    a->input_tap_consumes_events = can_consume;
-    tb_receiver_input_log("[input] global event tap enabled for receiverMaster mode (consume=%s)",
-                          can_consume ? "true" : "false");
+    tb_receiver_input_log("[input] global event tap enabled for receiverMaster mode (consume=%s, %s)",
+                          can_consume ? "true" : "false",
+                          a->tap_thread ? "own thread" : "main run loop");
 }
 
 /* PWE (1.1.1): the first time a Mac hands control to this iMac
@@ -1942,6 +2101,16 @@ static void tb_receiver_refresh_input_capture(struct app *a) {
         capture = 0;
     }
 #endif
+#if TB_RECEIVER_TEST_HOOKS
+    /* Tests only: the global tap in listen-only mode and nothing else of input
+     * capture (the pointer stays, keys reach this Mac's apps), so the smoke can
+     * watch the tap forward input without taking the Mac it runs on. */
+    if (capture && getenv("TB_RECEIVER_TEST_TAP_LISTEN_ONLY")) {
+        tb_receiver_start_input_tap(a, 1);
+        tb_receiver_input_log("[test] receiverMaster: listen-only tap %s", a->input_tap ? "on" : "unavailable");
+        return;
+    }
+#endif
     if (capture) {
         tb_receiver_request_input_permissions_once(a);
         const int wants_global_tap = tb_receiver_input_monitoring_trusted() ? 1 : 0;
@@ -1949,7 +2118,7 @@ static void tb_receiver_refresh_input_capture(struct app *a) {
         if (a->input_tap && (!wants_global_tap || a->input_tap_consumes_events != wants_consume)) {
             tb_receiver_stop_input_tap(a);
         }
-        tb_receiver_start_input_tap(a);
+        tb_receiver_start_input_tap(a, 0);
         tb_disp_set_input_intercept_active(a->disp, 1);
         tb_disp_set_input_capture_active(a->disp, a->input_tap == NULL ? 1 : 0);
         tb_gesture_bridge_set_active(1);
@@ -1988,7 +2157,7 @@ static void tb_receiver_send_display_tweaks_if_changed(struct app *a) {
     write_be32(pkt, (uint32_t)(1 + len));
     pkt[4] = TB_PKT_DISPLAY_TWEAKS;
     memcpy(pkt + 5, json, (size_t)len);
-    (void)tb_conn_send_packet(&a->conn, pkt, 5 + (size_t)len);
+    (void)tb_receiver_send_packet(a, pkt, 5 + (size_t)len);
 }
 
 /* Draw the sender's pointer here, from 0x39 pictures and 0x32 positions, so
@@ -2058,7 +2227,7 @@ static void send_receiver_info(struct app *a) {
     pkt[4] = TB_PKT_DISPLAY_PROFILE;
     memcpy(pkt + 5, json, (size_t)json_len);
 
-    if (tb_conn_send_packet(&a->conn, pkt, packet_len) == 0) {
+    if (tb_receiver_send_packet(a, pkt, packet_len) == 0) {
         fprintf(stderr,
                 "[main] sent display profile: panel=%ux%u mode=%ux%u hidpi=%d name=%s\n",
                 profile.panel_w, profile.panel_h, profile.mode_w, profile.mode_h,
@@ -2083,6 +2252,10 @@ static void close_client(struct app *a) {
     }
     memset(a->pwe_test_counts, 0, sizeof(a->pwe_test_counts));
 #endif
+    /* PWE (1.1.1): the tap's thread stops sending before the connection goes. */
+    pthread_mutex_lock(&a->tx_lock);
+    atomic_store(&a->forwarding, 0);
+    pthread_mutex_unlock(&a->tx_lock);
     TB_LOOP_PHASE("session end: close the connection");
     if (a->client_fd >= 0) tb_conn_close(&a->conn, now_ms());   /* PWE: closes the socket, wipes keys */
     a->client_fd = -1;
@@ -2637,6 +2810,16 @@ int main(int argc, char **argv) {
     snprintf(a.input_control_mode, sizeof(a.input_control_mode), "%s", "off");
     a.last_input_monitoring_trusted = -1;
     a.last_accessibility_trusted = -1;
+    {
+        /* PWE (1.1.1): see struct app. */
+        pthread_mutexattr_t attr;
+        pthread_mutexattr_init(&attr);
+        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+        pthread_mutex_init(&a.tx_lock, &attr);
+        pthread_mutexattr_destroy(&attr);
+        atomic_init(&a.forwarding, 0);
+        atomic_init(&a.window_on_active_space, 1);
+    }
     tb_refresh_idle_localized_strings(&a);
     build_display_host(a.display_host, sizeof(a.display_host), a.ip_text,
                        tb_ip[0] || usb_ip[0] || net_ip[0]);
@@ -2973,6 +3156,12 @@ int main(int argc, char **argv) {
         }
 
         if (strcmp(a.input_control_mode, "receiverMaster") == 0 && a.client_fd >= 0) {
+            /* PWE (1.1.1): the tap's thread cannot ask AppKit; ask for it. */
+            if (a.input_tap && t - a.last_space_check_ms >= 100) {
+                TB_LOOP_PHASE("input: is the window on the active Space (AppKit)");
+                a.last_space_check_ms = t;
+                atomic_store(&a.window_on_active_space, tb_disp_window_on_active_space(a.disp));
+            }
             TB_LOOP_PHASE("forward input to the Mac");
             struct tb_input_event input_event;
             while (tb_disp_pop_input_event(a.disp, &input_event)) {
@@ -3097,6 +3286,8 @@ int main(int argc, char **argv) {
     }
 #endif
     tb_receiver_stop_input_tap(&a);
+    tb_rlthread_stop(a.tap_thread);   /* PWE (1.1.1) */
+    a.tap_thread = NULL;
     tb_pwe_drop_held(&a);
     if (a.server_fd >= 0) close(a.server_fd);
     if (a.server6_fd >= 0) close(a.server6_fd);

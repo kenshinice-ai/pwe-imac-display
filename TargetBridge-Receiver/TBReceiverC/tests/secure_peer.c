@@ -15,6 +15,12 @@
  * the receiver does not send it back, then copy text "on the iMac" with
  * pboard_tool and wait for the receiver to send it. --leave-read: copy once
  * more and wait 300 ms, so the receiver is reading when the peer leaves.
+ *
+ * PWE (1.1.1, A15), --input-check <ms> [--stall-ms <ms>]: against the real
+ * receiver, switch to receiverMaster and count the input events it forwards
+ * for <ms>; 1 s in, ask it (test hook) to hold up its main loop for
+ * --stall-ms and count the events that still arrive meanwhile. Something
+ * else (tests/post_moves.c) makes the input.
  */
 
 #include "proto.h"
@@ -173,9 +179,45 @@ static int clipboard_check(struct pwe_sec *sec, int fd, const char *pasteboard, 
     return 0;
 }
 
+/* PWE (1.1.1, A15): see the header. 0 when any input event came. */
+static int input_check(struct pwe_sec *sec, int fd, unsigned ms, unsigned stall_ms) {
+    const char *mode = "{\"mode\":\"receiverMaster\"}";
+    send_sealed(sec, fd, TB_PKT_INPUT_CONTROL, (const uint8_t *)mode, strlen(mode));
+    const uint64_t t0 = mono_ms();
+    uint64_t next_hb = 0, stall_sent = 0;
+    int total = 0, during = 0;
+    for (;;) {
+        const uint64_t now = mono_ms();
+        if (now - t0 >= ms) break;
+        if (now >= next_hb) { send_heartbeat(sec, fd); next_hb = now + 1000; }
+        if (stall_ms && !stall_sent && now - t0 >= 1000) {
+            char stall[32];
+            const int n = snprintf(stall, sizeof(stall), "stall %u", stall_ms);
+            send_sealed(sec, fd, TB_PKT_TEST_DATA, (const uint8_t *)stall, (size_t)n);
+            stall_sent = now;
+        }
+        struct pollfd pfd = { fd, POLLIN, 0 };
+        if (poll(&pfd, 1, 20) <= 0) continue;
+        uint8_t type, *p, it, *inner;
+        size_t len, il;
+        if (read_packet(fd, &type, &p, &len) != 0) { fprintf(stderr, "PEER the receiver closed the session\n"); return 1; }
+        const int input = type == PWE_PKT_SEC_SEALED && pwe_sec_open(sec, p, len, &it, &inner, &il) == 0 &&
+                          it == TB_PKT_INPUT_EVENT;
+        free(p);
+        if (!input) continue;
+        total++;
+        /* Well inside the stall: not the events queued just before it. */
+        const uint64_t at = mono_ms();
+        if (stall_sent && at >= stall_sent + 200 && at + 200 <= stall_sent + stall_ms) during++;
+    }
+    printf("PEER input events %d, %d while the receiver's main loop was stalled\n", total, during);
+    return total > 0 ? 0 : 1;
+}
+
 int main(int argc, char **argv) {
     int port = 54399, frames = 30, expect = 0;   /* 1 = must ask for a code, -1 = must not */
     int forget = 0, leave_read = 0;
+    unsigned input_ms = 0, stall_ms = 0;
     const char *service = NULL, *code_file = NULL, *code = NULL;
     const char *pasteboard = NULL, *pboard_tool = NULL;
     for (int i = 1; i < argc; i++) {
@@ -190,6 +232,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--clipboard") && i + 1 < argc) pasteboard = argv[++i];
         else if (!strcmp(argv[i], "--pboard-tool") && i + 1 < argc) pboard_tool = argv[++i];
         else if (!strcmp(argv[i], "--leave-read")) leave_read = 1;
+        else if (!strcmp(argv[i], "--input-check") && i + 1 < argc) input_ms = (unsigned)atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--stall-ms") && i + 1 < argc) stall_ms = (unsigned)atoi(argv[++i]);
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     if (!service || pwe_sec_global_init() != 0) return 2;
@@ -263,6 +307,13 @@ int main(int argc, char **argv) {
 
     const char *hello = "{\"senderName\":\"Loopback Mac\",\"uiLanguage\":\"en\"}";
     send_sealed(sec, fd, TB_PKT_HELLO_RECEIVER, (const uint8_t *)hello, strlen(hello));
+    if (input_ms) {
+        int rc = input_check(sec, fd, input_ms, stall_ms);
+        send_sealed(sec, fd, TB_PKT_TEARDOWN, (const uint8_t *)"{\"reason\":\"done\"}", 17);
+        pwe_sec_free(sec);
+        close(fd);
+        return rc;
+    }
     if (pasteboard) {
         if (!pboard_tool) { fprintf(stderr, "--clipboard needs --pboard-tool\n"); return 2; }
         int rc = clipboard_check(sec, fd, pasteboard, pboard_tool, leave_read);
