@@ -86,6 +86,7 @@
 | `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderService.swift` 的 `TBVideoPipeline`：在自己的队列上计数抓到、送进编码器、编码完成、发出的帧和编码耗时（开始时间放在 `sourceFrameRefcon` 里，不分配内存），每 10 秒用 `PWELog` 记一行 `[pwe] stream 10 s (<preset>): captured …/s submitted …/s encoded …/s sent …/s encode p50 … ms p95 … ms`（`PWEStreamStats`，带测试） | 菜单显示 60 而 iMac 只收到约 35，靠 ffmpeg 才查到编码器（FPS-TRACE 2026-10-24）；以后从报告就能看出帧在哪一段丢 | 待提 | 本地提交，未推 |
 | `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderService.swift`：每次剪贴板同步记一行（方向和字节数，不记内容）：发给 iMac、从 iMac 取用、因不是 iMac 主控或未加密而没取用 | RC8 T48 时两边日志都没有剪贴板的行，判断不了有没有发出 | 待提 | 本地提交，未推 |
 | `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderManager.swift` 语言推送：重连循环正要拨的接收端不再单独推送（会话的 hello 里已带语言）；其余接收端的候选地址逐个试，前一个没送到才试下一个（`PWESecureOneShot.send(toFirstOf:)`，`PWESecureLink.swift` 里加完成回调） | RC8 18:09:37、RC7：发送端启动时接收端在正式会话前 40 ms 内多出两次短连接（IPv6、IPv4 各一次），来源是这条推送同时连所有地址 | 待提 | 本地提交，未推 |
+| `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderAutomation.swift`：重试循环两次尝试之间的停顿、以及有记住的接收端时等 Bonjour 的 6 秒，改为等事件（`PWEWakeSignal`，带测试）加原来的超时，不再每 250 ms 看一次；`TBBridgeRedial.noteTrigger` 和 `TBDisplaySenderManager.swift` 的发现列表变化时唤醒。URL 里写名字或地址的连接仍按上游轮询 | iMac 不在时进程每秒被唤醒约 4 次（B2） | 随 `74ad9ee` 一起提 | 本地提交，未推 |
 
 打包时的改名（`pwe/rebrand.py`）不改仓库里的文件，所以不在这张表里。它的锚点由脚本自己检查：上游改了对应的文字，脚本就会停下。
 

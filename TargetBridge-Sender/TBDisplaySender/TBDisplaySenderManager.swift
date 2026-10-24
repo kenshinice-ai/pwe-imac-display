@@ -124,6 +124,8 @@ final class TBDisplaySenderService: ObservableObject {
             reconcileDiscoveredReceivers(receivers)
             pushLanguageUpdateToDiscoveredReceivers()
             objectWillChange.send()
+            // PWE (B2): the retry loop waits for this list to change.
+            PWEWakeSignal.automation.poke()
         }
         addonCancellable = addonStore.$addons.sink { [weak self] addons in
             guard let self else { return }
