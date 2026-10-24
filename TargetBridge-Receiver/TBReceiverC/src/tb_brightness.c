@@ -74,3 +74,17 @@ CGDirectDisplayID tb_brightness_pick_display(CGRect window, const CGDirectDispla
     }
     return best;
 }
+
+uint32_t tb_brightness_mirror_set(CGDirectDisplayID target, CGDirectDisplayID target_primary,
+                                  const CGDirectDisplayID *ids, const CGDirectDisplayID *primaries,
+                                  uint32_t count, CGDirectDisplayID *out, uint32_t max) {
+    if (!out || max == 0) return 0;
+    uint32_t n = 0;
+    out[n++] = target;
+    if (!ids || !primaries) return n;
+    for (uint32_t i = 0; i < count && n < max; i++) {
+        if (ids[i] == target) continue;
+        if (primaries[i] == target_primary) out[n++] = ids[i];
+    }
+    return n;
+}

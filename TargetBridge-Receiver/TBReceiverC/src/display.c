@@ -2768,11 +2768,21 @@ void tb_disp_set_brightness(struct tb_display *d, double level) {
             target = tb_brightness_pick_display(CGRectMake(x, y, w, h), ids, bounds, count, target);
         }
     }
+    /* Displays mirroring it show the same picture: they follow (as in 1.1.0). */
+    CGDirectDisplayID online[16], primaries[16], targets[16];
+    uint32_t online_count = 0;
+    if (CGGetOnlineDisplayList(16, online, &online_count) != kCGErrorSuccess) online_count = 0;
+    for (uint32_t i = 0; i < online_count; i++) primaries[i] = CGDisplayPrimaryDisplay(online[i]);
+    const uint32_t n = tb_brightness_mirror_set(target, CGDisplayPrimaryDisplay(target), online, primaries,
+                                                online_count, targets, 16);
     static CGDirectDisplayID last_target;
-    if (target != last_target) {
+    static uint32_t last_n;
+    if (target != last_target || n != last_n) {
         last_target = target;
-        fprintf(stderr, "[disp] brightness goes to display %u (%s), the one this window is on\n",
-                (unsigned)target, CGDisplayIsBuiltin(target) ? "built in" : "external");
+        last_n = n;
+        fprintf(stderr, "[disp] brightness goes to display %u (%s), the one this window is on%s\n",
+                (unsigned)target, CGDisplayIsBuiltin(target) ? "built in" : "external",
+                n > 1 ? ", and the displays mirroring it" : "");
     }
-    (void)tb_brightness_set(target, level);
+    for (uint32_t i = 0; i < n; i++) (void)tb_brightness_set(targets[i], level);
 }
