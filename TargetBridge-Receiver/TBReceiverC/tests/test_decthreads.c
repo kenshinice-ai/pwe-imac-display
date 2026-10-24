@@ -33,6 +33,17 @@ int main(void) {
     CHECK(tb_dec_thread_plan(8, 1, 0, 1, &how) == 4 && how == TB_DEC_THREADS_SLICE);
     CHECK(tb_dec_thread_plan(8, 0, 0, 0, &how) == 1 && how == TB_DEC_THREADS_ONE);
 
+    /* Review 2026-10-24: without the setting (FFmpeg's own software decoding,
+     * after VideoToolbox refused a stream) frame threads come first. */
+    CHECK(tb_dec_prefer_frame(NULL) == 1);
+    CHECK(tb_dec_prefer_frame("") == 1);
+    CHECK(tb_dec_prefer_frame("frame") == 1);
+    CHECK(tb_dec_prefer_frame("1") == 0);
+    CHECK(tb_dec_prefer_frame("slice") == 0);
+    CHECK(tb_dec_prefer_frame("slices") == 1);
+    CHECK(tb_dec_thread_plan(8, 1, 1, tb_dec_prefer_frame(NULL), &how) == 4 && how == TB_DEC_THREADS_FRAME);
+    CHECK(tb_dec_thread_plan(8, 1, 1, tb_dec_prefer_frame("slice"), &how) == 4 && how == TB_DEC_THREADS_SLICE);
+
     if (failures) {
         fprintf(stderr, "test_decthreads: %d of %d checks failed\n", failures, checks);
         return 1;

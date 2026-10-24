@@ -62,7 +62,7 @@ struct tb_decoder {
      * (tb_decthreads.h). `force_software` skips VideoToolbox: set by
      * TB_RECEIVER_SOFTWARE_DECODE, or after VideoToolbox refused this
      * session's stream (the next keyframe reopens the decoder threaded). */
-    int               force_software;
+    int               force_software;     /* until the stream changes (param sets) */
     int               software_threads;   /* threads the open decoder has; 0 = VideoToolbox */
 
     uint8_t          *extradata;
@@ -287,10 +287,11 @@ static int build_extradata(struct tb_decoder *d,
 /* PWE (1.1.1, A5): TB_RECEIVER_SOFTWARE_DECODE: unset or "0" = VideoToolbox
  * as usual; "1" or "slice" = FFmpeg's software decoder, slice threads first;
  * "frame" = frame threads. For measuring a Mac without hardware HEVC, where
- * VideoToolbox's own software decoder is used otherwise. */
+ * VideoToolbox's own software decoder is used otherwise. Without it, FFmpeg's
+ * own software decoding prefers frame threads (tb_dec_prefer_frame). */
 static int software_decode_wish(int *want_frame) {
     const char *v = getenv("TB_RECEIVER_SOFTWARE_DECODE");
-    *want_frame = v && strcmp(v, "frame") == 0;
+    *want_frame = tb_dec_prefer_frame(v);
     return v && v[0] && strcmp(v, "0") != 0;
 }
 
@@ -425,6 +426,9 @@ int tb_dec_set_param_sets(struct tb_decoder *d, const uint8_t *payload, size_t l
 
     av_free(prev_ed);
     fprintf(stderr, "[dec] param sets changed, opening decoder\n");
+    /* PWE (1.1.1): a new stream (5K to 4K, say) tries VideoToolbox again;
+     * open_decoder applies TB_RECEIVER_SOFTWARE_DECODE itself. */
+    d->force_software = 0;
     return open_decoder(d);
 }
 
