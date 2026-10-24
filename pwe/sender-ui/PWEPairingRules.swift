@@ -91,3 +91,34 @@ enum PWEPairingRules {
         }
     }
 }
+
+/// A1 (1.1.1): a Mac with no screen of its own pairs with its iMac without
+/// one. When every condition holds, the app starts the connection as if
+/// "Use as Display" had been clicked; the pairing that follows is the usual
+/// one, unchanged (docs: DESIGN-headless-pairing-2026-10-24, not in the repo).
+/// It only saves the click nobody can make without a screen: the code is
+/// still shown on the iMac and typed on this Mac, and first pairing still
+/// needs the cable. Nothing new is sent to the iMac (PWEHeadlessPairingTests).
+enum PWEHeadlessPairingRules {
+    struct Inputs: Equatable {
+        /// Every online display is one of this app's own virtual displays.
+        var noPhysicalDisplay: Bool
+        /// iMacs found with a Thunderbolt Bridge address.
+        var iMacsOnCable: Int
+        /// The iMac the window offers (Ready) is that one.
+        var offeredIMacIsOnCable: Bool
+        var offeredIMacIsPaired: Bool
+        /// The person (or the app for them) disconnected in this run.
+        var disconnectedThisRun: Bool
+        /// Already started once for this iMac in this run.
+        var alreadyStarted: Bool
+        /// "Connect automatically when the cable goes in" is on.
+        var autoConnect: Bool
+    }
+
+    static func startsPairing(_ inputs: Inputs) -> Bool {
+        inputs.noPhysicalDisplay && inputs.iMacsOnCable == 1 && inputs.offeredIMacIsOnCable
+            && !inputs.offeredIMacIsPaired && !inputs.disconnectedThisRun && !inputs.alreadyStarted
+            && inputs.autoConnect
+    }
+}

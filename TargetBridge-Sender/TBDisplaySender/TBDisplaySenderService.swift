@@ -4461,6 +4461,23 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             onlyVirtualDisplayOnline: pweOnlyDisplayOnline(virtualDisplayID, onlineDisplayIDs: onlineDisplayIDs))
     }
 
+    /// PWE (A1): no physical display is online: every online display is one of
+    /// this app's own virtual displays, or there is none at all.
+    nonisolated static func pweNoPhysicalDisplay(onlineDisplayIDs: [CGDirectDisplayID],
+                                                 ownVirtualDisplayIDs: [CGDirectDisplayID]) -> Bool {
+        let own = Set(ownVirtualDisplayIDs)
+        return onlineDisplayIDs.allSatisfy { $0 == kCGNullDirectDisplay || own.contains($0) }
+    }
+
+    /// PWE: the online displays, for rules outside a session (pweNoPhysicalDisplay).
+    nonisolated static func pweOnlineDisplays() -> [CGDirectDisplayID] {
+        var count: UInt32 = 0
+        guard CGGetOnlineDisplayList(0, nil, &count) == .success, count > 0 else { return [] }
+        var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetOnlineDisplayList(count, &displays, &count) == .success else { return [] }
+        return Array(displays.prefix(Int(count)))
+    }
+
     /// The virtual display is the only online display. Unlike
     /// shouldUseHeadlessVirtualDisplay it does not ask which display is main:
     /// at a connection's start macOS may not have made it main yet, which

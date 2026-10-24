@@ -387,6 +387,10 @@ final class PWESenderModel: ObservableObject {
     private var asleep = false
     private var awokeAt = Date.distantPast
     private static let wakeSettleTime: TimeInterval = 15
+    /// A1: a Disconnect (or Cancel) happened in this run; no automatic pairing after it.
+    private var disconnectedThisRun = false
+    /// A1: iMacs automatic pairing has been started for in this run.
+    private var headlessPairingStarted = Set<String>()
     /// The input role has been applied to the current connection.
     private var inputRoleApplied = false
     private var noticeTask: Task<Void, Never>?
@@ -596,6 +600,39 @@ final class PWESenderModel: ObservableObject {
         applyInputRole(force: false)
         watchForReplug(service)
         screenSharingWatch?.update(names: screenSharingNames(service))
+        startHeadlessPairingIfDue(service)
+    }
+
+    /// A1: no screen on this Mac, one unpaired iMac on the cable: start the
+    /// connection, and with it the usual pairing (PWEHeadlessPairingRules).
+    /// The code step then brings the window up as key (PWEStatusMenu), so the
+    /// code box takes the keys. The cheap conditions are read first.
+    private func startHeadlessPairingIfDue(_ service: TBDisplaySenderService) {
+        guard case .ready(let receiver) = phase, autoConnect, !disconnectedThisRun,
+              !headlessPairingStarted.contains(receiver.id) else { return }
+        let noPhysicalDisplay = TBDisplaySenderSession.pweNoPhysicalDisplay(
+            onlineDisplayIDs: TBDisplaySenderSession.pweOnlineDisplays(),
+            ownVirtualDisplayIDs: service.sessions.map(\.virtualDisplayID))
+        guard noPhysicalDisplay else { return }
+        let onCable = service.discoveredReceivers.filter { !$0.ip(for: .thunderboltBridge).isEmpty }
+        let inputs = PWEHeadlessPairingRules.Inputs(
+            noPhysicalDisplay: noPhysicalDisplay,
+            iMacsOnCable: onCable.count,
+            offeredIMacIsOnCable: onCable.contains { $0.stableIdentity == receiver.id },
+            offeredIMacIsPaired: PWEPairingStore.shared.expectedReceiverID(forHint: receiver.id) != nil,
+            disconnectedThisRun: disconnectedThisRun,
+            alreadyStarted: false,
+            autoConnect: autoConnect)
+        guard PWEHeadlessPairingRules.startsPairing(inputs) else { return }
+        headlessPairingStarted.insert(receiver.id)
+        PWELog.note("[pwe] no physical display: starting pairing with \(receiver.name) automatically")
+        // Not from inside this refresh: connecting refreshes again.
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, case .ready(let still) = self.phase, still.id == receiver.id else { return }
+                self.connect(to: still)
+            }
+        }
     }
 
     /// While the iMac is a display: the names Screen Sharing may call it (A14).
@@ -749,6 +786,7 @@ final class PWESenderModel: ObservableObject {
     }
 
     func disconnect() {
+        disconnectedThisRun = true
         pausedUntilReplug = true
         heldFailure = nil
         // The engine's Stop also ends its retrying. While it asks a pairing

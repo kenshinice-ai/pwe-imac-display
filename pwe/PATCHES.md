@@ -88,6 +88,7 @@
 | `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderManager.swift` 语言推送：重连循环正要拨的接收端不再单独推送（会话的 hello 里已带语言）；其余接收端的候选地址逐个试，前一个没送到才试下一个，非最后一个地址只等 1 秒（`PWESecureOneShot.send(toFirstOf:)`，`PWESecureLink.swift` 里加完成回调）；只有会话真的连上才记为已推，自动连接停止时补推 | RC8 18:09:37、RC7：发送端启动时接收端在正式会话前 40 ms 内多出两次短连接（IPv6、IPv4 各一次），来源是这条推送同时连所有地址 | 待提 | 本地提交，未推 |
 | `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderAutomation.swift`：重试循环两次尝试之间的停顿、以及有记住的接收端时等 Bonjour 的 6 秒，改为等事件（`PWEWakeSignal`，带测试）加原来的超时，不再每 250 ms 看一次；`TBBridgeRedial.noteTrigger`、`TBDisplaySenderManager.swift` 的发现列表变化和会话变化时唤醒；触发窗口内每次等待在下次重拨到期时结束（`TBBridgeRedial.nextDialIn`）。URL 里写名字或地址的连接仍按上游轮询 | iMac 不在时进程每秒被唤醒约 4 次（B2） | 随 `74ad9ee` 一起提 | 本地提交，未推 |
 | `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderService.swift`：会话的 `senderFPS` 改为读 `liveMetrics`，不再每秒另设一份 `@Published`；`TBDisplaySenderContentView.swift` 的会话卡片观察 `liveMetrics` 显示帧率 | 每秒设一次会话的 `senderFPS`，会话、服务和所有观察它们的窗口每秒都变：PWE 的模型每秒两次重读权限和偏好设置（B11，Mac Studio 2026-10-24：每秒约 2 次 TCC、10 次偏好读取、3 次 LaunchServices） | 待提 | 本地提交，未推 |
+| `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderService.swift`：加 `pweNoPhysicalDisplay`、`pweOnlineDisplays`（只读，供 PWE 的无屏配对判断用） | A1：Mac 没接真显示器时，PWE 自动开始与线上唯一一台未配对 iMac 的连接；配对流程、加密和协议不变 | 待提（随 PWE 层） | 本地提交，未推 |
 
 打包时的改名（`pwe/rebrand.py`）不改仓库里的文件，所以不在这张表里。它的锚点由脚本自己检查：上游改了对应的文字，脚本就会停下。
 

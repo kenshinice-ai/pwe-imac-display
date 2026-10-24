@@ -489,6 +489,13 @@ final class PWEWindows {
             window.makeKeyAndOrderFront(nil)
         } else {
             openWindow?(id: "main")
+            // A1: a window just opened is made key once it exists, so the code
+            // box takes the keys even when no other window was active.
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    NSApp.windows.first(where: { Self.isMain($0) && $0.isVisible })?.makeKeyAndOrderFront(nil)
+                }
+            }
         }
     }
 
