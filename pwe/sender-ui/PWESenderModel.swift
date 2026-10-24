@@ -391,6 +391,8 @@ final class PWESenderModel: ObservableObject {
         static let askedForScreenRecording = "pwe.askedForScreenRecording"
         /// [receiver identity: TBDisplayCapturePreset raw value]
         static let pictures = "pwe.pictures"
+        /// Set once 1.1.1 has moved remembered 30-frame 1440p pictures to 60 frames.
+        static let pictures1440p60 = "pwe.pictures.1440p60"
         static let soundOnlyOnIMac = "pwe.soundOnlyOnIMac"
         // "pwe.showsMenuBarIcon" (1.1 betas) is no longer read: the menu bar
         // item is the app's way in and always shows. The stored value stays.
@@ -408,7 +410,7 @@ final class PWESenderModel: ObservableObject {
 
     /// What the Picture menu offers, best first. A preset chosen in the Full
     /// Console shows up too.
-    static let pictureChoices: [TBDisplayCapturePreset] = [.native5k60Experimental, .native5k, .standard1440p]
+    static let pictureChoices: [TBDisplayCapturePreset] = PWEPictureRules.choices(panelWidth: nil)
 
     /// Where engine changes reach the model. The main queue, not RunLoop.main:
     /// Combine's RunLoop scheduler runs only in the default mode, so no change
@@ -430,6 +432,7 @@ final class PWESenderModel: ObservableObject {
         self.localMute = PWELocalAudioMute(defaults: defaults)
         refreshLaunchAtLogin()
         resetNetworkLinkOnce()
+        migratePicturesOnce()
 
         service.objectWillChange
             .receive(on: Self.engineUpdates)
@@ -801,6 +804,18 @@ final class PWESenderModel: ObservableObject {
         PWELog.note("[pwe] dropped the console's display profile for \(key)")
     }
 
+    /// 1.1's Standard · 1440p was upstream's 30-frame preset; 1.1.1 offers the
+    /// 60-frame one under that name (PWEPictureRules.offered). An iMac that
+    /// remembered the old one moves to the new one, once.
+    private func migratePicturesOnce() {
+        guard !defaults.bool(forKey: Keys.pictures1440p60) else { return }
+        defaults.set(true, forKey: Keys.pictures1440p60)
+        guard let pictures = defaults.dictionary(forKey: Keys.pictures) as? [String: String],
+              let migrated = PWEPictureRules.migrated1440p(pictures) else { return }
+        defaults.set(migrated, forKey: Keys.pictures)
+        PWELog.note("[pwe] remembered 1440p pictures now use 60 frames a second")
+    }
+
     /// The picture for an iMac with nothing remembered yet (PWEPictureRules).
     private var defaultPicture: TBDisplayCapturePreset? {
         guard let service, let target = current(service) else { return nil }
@@ -822,7 +837,10 @@ final class PWESenderModel: ObservableObject {
 
     /// The stream preset for this iMac. Changing it while connected reconnects.
     var picture: TBDisplayCapturePreset {
-        get { rememberedPicture(for: receiverKey) ?? defaultPicture ?? session?.capturePreset ?? .native5k60Experimental }
+        get {
+            rememberedPicture(for: receiverKey) ?? defaultPicture
+                ?? session.map { PWEPictureRules.offered($0.capturePreset) } ?? .native5k60Experimental
+        }
         set {
             guard let key = receiverKey, newValue != picture else { return }
             remember(newValue, for: key)

@@ -3075,14 +3075,11 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             // shows it at its true size. This takes priority over render matching,
             // whose 2x mode would halve the logical desktop for no gain on a panel with
             // no extra pixels to resolve it.
-            let modeOverride: TBVirtualDisplayModeSize?
-            if self.capturePreset.rendersAtNativeScale {
-                modeOverride = self.capturePreset.nativeScaleDisplayMode
-            } else if self.matchRenderToStream && self.captureSource == .extendedDesktop {
-                modeOverride = self.capturePreset.renderMatchedDisplayMode
-            } else {
-                modeOverride = nil
-            }
+            let modeOverride = Self.virtualDisplayModeOverride(
+                preset: self.capturePreset,
+                matchRenderToStream: self.matchRenderToStream,
+                captureSource: self.captureSource
+            )
             if let modeOverride {
                 NSLog(
                     "TargetBridge: virtual display mode %dx%d %@ (backing %dx%d) for %dx%d stream, panel %dx%d",
@@ -4242,6 +4239,24 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             return
         }
         scheduleCaptureRestart(reason: "system wake", delaySeconds: 1.0)
+    }
+
+    /// The virtual display mode a connection asks for, or nil for the mode the
+    /// receiver's profile gives (on a 5K iMac: its 5K panel, looking like
+    /// 2560 × 1440). PWE: lifted out of the connection path unchanged so the
+    /// rule has a test; PWE's Smooth · 4K 60 relies on `crisp2160p60` leaving
+    /// the 5K desktop alone while render matching is off (PWEPictureRules).
+    nonisolated static func virtualDisplayModeOverride(
+        preset: TBDisplayCapturePreset,
+        matchRenderToStream: Bool,
+        captureSource: TBDisplayCaptureSource
+    ) -> TBVirtualDisplayModeSize? {
+        if preset.rendersAtNativeScale {
+            return preset.nativeScaleDisplayMode
+        } else if matchRenderToStream && captureSource == .extendedDesktop {
+            return preset.renderMatchedDisplayMode
+        }
+        return nil
     }
 
     /// PWE: restart capture after a wake only if it was running when the screens

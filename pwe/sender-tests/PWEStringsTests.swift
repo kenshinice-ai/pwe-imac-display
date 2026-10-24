@@ -45,6 +45,20 @@ final class PWEStringsTests: XCTestCase {
         XCTAssertEqual(zh.liveLine(.native5k60Experimental, fps: 60), "5K · 60 帧/秒")
     }
 
+    /// The Picture menu's names (1.1.1): Standard is the 60-frame 1440p, and
+    /// the 30-frame one, if the Full Console chose it, says what it is.
+    func testPictureNames() {
+        let en = PWEStrings(language: .english), zh = PWEStrings(language: .chinese)
+        XCTAssertEqual(en.pictureName(.crisp2160p60), "Smooth · 4K 60")
+        XCTAssertEqual(zh.pictureName(.crisp2160p60), "流畅 · 4K 60")
+        XCTAssertEqual(en.pictureName(.smooth1440p60), "Standard · 1440p")
+        XCTAssertEqual(zh.pictureName(.smooth1440p60), "标准 · 1440p")
+        XCTAssertEqual(en.pictureName(.standard1440p), "1440p · 30 Hz")
+        XCTAssertNotEqual(en.pictureName(.standard1440p), en.pictureName(.smooth1440p60))
+        XCTAssertEqual(en.liveLine(.crisp2160p60, fps: 0), "4K")
+        XCTAssertEqual(en.liveLine(.smooth1440p60, fps: 0), "1440p")
+    }
+
     /// The permission goes by System Settings' name for it, which macOS 15
     /// changed (Privacy & Security).
     func testScreenRecordingIsCalledWhatSystemSettingsCallsIt() {

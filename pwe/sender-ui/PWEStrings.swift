@@ -79,7 +79,12 @@ struct PWEStrings {
     var picture: String { t("Picture", "画面") }
     func pictureName(_ preset: TBDisplayCapturePreset) -> String {
         switch preset {
-        case .standard1440p: return t("Standard · 1440p", "标准 · 1440p")
+        // 1440p at 60 frames is PWE's Standard (PWEPictureRules.offered). The
+        // 30-frame preset shows only when the Full Console chose it.
+        case .smooth1440p60: return t("Standard · 1440p", "标准 · 1440p")
+        case .standard1440p: return "1440p · 30 Hz"
+        // The 5K desktop, encoded at 4K (PWEPictureRules.choices).
+        case .crisp2160p60: return t("Smooth · 4K 60", "流畅 · 4K 60")
         case .native5k: return t("5K · 48 Hz", "5K · 48 Hz")
         case .native5k60Experimental: return t("5K · 60 Hz", "5K · 60 Hz")
         case .retina4k60: return t("4K · 60 Hz", "4K · 60 Hz")
@@ -128,8 +133,8 @@ struct PWEStrings {
         let size: String
         switch preset {
         case .native5k, .native5k60Experimental: size = "5K"
-        case .retina4k60: size = "4K"
-        case .standard1440p: size = "1440p"
+        case .retina4k60, .crisp2160p60: size = "4K"
+        case .standard1440p, .smooth1440p60: size = "1440p"
         default: size = preset.title
         }
         guard fps > 0 else { return size }

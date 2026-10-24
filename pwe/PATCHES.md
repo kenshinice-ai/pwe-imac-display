@@ -81,6 +81,7 @@
 | `pwe-1.1.1-receiver`（待合并） | 接收端 `main.c`：显示配置 JSON 加 `receiverVersion`；Bonjour TXT 加 `model`（如 `iMac18,3`）和 `os`（如 `13.7.8`），注册日志带 TXT 字节数；`tb_sysinfo.c`/`.h` 加 `tb_sysinfo_model`、`tb_sysinfo_os_version`，`test_sysinfo.c` 加检查 | 评审 2026-10-22：发送端（`pwe-1.1.1` 发送端分支读这三个键）要知道对面是哪个版本、哪台 Mac、哪个系统，才能给出对症的提示 | 待提 | 1.1.1 |
 | `pwe-1.1.1-receiver`（待合并） | 接收端 `main.c`：启动时读上一次日志的最后一行，不是 `[main] bye` 就在拿到端口后记一行，指向 `~/Library/DiagnosticReports`；SIGHUP 和 SIGINT/SIGTERM 一样正常退出。`tb_log.c`/`.h` 加 `tb_log_read_last_line`、`tb_log_line_is_clean_exit`，`test_log.c` 加检查 | 评审 2026-10-22：测试者发来的日志看不出上一次是崩溃还是正常退出；从终端启动后关掉终端窗口不走正常退出 | 待提 | 1.1.1 |
 | `pwe-1.1.1-receiver`（待合并） | 接收端 `display.c`、`main.c`：等待和连接中画面只在变化时或每 100 / 33 ms 呈现一次（原来每圈都呈现）；没有会话时主循环每圈睡 10 ms（原 1 ms，有会话仍 1 ms） | 评审 2026-10-22：待机时约 700–1000 次/秒重画，老 iMac 待机发热的第一嫌疑 | 待提 | 1.1.1；改前后要在真机量待机 CPU |
+| `pwe-1.1.1-sender`（待合并） | 发送端 `TBDisplaySenderService.swift`：虚拟屏模式的选择（原生比例、渲染匹配、按接收端 profile）原样提成 `virtualDisplayModeOverride(preset:matchRenderToStream:captureSource:)`，连接路径调用它，行为不变 | PWE 的「流畅 · 4K 60」（`crisp2160p60`）依赖它在渲染匹配关时不改虚拟屏、桌面仍是 5K；提出来才能写测试 | 待提 | 本地提交，未推 |
 
 打包时的改名（`pwe/rebrand.py`）不改仓库里的文件，所以不在这张表里。它的锚点由脚本自己检查：上游改了对应的文字，脚本就会停下。
 
