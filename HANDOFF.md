@@ -96,6 +96,7 @@
 | 11 月中 | 1.1.1：汇总 bug 一次修完，再测一轮（ISSUES「RC8」、复盘里的清单；加上菜单实时帧率显示发送端帧数、不是 iMac 实际帧数的问题） | Claude | 一轮真机测试通过 |
 | Lee 设置好 Mac Studio 后 | Mac Studio 当发送端、iMac 是唯一屏幕：按 `docs/pwe/TEST-headless-mac-studio-2026-10-24.md` 做 H0–H7（方案 `PLAN-headless-mac-2026-10-24.md`，都不入库）；结果决定 1.2 改什么、宣传能不能提 Mac mini / Studio | Lee（Mac Studio、密码、插拔）、Claude（看结果） | H0–H7 有结果 |
 | 发布稳定后 | 仓库移出 iCloud（Lee 2026-10-23 定：之后再做）；先给测试机换一种拿测试文档的办法 | Claude 出方案，Lee 定 | — |
+| 2026-10-24 起 | Windows → iMac 雷雳直连试验：Codex 按任务包 `docs/pwe/CODEX-TASK-windows-e0-2026-10-24.md`（不入库）分四步做，每步停下等 Lee；在自己的 worktree `~/Developer/pwe-encore-windows`（分支 `exp/windows-e0`），不推送、不碰 `pwe-1.1` | Codex；Lee（Windows 电脑信息、在场插拔、同意安装） | 第 2 步给出「继续 / 限定 / 暂停」 |
 | 约 12-27（T+60） | 定价复盘；Windows 版要不要做（2.0） | Lee 定 | — |
 
 ## 1.1.0 发出去不行怎么撤（2026-10-22 写，未演练）
