@@ -3,6 +3,7 @@ import Foundation
 private final class TBAsyncInputDebugLogWriter: @unchecked Sendable {
     private let fileManager = FileManager.default
     private let writeQueue = DispatchQueue(label: "fd.tbdisplaysender.input-debug-log", qos: .utility)
+    private var checkedOldFormat = false
 
     func enqueue(_ message: String) {
         writeQueue.async { [self] in
@@ -22,6 +23,23 @@ private final class TBAsyncInputDebugLogWriter: @unchecked Sendable {
         let directory = url.deletingLastPathComponent()
         try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
 
+        // PWE (1.1.1): a file written before 1.1.1 can hold the iMac's key codes.
+        // Once per launch, remove any part that does not start with this
+        // version's marker, and say so in the new file.
+        if !checkedOldFormat {
+            checkedOldFormat = true
+            var removed = false
+            for part in [url, url.appendingPathExtension("old")] where fileManager.fileExists(atPath: part.path) {
+                if !TBInputDebugLog.startsWithMarker(firstLine(of: part)) {
+                    try? fileManager.removeItem(at: part)
+                    removed = true
+                }
+            }
+            if removed {
+                line = "\(timestamp) removed an input log from an earlier version (it could hold key codes)\n" + line
+            }
+        }
+
         // PWE: at most TBInputDebugLog.maxBytes, then one older part, and the
         // new part says so on its first line: nothing goes without a trace.
         let size = (try? fileManager.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
@@ -32,6 +50,9 @@ private final class TBAsyncInputDebugLogWriter: @unchecked Sendable {
             line = "\(timestamp) log rotated at \(TBInputDebugLog.maxBytes) bytes; the part before is \(old.lastPathComponent), and any older part was removed\n" + line
         }
 
+        if !fileManager.fileExists(atPath: url.path) {
+            line = "\(timestamp) \(TBInputDebugLog.formatMarker)\n" + line
+        }
         guard let data = line.data(using: .utf8) else { return }
         if fileManager.fileExists(atPath: url.path) {
             if let handle = try? FileHandle(forWritingTo: url) {
@@ -42,6 +63,13 @@ private final class TBAsyncInputDebugLogWriter: @unchecked Sendable {
         } else {
             try? data.write(to: url, options: .atomic)
         }
+    }
+
+    private func firstLine(of url: URL) -> String {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return "" }
+        defer { try? handle.close() }
+        let head = (try? handle.read(upToCount: 256)) ?? Data()
+        return String(decoding: head, as: UTF8.self).split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
     }
 }
 
@@ -86,6 +114,14 @@ enum TBInputDebugLog {
     nonisolated static let maxBytes = 1_048_576
 
     nonisolated static func shouldRotate(size: Int) -> Bool { size >= maxBytes }
+
+    /// PWE (1.1.1): the first line of every file this version starts, rotated
+    /// or new. A file without it was written by 1.1.0 or upstream and is removed.
+    nonisolated static let formatMarker = "input log format 2: kind and count only unless PWE_INPUT_DEBUG=1"
+
+    nonisolated static func startsWithMarker(_ firstLine: String) -> Bool {
+        firstLine.contains(formatMarker)
+    }
 
     /// PWE (1.1.1): the iMac's key codes, pointer movements and which modifier
     /// keys changed are written only with `PWE_INPUT_DEBUG=1` in the

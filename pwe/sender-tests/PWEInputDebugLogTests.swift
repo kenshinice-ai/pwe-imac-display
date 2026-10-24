@@ -40,4 +40,11 @@ final class PWEInputDebugLogTests: XCTestCase {
         XCTAssertFalse(TBInputDebugLog.shouldRotate(size: 1_048_575))
         XCTAssertTrue(TBInputDebugLog.shouldRotate(size: 1_048_576))
     }
+
+    func testOldFormatIsRecognisedByItsMissingMarker() {
+        XCTAssertTrue(TBInputDebugLog.startsWithMarker("2026-11-01T10:00:00Z " + TBInputDebugLog.formatMarker))
+        XCTAssertFalse(TBInputDebugLog.startsWithMarker("2026-10-28T10:00:00Z sender received #1 kind=key dx=0 dy=0 sx=0 sy=0 key=12"))
+        XCTAssertFalse(TBInputDebugLog.startsWithMarker(""))
+    }
 }
+
