@@ -21,6 +21,12 @@ enum PWELog {
 /// `receiver.log`. On the Mac Studio (macOS 27.0.1, 2026-10-24) the unified log
 /// held no line from this process at all, so the report came out empty; the
 /// file does not depend on it. Rotated to `sender.old.log` at 2 MB.
+///
+/// Each line starts with its time and UTC offset ("2026-10-24 22:18:40.123
+/// +1100"), so reading it back compares instants, not local clock text that a
+/// daylight-saving change repeats. A message's own line breaks are written as
+/// "⏎", so every line in the file carries its own time. Formatting happens on
+/// the file's queue, with one formatter.
 final class PWELogFile: @unchecked Sendable {
     static let shared = PWELogFile(directory: FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Logs/PWE Screen Encore", isDirectory: true))
@@ -30,61 +36,113 @@ final class PWELogFile: @unchecked Sendable {
     private let oldURL: URL
     private let queue = DispatchQueue(label: "com.pwegroup.pweimacdisplay.logfile")
     private var handle: FileHandle?
+    /// Used on `queue` only.
+    private let formatter = PWELogFile.makeFormatter()
+
+    /// "yyyy-MM-dd HH:mm:ss.SSS Z": 29 characters, then a space.
+    static let stampLength = 29
 
     init(directory: URL) {
         url = directory.appendingPathComponent("sender.log")
         oldURL = directory.appendingPathComponent("sender.old.log")
     }
 
-    static func stamp(_ date: Date) -> String {
+    static func makeFormatter() -> DateFormatter {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
-        return formatter.string(from: date)
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS Z"
+        return formatter
+    }
+
+    /// One line of the file, without its line break.
+    static func line(_ message: String, stamp: String) -> String {
+        stamp + " " + message.replacingOccurrences(of: "\r\n", with: "⏎").replacingOccurrences(of: "\n", with: "⏎")
+            .replacingOccurrences(of: "\r", with: "⏎")
     }
 
     func append(_ line: String, at date: Date = Date()) {
-        let text = Self.stamp(date) + " " + line + "\n"
-        queue.async { self.write(Data(text.utf8)) }
+        queue.async {
+            let text = Self.line(line, stamp: self.formatter.string(from: date)) + "\n"
+            self.write(Data(text.utf8))
+        }
     }
 
     /// Waits for the lines already handed to `append` (tests, and the report).
     func flush() { queue.sync {} }
 
-    private func write(_ data: Data) {
+    /// What a write does with the file's current size (PWELogExportTests).
+    enum Room: Equatable {
+        case fits
+        /// Move the file aside first, then write.
+        case rotate
+        /// Too long even for an empty file: not written.
+        case drop
+    }
+
+    static func room(currentSize: UInt64, adding count: Int, limit: Int = maxBytes) -> Room {
+        if count > limit { return .drop }
+        if currentSize + UInt64(count) <= UInt64(limit) { return .fits }
+        return currentSize == 0 ? .fits : .rotate
+    }
+
+    private func openHandle() -> FileHandle? {
         let fm = FileManager.default
-        if handle == nil {
-            try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            if !fm.fileExists(atPath: url.path) { fm.createFile(atPath: url.path, contents: nil) }
-            handle = try? FileHandle(forWritingTo: url)
-            _ = try? handle?.seekToEnd()
-        }
-        guard let handle else { return }
-        if let size = try? handle.offset(), size + UInt64(data.count) > UInt64(Self.maxBytes) {
-            try? handle.close()
-            self.handle = nil
-            try? fm.removeItem(at: oldURL)
-            try? fm.moveItem(at: url, to: oldURL)
-            write(data)
+        try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if !fm.fileExists(atPath: url.path) { fm.createFile(atPath: url.path, contents: nil) }
+        let handle = try? FileHandle(forWritingTo: url)
+        _ = try? handle?.seekToEnd()
+        return handle
+    }
+
+    /// Rotates at most once per write. If the old part cannot be replaced, the
+    /// file starts over in place instead, so it never grows past the limit
+    /// and a failure never repeats itself on every line.
+    private func write(_ data: Data) {
+        if handle == nil { handle = openHandle() }
+        guard let current = handle else { return }
+        let size = (try? current.offset()) ?? 0
+        switch Self.room(currentSize: size, adding: data.count) {
+        case .drop:
             return
+        case .fits:
+            break
+        case .rotate:
+            try? current.close()
+            handle = nil
+            let fm = FileManager.default
+            try? fm.removeItem(at: oldURL)
+            if (try? fm.moveItem(at: url, to: oldURL)) == nil {
+                // Truncate rather than grow: the lines up to now are lost, and the
+                // new start says so.
+                try? Data().write(to: url)
+                handle = openHandle()
+                let note = Self.line("[pwe] (\(oldURL.lastPathComponent) could not be replaced; the log started over)",
+                                     stamp: formatter.string(from: Date())) + "\n"
+                try? handle?.write(contentsOf: Data(note.utf8))
+            } else {
+                handle = openHandle()
+            }
         }
-        try? handle.write(contentsOf: data)
+        try? handle?.write(contentsOf: data)
     }
 
     /// Lines written since `since`, oldest first, as "HH:mm:ss.SSS text".
     func lines(since: Date) -> [String] {
         flush()
-        let cutoff = Self.stamp(since)
-        var out: [String] = []
-        for file in [oldURL, url] {
-            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
-            for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
-                // "yyyy-MM-dd HH:mm:ss.SSS " sorts as text.
-                guard line.count > 24, String(line.prefix(23)) >= cutoff else { continue }
-                out.append(String(line.dropFirst(11)))
+        return queue.sync {
+            var out: [String] = []
+            for file in [oldURL, url] {
+                guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+                for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+                    guard line.count > Self.stampLength,
+                          let date = formatter.date(from: String(line.prefix(Self.stampLength))),
+                          date >= since else { continue }
+                    // "yyyy-MM-dd " and " +1100" go; the time and the message stay.
+                    out.append(String(line.dropFirst(11).prefix(12)) + String(line.dropFirst(Self.stampLength)))
+                }
             }
+            return out
         }
-        return out
     }
 }
 
@@ -176,16 +234,21 @@ enum PWELogExport {
         }
     }
 
-    /// The unified log's lines when it has any; otherwise our own file's
-    /// (T52: a Mac whose unified log held nothing from this app).
+    /// The unified log's lines, then our own file's for the same half hour
+    /// (T52). The file also holds a previous run's lines, which the unified log
+    /// of this process never has; its lines that the system log already showed
+    /// (same time to the millisecond and text) are left out.
     static func reportLines(minutes: Int, file: PWELogFile = .shared) -> [String] {
         let unified = recentLines(minutes: minutes)
-        let hasOwn = unified.contains { !$0.hasPrefix("(could not read the log") }
-        if hasOwn { return unified }
         let fromFile = file.lines(since: Date().addingTimeInterval(TimeInterval(-60 * minutes)))
-        guard !fromFile.isEmpty else { return unified }
-        return ["(the system log had no lines from this app; these are from \(file.url.path))"]
-            + fromFile.suffix(3000)
+        return combined(unified: unified, fromFile: fromFile, filePath: file.url.path)
+    }
+
+    static func combined(unified: [String], fromFile: [String], filePath: String) -> [String] {
+        let shown = Set(unified)
+        let extra = fromFile.filter { !shown.contains($0) }
+        guard !extra.isEmpty else { return unified }
+        return unified + ["", "From \(filePath) (last 30 minutes, lines not shown above):"] + extra.suffix(3000)
     }
 
     /// The store can return the newest entries twice, once from memory and once

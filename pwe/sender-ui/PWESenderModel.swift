@@ -1576,13 +1576,10 @@ final class PWESenderModel: ObservableObject {
         }
     }
 
-    /// A plain-text report for support: versions, the iMacs, the settings and the
-    /// last half hour of this app's own log. Nothing leaves the Mac unless the
-    /// person sends the file.
-    func diagnosticReport() -> String {
-        diagnosticReportHeader() + "\n" + PWELogExport.recentLines(minutes: 30).joined(separator: "\n")
-    }
-
+    /// The report for support is this header and the last half hour of this
+    /// app's log (PWELogExport.save). Nothing leaves the Mac unless the person
+    /// sends the file.
+    ///
     /// Everything in the report except the log: cheap, read on the main actor.
     func diagnosticReportHeader() -> String {
         var lines: [String] = []
