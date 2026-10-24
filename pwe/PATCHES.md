@@ -99,6 +99,7 @@
 | `pwe-1.1.1-receiver`（待合并） | 接收端 `main.c`：剪贴板每次同步记一行，只记方向和大小档（`under 100 bytes` / `100 bytes to 10 KB` / `over 10 KB`，发不出去也记），不记确切字节数，从不记内容；smoke 11 阶段检查这两行在、内容和确切字节数不在日志里 | A10：T48 时两边日志都没有剪贴板的行，判断不了同步有没有发生 | 待提 | 1.1.1 |
 | `pwe-1.1.1-receiver`（待合并） | 接收端 `main.c`：主线程进入连接自己的代码时（`tb_conn_feed`、`_tick`、`_init`、`_close`）持有 `tx_lock`，处理每个包时（`on_packet`：解码、显示）放开；监听线程发送时也持有它，所以会话的标志和密钥不会一边读一边写。监听线程最多等一个记录解析解密完，不等一帧。会话结束时松开记着按下的修饰键、清掉监听被关的标记 | 评审 2026-10-24：监听线程发送时不加锁地读 `want_close`、`mode`、`sec->st`，主线程同时可能在写。没改 `tb_conn.c` 和加密层 | 待提 | 1.1.1 |
 | `pwe-1.1.1-receiver`（待合并） | `TargetBridge-Shared/Languages/*.json`：`receiver.pairing.enter_on_mac` 改为「在 Mac 的键盘上输入这 6 位数字，然后按回车」/「Type these 6 digits on the Mac’s keyboard, then press Return」，de/fr/it 同义翻译；五种语言都在 980×620 窗口里渲染过，德语最长，约占宽度一半 | 无屏配对（A1）：只接 iMac 的 Mac 要在自己的键盘上输入、按回车，iMac 上要说清楚 | 待提 | 1.1.1 |
+| `pwe-1.1.1-receiver`（待合并） | 接收端 `main.c`：发给 Mac 的输入事件抽样日志（前 20 个，之后每第 100 个，频率不变）在正式版只记序号、种类和模式（`send #N kind=… mode=receiverMaster`），不记位移、滚动，也不记是否带按键；带这些的详细行只在测试构建或 `TB_RECEIVER_INPUT_DEBUG=1` 时写。任何构建都不记是哪个键 | Mac Studio 测试（2026-10-24）：日志是文件，打字时抽样到的事件可能是密码的一部分，留最少的数据 | 待提 | 1.1.1 |
 
 打包时的改名（`pwe/rebrand.py`）不改仓库里的文件，所以不在这张表里。它的锚点由脚本自己检查：上游改了对应的文字，脚本就会停下。
 
