@@ -57,4 +57,43 @@ final class PWEDirectCaptureTests: XCTestCase {
         XCTAssertFalse(Session.pweSCKUsesBGRA(environment: [:]))
         XCTAssertTrue(Session.pweSCKUsesBGRA(environment: ["PWE_SCK_BGRA": "1"]))
     }
+
+    // MARK: - Review 2026-10-24
+
+    private func decide(_ choice: Session.PWEDirectCaptureChoice, online: [CGDirectDisplayID],
+                        failed: Bool = false, raw: Bool = false) -> Bool {
+        Session.pweExtendedCapturesDirect(choice: choice, virtualDisplayID: virtual, onlineDisplayIDs: online,
+                                          directFailed: failed, usesRawNV12: raw)
+    }
+
+    func testAFailedDirectStartStaysOnScreenCaptureKit() {
+        XCTAssertTrue(decide(.automatic, online: [virtual]))
+        // Once it failed on this connection, no display change brings it back:
+        // the comparison that restarts capture sees no change, so no restarts.
+        XCTAssertFalse(decide(.automatic, online: [virtual], failed: true))
+        XCTAssertFalse(decide(.always, online: [virtual, builtIn], failed: true))
+    }
+
+    func testRawFramesNeverTakeTheDirectPath() {
+        XCTAssertFalse(decide(.always, online: [virtual], raw: true))
+        XCTAssertFalse(decide(.automatic, online: [virtual], raw: true))
+    }
+
+    func testOnlyDisplayDoesNotWaitForItToBecomeMain() {
+        // At a connection's start the virtual display may not be main yet.
+        XCTAssertTrue(Session.pweOnlyDisplayOnline(virtual, onlineDisplayIDs: [virtual]))
+        XCTAssertTrue(Session.pweOnlyDisplayOnline(virtual, onlineDisplayIDs: [virtual, kCGNullDirectDisplay]))
+        XCTAssertFalse(Session.pweOnlyDisplayOnline(virtual, onlineDisplayIDs: [builtIn, virtual]))
+        // Offline (asleep, mid-change): not the only display, so no decision for direct.
+        XCTAssertFalse(Session.pweOnlyDisplayOnline(virtual, onlineDisplayIDs: []))
+        XCTAssertFalse(decide(.automatic, online: [builtIn, virtual]))
+        XCTAssertFalse(decide(.automatic, online: [kCGNullDirectDisplay]))
+    }
+
+    func testADirectStreamWithNoFrameFallsBackInsteadOfStopping() {
+        XCTAssertTrue(Session.pweFallsBackFromDirect(usingDirect: true, canRestart: true))
+        // ScreenCaptureKit with no frame, or no restart possible: the session stops as before.
+        XCTAssertFalse(Session.pweFallsBackFromDirect(usingDirect: false, canRestart: true))
+        XCTAssertFalse(Session.pweFallsBackFromDirect(usingDirect: true, canRestart: false))
+    }
 }
