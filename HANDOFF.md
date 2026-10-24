@@ -89,7 +89,7 @@
 | 10-23 19:05 后 | 工具站部署，「真 5K」措辞上线 | 工具站会话 | /screenencore/ 不再有「48 Hz 和 60 Hz 下都是真 5K」 |
 | 10-23～25 | 收测试者反馈；Lee 发测试者名单，Claude 记进 roster | Lee、Claude | roster 有人名和机型 |
 | 10-26 晚 | go/no-go，只核对门槛；必须修的问题出现才重打包。定了之后马上给「YouTube 频道管理」会话发一句：go 就写发布日期和 App 大约几点上线（GitHub release、站点下载按钮），no-go 就写新日期。它收到才设定时（产品片 ENCORE001 定在发布日 21:00 墨尔本，不早于发布） | Lee 定；Claude 发消息 | Lee 说 go 或给新日期；YouTube 会话回复已设定时 |
-| 10-28 | 发布步骤 1–9；7a 给工具站发 go、sha256、DMG 大小，并请它把 Mac 一行的「Apple silicon or Intel」改成只写 Apple 芯片（Intel 没测过，上游说不支持；2026-10-24 工具站会话不在线，没发出）；7c 通知小红书会话 | Claude；Lee 在工具站说「部署」 | `brew fetch --cask` ✔；产品页显示 1.1.0 |
+| 10-28 | 发布步骤 1–9；7a 给工具站发 go、sha256、DMG 大小，并请它把 Mac 一行的「Apple silicon or Intel」改成只写 Apple 芯片（Intel 没测过，上游说不支持；2026-10-24 工具站会话不在线，没发出。小红书第 9 张、YouTube 和 B 站说明、产品片文档已改成只写 Apple 芯片）；7c 通知小红书会话 | Claude；Lee 在工具站说「部署」 | `brew fetch --cask` ✔；产品页显示 1.1.0 |
 | 10-29 12:00 | 小红书 T+1 图文 | 小红书会话（定时） | 已发 |
 | 10-28～11-04 | 第一周：看 issue 和 support 邮件，填 COMPATIBILITY.md；先攒 bug，不逐个发版 | Claude | 每个 issue 48 小时内有回复 |
 | 约 11-11（T+14） | 宣传可以提配对和加密；上游 PR 一周一个，先提不涉及安全的 | Claude，Lee 定 | — |
