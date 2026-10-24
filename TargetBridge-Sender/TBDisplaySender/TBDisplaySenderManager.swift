@@ -750,7 +750,13 @@ final class TBDisplaySenderService: ObservableObject {
             self?.schedulePersist()
             self?.objectWillChange.send()
             // PWE: objectWillChange precedes the change; look again once it is made.
-            DispatchQueue.main.async { [weak self] in self?.updateClipboardMonitoring() }
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.updateClipboardMonitoring()
+                    // PWE (B2): a session no longer busy may make a redial due.
+                    PWEWakeSignal.automation.poke()
+                }
+            }
         }
     }
 

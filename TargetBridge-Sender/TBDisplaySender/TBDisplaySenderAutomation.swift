@@ -244,7 +244,7 @@ enum TBSenderAutomation {
         while !Task.isCancelled {
             let left = deadline - ProcessInfo.processInfo.systemUptime
             guard left > 0 else { return }
-            _ = await PWEWakeSignal.automation.wait(upTo: left)
+            _ = await PWEWakeSignal.automation.wait(upTo: TBBridgeRedial.waitCap(left))
             guard !Task.isCancelled, let session else { continue }
             if TBBridgeRedial.isDue(for: session, service: service) { return }
             if !wasListed, isListedWithAddress(service, session) { return }
@@ -541,7 +541,7 @@ enum TBSenderAutomation {
                 }
                 let left = deadline - ProcessInfo.processInfo.systemUptime
                 guard left > 0, !Task.isCancelled else { return receivers }
-                _ = await PWEWakeSignal.automation.wait(upTo: left)
+                _ = await PWEWakeSignal.automation.wait(upTo: TBBridgeRedial.waitCap(left))
             }
         }
 
@@ -970,6 +970,25 @@ enum TBBridgeRedial {
 
     static func isDue(for session: TBDisplaySenderSession, service: TBDisplaySenderService) -> Bool {
         decision(for: session, service: service) != .wait
+    }
+
+    /// PWE (B2): inside a trigger window the next redial falls due by time
+    /// alone, an `interval` after the last one; no event announces it. How
+    /// long until then, or nil when time is not what it waits for
+    /// (PWEBridgeRedialTests).
+    nonisolated static func nextDialIn(sinceTrigger: TimeInterval?, sinceLastDial: TimeInterval?) -> TimeInterval? {
+        guard let sinceTrigger, sinceTrigger >= 0, sinceTrigger < window,
+              let sinceLastDial, sinceLastDial >= 0, sinceLastDial < interval else { return nil }
+        let wait = interval - sinceLastDial
+        return sinceTrigger + wait < window ? wait : nil
+    }
+
+    /// A wait of `left` seconds, cut to end just after the next redial falls due.
+    static func waitCap(_ left: TimeInterval) -> TimeInterval {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard let next = nextDialIn(sinceTrigger: triggeredAt.map { now - $0 },
+                                    sinceLastDial: lastDialAt.map { now - $0 }) else { return left }
+        return min(left, next + 0.01)
     }
 
     // MARK: - Watching the links

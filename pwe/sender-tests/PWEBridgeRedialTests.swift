@@ -134,4 +134,16 @@ final class PWEBridgeRedialTests: XCTestCase {
         XCTAssertEqual(TBBridgeRedial.rememberable("2001:db8::1"), "")
         XCTAssertEqual(TBBridgeRedial.rememberable(""), "")
     }
+
+    /// B2 review: inside a trigger window the next redial is due by time alone;
+    /// the retry loop's wait ends then instead of at its 2 or 5 s cap.
+    func testTheWaitEndsWhenTheNextRedialFallsDue() {
+        XCTAssertEqual(TBBridgeRedial.nextDialIn(sinceTrigger: 3, sinceLastDial: 0.4) ?? -1, 0.6, accuracy: 0.0001)
+        // Already due, no redial yet, outside the window or past its end: not a matter of time.
+        XCTAssertNil(TBBridgeRedial.nextDialIn(sinceTrigger: 3, sinceLastDial: 1.2))
+        XCTAssertNil(TBBridgeRedial.nextDialIn(sinceTrigger: 3, sinceLastDial: nil))
+        XCTAssertNil(TBBridgeRedial.nextDialIn(sinceTrigger: 12, sinceLastDial: 0.4))
+        XCTAssertNil(TBBridgeRedial.nextDialIn(sinceTrigger: 9.8, sinceLastDial: 0.5))
+        XCTAssertNil(TBBridgeRedial.nextDialIn(sinceTrigger: nil, sinceLastDial: 0.4))
+    }
 }
