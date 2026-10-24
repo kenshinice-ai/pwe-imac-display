@@ -1650,6 +1650,8 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     private var lastCheckedCursorType: Int = 0
     private var baselineDisplayIDs = Set<CGDirectDisplayID>()
     private var headlessMirrorUsesVirtualDisplay = false
+    /// PWE: the extended desktop is captured by the direct stream (pweExtendedUsesDirectStream).
+    private var pweExtendedUsesDirect = false
     private var cursorDisplayID: CGDirectDisplayID = kCGNullDirectDisplay
     private var lastCursorPacket: TBMonitorCursor?
     /// Receiver-drawn pointer: positions from its own thread, the picture from here.
@@ -2342,6 +2344,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         sessionAckSent = false
         baselineDisplayIDs = []
         headlessMirrorUsesVirtualDisplay = false
+        pweExtendedUsesDirect = false
         cursorDisplayID = kCGNullDirectDisplay
         lastCursorPacket = nil
         captureDisplayText = TBDisplaySenderL10n.captureDisplayNotAvailable(language)
@@ -3259,6 +3262,27 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                     return false
                 }
             } else {
+                // PWE: the extended desktop through the headless mirror's
+                // CGDisplayStream path when it is the only display, or when
+                // asked to (pweExtendedUsesDirectStream).
+                pweExtendedUsesDirect = false
+                let choice = Self.pweDirectCaptureChoice()
+                if choice != .never, session.displayID != kCGNullDirectDisplay,
+                   await waitForOnlineDisplay(session.displayID) {
+                    let onlyVirtual = Self.shouldUseHeadlessVirtualDisplay(
+                        virtualDisplayID: session.displayID,
+                        mainDisplayID: CGMainDisplayID(),
+                        onlineDisplayIDs: onlineDisplayIDs()
+                    )
+                    if Self.pweExtendedUsesDirectStream(choice: choice, onlyVirtualDisplayOnline: onlyVirtual) {
+                        if await startDirectDisplayStream(displayID: session.displayID, preset: preset) {
+                            pweExtendedUsesDirect = true
+                            TBLog.connection.notice("capture: extended desktop uses direct stream id=\(self.session.displayID, privacy: .public) (\(onlyVirtual ? "the only display" : "asked for", privacy: .public))")
+                            return true
+                        }
+                        TBLog.connection.warning("capture: direct stream for the extended desktop did not start; using ScreenCaptureKit")
+                    }
+                }
                 let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
                 if session.displayID != kCGNullDirectDisplay,
                    let targetDisplay = content.displays.first(where: { $0.displayID == session.displayID }) {
@@ -3277,7 +3301,11 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             configuration.height = preset.height
             configuration.minimumFrameInterval = CMTime(value: 1, timescale: Int32(preset.captureRequestFrameRate))
             configuration.queueDepth = preset.queueDepth
-            configuration.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+            // PWE (experiment): PWE_SCK_BGRA=1 asks ScreenCaptureKit for BGRA, the
+            // format the direct path captures in. Never with raw NV12 frames.
+            configuration.pixelFormat = Self.pweSCKUsesBGRA() && !usesRawNV12
+                ? kCVPixelFormatType_32BGRA
+                : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
             configuration.shouldBeOpaque = true
             configuration.showsCursor = !usesCursorOverlay
             configuration.scalesToFit = true
@@ -4129,6 +4157,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     }
 
     private func handleDisplayReconfiguration(displayID: CGDirectDisplayID, flags: CGDisplayChangeSummaryFlags) {
+        if !flags.contains(.beginConfigurationFlag) { pweReconsiderExtendedCapturePath() }
         let isOurs = session.displayID != kCGNullDirectDisplay && displayID == session.displayID
         guard verboseDisplayLogging || isOurs else { return }
         var parts: [String] = []
@@ -4154,6 +4183,24 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         if isOurs, session.displayID != kCGNullDirectDisplay {
             displayStateText = describeDisplayState(for: session.displayID)
         }
+    }
+
+    /// PWE: a screen came or went while the extended desktop streams. If the
+    /// automatic choice of capture path (pweExtendedUsesDirectStream) now
+    /// differs from the running one, restart capture; startCapture picks again.
+    private func pweReconsiderExtendedCapturePath() {
+        guard isStreaming, captureSource == .extendedDesktop, !isRestartingCaptureAfterWake,
+              session.displayID != kCGNullDirectDisplay else { return }
+        let onlyVirtual = Self.shouldUseHeadlessVirtualDisplay(
+            virtualDisplayID: session.displayID,
+            mainDisplayID: CGMainDisplayID(),
+            onlineDisplayIDs: onlineDisplayIDs()
+        )
+        let wantsDirect = Self.pweExtendedUsesDirectStream(choice: Self.pweDirectCaptureChoice(),
+                                                           onlyVirtualDisplayOnline: onlyVirtual)
+        guard wantsDirect != pweExtendedUsesDirect else { return }
+        TBLog.connection.notice("capture: displays changed (only the virtual display online: \(onlyVirtual, privacy: .public)); extended desktop moves to \(wantsDirect ? "the direct stream" : "ScreenCaptureKit", privacy: .public)")
+        scheduleCaptureRestart(reason: "capture path change", delaySeconds: 1.0)
     }
 
     private func startVerboseLoggingTimer() {
@@ -4257,6 +4304,62 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             return preset.renderMatchedDisplayMode
         }
         return nil
+    }
+
+    /// PWE (1.1.1): which path captures the extended desktop's virtual display.
+    /// ScreenCaptureKit, as upstream, or the CGDisplayStream path the headless
+    /// mirror uses (`startDirectDisplayStream`). On a Mac Studio with only the
+    /// iMac attached, Duplicate Desktop (which takes that path) sent 52–53 frames
+    /// a second at 5K 60 and about 60 at both 4K presets, against about 34 at 5K
+    /// in Extended through ScreenCaptureKit (Lee, 2026-10-24).
+    ///
+    /// Automatic: direct when the virtual display is the only online display
+    /// (the rule the mirror path uses, shouldUseHeadlessVirtualDisplay). Then
+    /// Extended and Duplicate show the same single desktop, and the path is
+    /// proven there. With a built-in or other screen also online, it stays
+    /// ScreenCaptureKit until measured on a laptop, unless asked for: the
+    /// defaults key `PWEDirectCaptureExtended` (true: always, false: never) or
+    /// the environment's `PWE_DIRECT_CAPTURE` (1: always, 0: never), which wins.
+    /// A direct stream that does not start falls back to ScreenCaptureKit.
+    /// Teardown, restarts and audio are the direct path's own
+    /// (`directDisplayStream`, the auxiliary audio stream); a display coming or
+    /// going mid-session restarts capture on the other path
+    /// (pweReconsiderExtendedCapturePath).
+    ///
+    /// CGDisplayStream is marked in the macOS 27 SDK as deprecated in macOS 14.0
+    /// and obsoleted in 15.0, "Please use ScreenCaptureKit instead." With the
+    /// 14.0 deployment target the build only warns (it already did for the
+    /// headless path); a 15.0 deployment target would no longer compile it.
+    enum PWEDirectCaptureChoice: Equatable { case automatic, always, never }
+
+    nonisolated static let pweDirectCaptureExtendedKey = "PWEDirectCaptureExtended"
+
+    nonisolated static func pweDirectCaptureChoice(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        defaults: UserDefaults = .standard
+    ) -> PWEDirectCaptureChoice {
+        if let value = environment["PWE_DIRECT_CAPTURE"] {
+            if value == "1" { return .always }
+            if value == "0" { return .never }
+        }
+        guard defaults.object(forKey: pweDirectCaptureExtendedKey) != nil else { return .automatic }
+        return defaults.bool(forKey: pweDirectCaptureExtendedKey) ? .always : .never
+    }
+
+    nonisolated static func pweExtendedUsesDirectStream(choice: PWEDirectCaptureChoice, onlyVirtualDisplayOnline: Bool) -> Bool {
+        switch choice {
+        case .always: return true
+        case .never: return false
+        case .automatic: return onlyVirtualDisplayOnline
+        }
+    }
+
+    /// PWE (experiment): ScreenCaptureKit in BGRA instead of 4:2:0, the one
+    /// trivial knob beside upstream's `QD` (queue depth) environment variable.
+    nonisolated static func pweSCKUsesBGRA(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        environment["PWE_SCK_BGRA"] == "1"
     }
 
     /// PWE: restart capture after a wake only if it was running when the screens
