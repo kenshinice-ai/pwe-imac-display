@@ -1695,8 +1695,19 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     /// PWE: the direct stream did not start or sent no frames on this
     /// connection; it stays on ScreenCaptureKit until the connection ends.
     private var pweDirectFailed = false
-    /// PWE: the screens slept or locked and have not woken since.
-    private var pweScreensAsleep = false
+    /// PWE (T53): the displays or the Mac went to sleep (screensDidSleep,
+    /// willSleep) and have not woken since (screensDidWake, didWake). A locked
+    /// screen or a screen saver does not count: on a Mac with only the iMac,
+    /// the lock screen is drawn on the iMac and the stream must keep going.
+    private var pweDisplaysAsleep = false
+    /// PWE (T53): when the current or last sleep began (its first signal), and
+    /// when it ended (its first wake signal).
+    private var pweSleepStartedAt: TimeInterval?
+    private var pweWokeAt: TimeInterval?
+    /// PWE (T53): the direct path got its one retry since the last wake.
+    private var pweDirectRetriedAfterWake = false
+    /// PWE (T53): first-frame waits put off because the displays slept.
+    private var pweFirstFrameWaitsAsleep = 0
     /// PWE (T53): when the direct path last stalled, so a wake can tell a stall
     /// that only came from the screens going to sleep.
     private var pweDirectStalledAt: TimeInterval?
@@ -2700,12 +2711,10 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                 if inputControlRole == .receiverMaster,
                    let event = TBMonitorProtocol.decodeJSON(TBMonitorInputEvent.self, from: payload) {
                     receivedInputEventCount += 1
-                    if receivedInputEventCount <= 20 || receivedInputEventCount.isMultiple(of: 100) {
-                        // PWE: no key codes or movements unless PWE_INPUT_DEBUG=1.
-                        TBInputDebugLog.log(TBInputDebugLog.receivedEventLine(
-                            count: receivedInputEventCount, kind: event.kind, dx: event.dx, dy: event.dy,
-                            scrollX: event.scrollX, scrollY: event.scrollY, keyCode: event.keyCode))
-                    }
+                    // PWE: counted, not written one by one, unless PWE_INPUT_DEBUG=1.
+                    TBInputDebugLog.receivedEvent(
+                        count: receivedInputEventCount, kind: event.kind, dx: event.dx, dy: event.dy,
+                        scrollX: event.scrollX, scrollY: event.scrollY, keyCode: event.keyCode)
                     if event.kind == "switchPrevTarget" {
                         releaseInjectedModifiersIfNeeded()
                         onRemoteSwitchRequest?(-1)
@@ -2797,11 +2806,8 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     }
 
     private func logLocalInputInjectionStateIfNeeded(context: String) {
-        if context == "mouseMove" {
-            TBInputDebugLog.logInputEvent("sender input injection state trusted=\(AXIsProcessTrusted()) context=\(context)")
-        } else {
-            TBInputDebugLog.log("sender input injection state trusted=\(AXIsProcessTrusted()) context=\(context)")
-        }
+        // PWE: per event only with PWE_INPUT_DEBUG=1; otherwise when it changes.
+        TBInputDebugLog.injectionState(context: context)
     }
 
     private func postLocalMouseMove(dx: Int, dy: Int, type: CGEventType = .mouseMoved, button: CGMouseButton = .left) {
@@ -2882,11 +2888,13 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         if TBInputBindingEngine.modifierBit(for: keyCode) != nil {
             let flags = currentInjectedModifierFlags()
             localPointerModifierBridge.update(inputControlRole == .receiverMaster ? flags : [])
-            // PWE: which modifier only with PWE_INPUT_DEBUG=1.
-            let held = [CGEventFlags.maskShift, .maskControl, .maskAlternate, .maskCommand, .maskAlphaShift]
-                .filter { flags.contains($0) }.count
-            TBInputDebugLog.log(TBInputDebugLog.remoteModifierLine(keyCode: keyCode, isDown: isDown,
-                                                                   flags: flags.rawValue, modifiersHeld: held))
+            // PWE: a line per modifier change only with PWE_INPUT_DEBUG=1.
+            if TBInputDebugLog.detailed {
+                let held = [CGEventFlags.maskShift, .maskControl, .maskAlternate, .maskCommand, .maskAlphaShift]
+                    .filter { flags.contains($0) }.count
+                TBInputDebugLog.log(TBInputDebugLog.remoteModifierLine(keyCode: keyCode, isDown: isDown,
+                                                                       flags: flags.rawValue, modifiersHeld: held))
+            }
         }
         guard let event = CGEvent(keyboardEventSource: localInputEventSource(), virtualKey: CGKeyCode(keyCode), keyDown: isDown) else { return }
         event.flags = currentInjectedModifierFlags()
@@ -2963,10 +2971,13 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     }
 
     private func applyIncomingInputEvent(_ event: TBMonitorInputEvent, payload: Data) {
-        if event.kind == "move" || event.kind.hasSuffix("Drag") || event.kind == "scroll" {
-            TBInputDebugLog.logInputEvent("sender applying incoming event kind=\(event.kind)")
-        } else {
-            TBInputDebugLog.log("sender applying incoming event kind=\(event.kind)")
+        // PWE: a line per event only with PWE_INPUT_DEBUG=1 (counted where it arrives).
+        if TBInputDebugLog.detailed {
+            if event.kind == "move" || event.kind.hasSuffix("Drag") || event.kind == "scroll" {
+                TBInputDebugLog.logInputEvent("sender applying incoming event kind=\(event.kind)")
+            } else {
+                TBInputDebugLog.log("sender applying incoming event kind=\(event.kind)")
+            }
         }
         switch event.kind {
         case "move":
@@ -3367,7 +3378,15 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                    Self.pweExtendedCapturesDirect(choice: choice, virtualDisplayID: session.displayID,
                                                   onlineDisplayIDs: onlineDisplayIDs(),
                                                   directFailed: pweDirectFailed, usesRawNV12: usesRawNV12) {
-                    if await startDirectDisplayStream(displayID: session.displayID, preset: preset) {
+                    var started = await startDirectDisplayStream(displayID: session.displayID, preset: preset)
+                    // PWE (T53): just after a wake the display may not be ready: one more try.
+                    if !started, pweDirectTroubleNow() != .fallBack {
+                        pweDirectRetriedAfterWake = true
+                        PWELog.note("[pwe] capture: the direct stream did not start just after a wake; trying once more")
+                        try? await Task.sleep(nanoseconds: 1_000_000_000)
+                        started = await startDirectDisplayStream(displayID: session.displayID, preset: preset)
+                    }
+                    if started {
                         pweExtendedUsesDirect = true
                         TBLog.connection.notice("capture: extended desktop uses direct stream id=\(self.session.displayID, privacy: .public) (\(choice == .always ? "asked for" : "the only display", privacy: .public))")
                         PWELog.note("[pwe] capture: extended desktop uses direct stream (\(choice == .always ? "asked for" : "the only display"))")
@@ -4189,19 +4208,27 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     }
 
     private func registerWakeObservers() {
-        let handler: @Sendable (Notification) -> Void = { [weak self] _ in
+        let handler: @Sendable (Notification) -> Void = { [weak self] note in
+            let displaysWoke = note.name == NSWorkspace.screensDidWakeNotification
             Task { @MainActor [weak self] in
-                self?.pweScreensAsleep = false
+                if displaysWoke { self?.pweDisplaysWoke() }
                 self?.handleSystemWake()
                 self?.pweAfterWake()
             }
         }
         // PWE: the other half of each wake signal, so a wake can tell whether
         // the running capture lived through the sleep (pweCaptureNeedsWakeRestart).
-        let asleep: @Sendable (Notification) -> Void = { [weak self] _ in
+        let asleep: @Sendable (Notification) -> Void = { [weak self] note in
+            let displaysSleep = note.name == NSWorkspace.willSleepNotification
+                || note.name == NSWorkspace.screensDidSleepNotification
             Task { @MainActor [weak self] in
-                self?.pweScreensAsleepAt = ProcessInfo.processInfo.systemUptime
-                self?.pweScreensAsleep = true
+                guard let self else { return }
+                self.pweScreensAsleepAt = ProcessInfo.processInfo.systemUptime
+                if displaysSleep, !self.pweDisplaysAsleep {
+                    self.pweDisplaysAsleep = true
+                    self.pweSleepStartedAt = ProcessInfo.processInfo.systemUptime
+                    self.pweWokeAt = nil
+                }
             }
         }
         for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification] {
@@ -4209,6 +4236,15 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                 NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: nil, using: asleep)
             )
         }
+        // PWE (T53): a system wake ends a sleep too, also one macOS refused
+        // after willSleep (no screensDidWake follows then).
+        wakeObservers.append(
+            NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didWakeNotification, object: nil, queue: nil
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.pweDisplaysWoke() }
+            }
+        )
         for name in ["com.apple.screenIsLocked", "com.apple.screensaver.didstart"] {
             wakeObservers.append(
                 DistributedNotificationCenter.default().addObserver(
@@ -4301,7 +4337,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         // Asleep, locked or in the middle of a restart, the display set is
         // passing through states that say nothing about the next minutes.
         guard isStreaming, captureSource == .extendedDesktop, !isRestartingCaptureAfterWake,
-              !pweScreensAsleep, !TBSystemSleepGate.isSleeping,
+              !pweDisplaysAsleep, !TBSystemSleepGate.isSleeping,
               session.displayID != kCGNullDirectDisplay,
               onlineDisplayIDs().contains(session.displayID) else { return }
         let wantsDirect = Self.pweExtendedCapturesDirect(
@@ -4357,16 +4393,23 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         guard health.shouldRestart(now: now) else { return }
         NSLog("TargetBridge: capture watchdog tripped — state=%@ frames=%llu idleEvents=%llu", health.state.rawValue, health.frameCount, health.idleCount)
         if pweExtendedUsesDirect {
-            // PWE (T53): a display stream sends nothing while the screens sleep.
-            // That is not a failure, and restarting it then gains nothing: the
-            // wake restarts capture on the path the rule picks.
-            guard Self.pweStallIsDirectFailure(screensAsleep: pweScreensAsleep,
-                                               systemSleeping: TBSystemSleepGate.isSleeping) else { return }
-            // PWE: the restart goes to ScreenCaptureKit for the rest of this connection.
-            pweDirectFailed = true
-            pweDirectStalledAt = now
-            TBLog.connection.warning("capture: the extended desktop's direct stream stalled; restarting on ScreenCaptureKit")
-            PWELog.note("[pwe] capture: the extended desktop's direct stream stalled; restarting on ScreenCaptureKit for this connection")
+            // PWE (T53): a display stream sends nothing while the displays
+            // sleep. That is not a failure, and restarting it then gains
+            // nothing: the wake restarts capture on the path the rule picks.
+            // Soon after a wake it gets one more try on the direct path.
+            switch pweDirectTroubleNow() {
+            case .ignore:
+                return
+            case .retryDirect:
+                pweDirectRetriedAfterWake = true
+                PWELog.note("[pwe] capture: the direct stream stalled just after a wake; restarting it once")
+            case .fallBack:
+                // PWE: the restart goes to ScreenCaptureKit for the rest of this connection.
+                pweDirectFailed = true
+                pweDirectStalledAt = now
+                TBLog.connection.warning("capture: the extended desktop's direct stream stalled; restarting on ScreenCaptureKit")
+                PWELog.note("[pwe] capture: the extended desktop's direct stream stalled; restarting on ScreenCaptureKit for this connection")
+            }
         }
         scheduleCaptureRestart(reason: "watchdog (\(health.state.rawValue))", delaySeconds: 0.5, onlyIfUnhealthy: true)
     }
@@ -4523,20 +4566,49 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         return online == [virtualDisplayID]
     }
 
-    /// PWE (T53): a direct stream that stalls while the screens sleep (or the
-    /// Mac sleeps) has not failed: a display stream sends nothing then.
-    nonisolated static func pweStallIsDirectFailure(screensAsleep: Bool, systemSleeping: Bool) -> Bool {
-        !screensAsleep && !systemSleeping
+    /// PWE (T53): what to make of a direct stream that stalled, sent no first
+    /// frame or did not start. While the displays or the Mac sleep: nothing (a
+    /// display stream sends nothing then). Within `pweWakeGrace` of a wake, once:
+    /// try the direct path again (the display may not be ready yet, or the
+    /// stall began before the wake). Otherwise: fall back to ScreenCaptureKit.
+    enum PWEDirectTrouble: Equatable { case ignore, retryDirect, fallBack }
+
+    nonisolated static let pweWakeGrace: TimeInterval = 15
+    nonisolated static let pweFirstFrameWaitsAsleepLimit = 15   // × 4 s
+
+    nonisolated static func pweDirectTrouble(displaysAsleep: Bool, systemSleeping: Bool,
+                                             secondsSinceWake: TimeInterval?, retriedSinceWake: Bool) -> PWEDirectTrouble {
+        if displaysAsleep || systemSleeping { return .ignore }
+        if let since = secondsSinceWake, since >= 0, since < pweWakeGrace, !retriedSinceWake { return .retryDirect }
+        return .fallBack
     }
 
-    /// PWE (T53): a stall recorded within this many seconds before the screens
-    /// slept is taken as the sleep's doing (the notice can arrive after the
-    /// stream already stopped) and is forgotten at the wake.
+    private func pweDirectTroubleNow() -> PWEDirectTrouble {
+        Self.pweDirectTrouble(displaysAsleep: pweDisplaysAsleep, systemSleeping: TBSystemSleepGate.isSleeping,
+                              secondsSinceWake: pweWokeAt.map { ProcessInfo.processInfo.systemUptime - $0 },
+                              retriedSinceWake: pweDirectRetriedAfterWake)
+    }
+
+    /// PWE (T53): a stall recorded within this many seconds before a sleep
+    /// began is taken as the sleep's doing (the notice can arrive after the
+    /// stream already stopped).
     nonisolated static let pweStallBeforeSleepGrace: TimeInterval = 15
 
-    nonisolated static func pweStallWasTheSleep(stalledAt: TimeInterval?, screensAsleepAt: TimeInterval?) -> Bool {
-        guard let stalledAt, let screensAsleepAt else { return false }
-        return stalledAt >= screensAsleepAt - pweStallBeforeSleepGrace
+    /// Only a stall within the sleep: from `pweStallBeforeSleepGrace` before it
+    /// began until it ended. Later sleep signals do not move its start.
+    nonisolated static func pweStallWasTheSleep(stalledAt: TimeInterval?, sleepStartedAt: TimeInterval?,
+                                                wokeAt: TimeInterval?) -> Bool {
+        guard let stalledAt, let sleepStartedAt, let wokeAt else { return false }
+        return stalledAt >= sleepStartedAt - pweStallBeforeSleepGrace && stalledAt <= wokeAt
+    }
+
+    /// PWE (T53): the displays woke (screensDidWake) or the Mac did (didWake).
+    private func pweDisplaysWoke() {
+        guard pweDisplaysAsleep else { return }
+        pweDisplaysAsleep = false
+        pweWokeAt = ProcessInfo.processInfo.systemUptime
+        pweDirectRetriedAfterWake = false
+        pweFirstFrameWaitsAsleep = 0
     }
 
     /// PWE (T53): after a wake, forget a direct-path failure the sleep caused,
@@ -4544,7 +4616,8 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     /// check (pweCheckExtendedCapturePath) restarts on the direct stream if it
     /// is the rule's choice and capture is not already being restarted.
     private func pweAfterWake() {
-        if pweDirectFailed, Self.pweStallWasTheSleep(stalledAt: pweDirectStalledAt, screensAsleepAt: pweScreensAsleepAt) {
+        if pweDirectFailed, Self.pweStallWasTheSleep(stalledAt: pweDirectStalledAt, sleepStartedAt: pweSleepStartedAt,
+                                                     wokeAt: pweWokeAt) {
             pweDirectFailed = false
             pweDirectStalledAt = nil
             PWELog.note("[pwe] capture: the direct stream's stall came with the screens' sleep; the direct path may be used again")
@@ -4701,12 +4774,23 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                 TBLog.connection.error("capture: first-frame timeout preset=\(self.capturePreset.rawValue, privacy: .public) source=\(String(describing: self.captureSource), privacy: .public) connected=\(self.isConnected, privacy: .public) sentFrames=\(sentFrames, privacy: .public)")
                 // PWE: a direct stream that sent nothing gets one more try on
                 // ScreenCaptureKit, watched the same way, before the session stops.
-                // PWE (T53): asleep, no stream sends a frame; keep waiting for one.
-                if self.pweExtendedUsesDirect,
-                   !Self.pweStallIsDirectFailure(screensAsleep: self.pweScreensAsleep,
-                                                 systemSleeping: TBSystemSleepGate.isSleeping) {
-                    self.startFirstFrameWatchdog()
-                    return
+                // PWE (T53): asleep, no stream sends a frame: keep waiting, for a
+                // minute at most. Just after a wake: one more try on the direct path.
+                if self.pweExtendedUsesDirect {
+                    switch self.pweDirectTroubleNow() {
+                    case .ignore where self.pweFirstFrameWaitsAsleep < Self.pweFirstFrameWaitsAsleepLimit:
+                        self.pweFirstFrameWaitsAsleep += 1
+                        self.startFirstFrameWatchdog()
+                        return
+                    case .retryDirect where self.canRestartCapture:
+                        self.pweDirectRetriedAfterWake = true
+                        PWELog.note("[pwe] capture: no first frame from the direct stream just after a wake; restarting it once")
+                        self.scheduleCaptureRestart(reason: "direct stream not ready after wake", delaySeconds: 1,
+                                                    rearmFirstFrameWatchdog: true)
+                        return
+                    default:
+                        break
+                    }
                 }
                 if Self.pweFallsBackFromDirect(usingDirect: self.pweExtendedUsesDirect, canRestart: self.canRestartCapture) {
                     self.pweDirectFailed = true
