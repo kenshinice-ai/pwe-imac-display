@@ -217,6 +217,19 @@ enum PWEReplugRules {
     }
 }
 
+/// How often the model may look at system state that costs a query (B11):
+/// at most once per `interval`. While connected, the Mac Studio showed about
+/// 2 TCC queries, 10 preference reads and 3 LaunchServices queries a second
+/// (2026-10-24), from refreshes the engine's fps counter set off every second.
+enum PWEPollRules {
+    static let interval: TimeInterval = 5
+
+    static func isDue(lastAt: TimeInterval?, now: TimeInterval, every interval: TimeInterval = interval) -> Bool {
+        guard let lastAt, now >= lastAt else { return true }
+        return now - lastAt >= interval
+    }
+}
+
 /// The first connection's two extra lines in the window: where the menu bar
 /// controls are, and Open at login (PWEPhaseRulesTests).
 enum PWEFirstConnectionRules {
@@ -444,13 +457,13 @@ final class PWESenderModel: ObservableObject {
             .receive(on: Self.engineUpdates)
             .sink { [weak self] _ in
                 self?.observeSessions()
-                self?.refresh()
+                self?.refreshSoon()
             }
             .store(in: &cancellables)
         NotificationCenter.default
             .publisher(for: TBSenderAutomation.automaticConnectionDidChange)
             .receive(on: Self.engineUpdates)
-            .sink { [weak self] _ in self?.refresh() }
+            .sink { [weak self] _ in self?.refreshSoon() }
             .store(in: &cancellables)
         // Coming back from System Settings is when a permission or a login item
         // changes; check then, so nobody has to press "I have allowed it".
@@ -520,6 +533,36 @@ final class PWESenderModel: ObservableObject {
     /// Whether the session dials over Network Link rather than the cable.
     var connectsOverNetwork: Bool { session?.transportKind == .networkLink }
 
+    /// B11: one change in a session reaches the model twice, from the session
+    /// and again from the service it bubbles up to. Both ask for one refresh on
+    /// the next turn of the main queue (which also runs while a menu is open).
+    private var refreshPending = false
+    private func refreshSoon() {
+        guard !refreshPending else { return }
+        refreshPending = true
+        Self.engineUpdates.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.refreshPending = false
+                self.refresh()
+            }
+        }
+    }
+
+    /// B11: the Screen Recording permission (a TCC query), read at most every
+    /// `PWEPollRules.interval` seconds by refreshes, and at once when it may have
+    /// changed: coming back to the app, or the person asking to check.
+    private var screenRecordingAllowed = true
+    private var screenRecordingCheckedAt: TimeInterval?
+    private func hasScreenRecording(force: Bool = false) -> Bool {
+        let now = ProcessInfo.processInfo.systemUptime
+        if force || PWEPollRules.isDue(lastAt: screenRecordingCheckedAt, now: now) {
+            screenRecordingAllowed = CGPreflightScreenCaptureAccess()
+            screenRecordingCheckedAt = now
+        }
+        return screenRecordingAllowed
+    }
+
     private func refresh() {
         guard let service else { return }
         syncRendering()
@@ -571,7 +614,7 @@ final class PWESenderModel: ObservableObject {
         for session in service?.sessions ?? [] {
             session.objectWillChange
                 .receive(on: Self.engineUpdates)
-                .sink { [weak self] _ in self?.refresh() }
+                .sink { [weak self] _ in self?.refreshSoon() }
                 .store(in: &sessionCancellables)
         }
     }
@@ -581,7 +624,7 @@ final class PWESenderModel: ObservableObject {
         let fresh = PWEPhaseRules.freshStatus(session?.statusState, stale: staleFailure)
         if !fresh.stillStale { staleFailure = nil }
         var state = PWEEngineState(session: session)
-        state.hasPermission = CGPreflightScreenCaptureAccess()
+        state.hasPermission = hasScreenRecording()
         state.status = fresh.status
         state.retrying = retrying
         state.receivers = receivers(service)
@@ -769,6 +812,7 @@ final class PWESenderModel: ObservableObject {
 
     func recheckPermission() {
         service?.refreshPrivacyPermissions()
+        _ = hasScreenRecording(force: true)
         refresh()
     }
 

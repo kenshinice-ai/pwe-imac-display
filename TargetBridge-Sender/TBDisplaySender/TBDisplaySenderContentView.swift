@@ -11,7 +11,7 @@ struct TBDisplaySenderContentView: View {
                 controlDeck
 
                 ForEach(service.sessions) { session in
-                    TBDisplaySenderSessionCard(service: service, session: session)
+                    TBDisplaySenderSessionCard(service: service, session: session, liveMetrics: session.liveMetrics)
                 }
 
                 HStack {
@@ -204,6 +204,8 @@ struct TBDisplaySenderContentView: View {
 private struct TBDisplaySenderSessionCard: View {
     @ObservedObject var service: TBDisplaySenderService
     @ObservedObject var session: TBDisplaySenderSession
+    /// PWE (B11): the fps readout's own observable (session.liveMetrics).
+    @ObservedObject var liveMetrics: TBSessionLiveMetrics
     @State private var showingSessionSettings = false
 
     private let summaryColumns = [
@@ -295,7 +297,7 @@ private struct TBDisplaySenderSessionCard: View {
 
             summaryTile(
                 title: fpsTitle,
-                value: "\(session.senderFPS)",
+                value: "\(liveMetrics.senderFPS)",
                 subtitle: session.isStreaming ? liveSubtitle : idleSubtitle,
                 accent: session.isStreaming ? .green : .secondary
             )
@@ -311,7 +313,7 @@ private struct TBDisplaySenderSessionCard: View {
                     infoRow(TBDisplaySenderL10n.receiverLabel(service.language), session.receiverPanelText)
                     infoRow(TBDisplaySenderL10n.virtualDisplayLabel(service.language), session.virtualDisplayText)
                     infoRow(TBDisplaySenderL10n.streamLabel(service.language), session.streamResolutionText)
-                    infoRow(TBDisplaySenderL10n.fpsLabel(service.language), "\(session.senderFPS)")
+                    infoRow(TBDisplaySenderL10n.fpsLabel(service.language), "\(liveMetrics.senderFPS)")
                 }
             }
         }

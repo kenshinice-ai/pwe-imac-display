@@ -1525,11 +1525,15 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     var receiverSupportsHEVCDecodeHint: Bool?
     var receiverInputMonitoringTrustedHint: Bool?
     var receiverAccessibilityTrustedHint: Bool?
-    @Published var senderFPS = 0
     // Live FPS readout. Kept on a dedicated observable so its once-per-second
     // update only re-renders the small FPS subview — not the whole session card
     // or (via the manager's objectWillChange bubble-up) the entire window.
     let liveMetrics = TBSessionLiveMetrics()
+    /// PWE (B11): read from `liveMetrics`, no longer a second published copy.
+    /// Setting that copy every second made the session, the manager and every
+    /// window observing them change once a second while streaming: PWE's model
+    /// re-read permissions and preferences twice a second (Mac Studio, 2026-10-24).
+    var senderFPS: Int { liveMetrics.senderFPS }
     @Published var receiverPanelText: String
     @Published var virtualDisplayText: String
     @Published var captureDisplayText: String
@@ -4486,7 +4490,6 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         pweCapturingAudio = false
         isStreaming = false
         liveMetrics.senderFPS = 0
-        senderFPS = 0
         sentSnapshot = 0
         cursorDisplayID = kCGNullDirectDisplay
         lastCursorPacket = nil
@@ -4517,7 +4520,6 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                 let total = pipeline?.sentFramesSnapshot ?? 0
                 let fps = total - sentSnapshot
                 liveMetrics.senderFPS = fps
-                senderFPS = fps
                 sentSnapshot = total
             }
         }
