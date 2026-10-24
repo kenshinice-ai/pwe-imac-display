@@ -12,6 +12,79 @@ enum PWELog {
 
     static func note(_ line: String) {
         logger.notice("\(line, privacy: .public)")
+        PWELogFile.shared.append(line)
+    }
+}
+
+/// PWE (1.1.1, T52): the same lines in a file of our own,
+/// `~/Library/Logs/PWE Screen Encore/sender.log`, as the receiver keeps
+/// `receiver.log`. On the Mac Studio (macOS 27.0.1, 2026-10-24) the unified log
+/// held no line from this process at all, so the report came out empty; the
+/// file does not depend on it. Rotated to `sender.old.log` at 2 MB.
+final class PWELogFile: @unchecked Sendable {
+    static let shared = PWELogFile(directory: FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Logs/PWE Screen Encore", isDirectory: true))
+
+    static let maxBytes = 2 * 1024 * 1024
+    let url: URL
+    private let oldURL: URL
+    private let queue = DispatchQueue(label: "com.pwegroup.pweimacdisplay.logfile")
+    private var handle: FileHandle?
+
+    init(directory: URL) {
+        url = directory.appendingPathComponent("sender.log")
+        oldURL = directory.appendingPathComponent("sender.old.log")
+    }
+
+    static func stamp(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+        return formatter.string(from: date)
+    }
+
+    func append(_ line: String, at date: Date = Date()) {
+        let text = Self.stamp(date) + " " + line + "\n"
+        queue.async { self.write(Data(text.utf8)) }
+    }
+
+    /// Waits for the lines already handed to `append` (tests, and the report).
+    func flush() { queue.sync {} }
+
+    private func write(_ data: Data) {
+        let fm = FileManager.default
+        if handle == nil {
+            try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if !fm.fileExists(atPath: url.path) { fm.createFile(atPath: url.path, contents: nil) }
+            handle = try? FileHandle(forWritingTo: url)
+            _ = try? handle?.seekToEnd()
+        }
+        guard let handle else { return }
+        if let size = try? handle.offset(), size + UInt64(data.count) > UInt64(Self.maxBytes) {
+            try? handle.close()
+            self.handle = nil
+            try? fm.removeItem(at: oldURL)
+            try? fm.moveItem(at: url, to: oldURL)
+            write(data)
+            return
+        }
+        try? handle.write(contentsOf: data)
+    }
+
+    /// Lines written since `since`, oldest first, as "HH:mm:ss.SSS text".
+    func lines(since: Date) -> [String] {
+        flush()
+        let cutoff = Self.stamp(since)
+        var out: [String] = []
+        for file in [oldURL, url] {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+                // "yyyy-MM-dd HH:mm:ss.SSS " sorts as text.
+                guard line.count > 24, String(line.prefix(23)) >= cutoff else { continue }
+                out.append(String(line.dropFirst(11)))
+            }
+        }
+        return out
     }
 }
 
@@ -103,6 +176,18 @@ enum PWELogExport {
         }
     }
 
+    /// The unified log's lines when it has any; otherwise our own file's
+    /// (T52: a Mac whose unified log held nothing from this app).
+    static func reportLines(minutes: Int, file: PWELogFile = .shared) -> [String] {
+        let unified = recentLines(minutes: minutes)
+        let hasOwn = unified.contains { !$0.hasPrefix("(could not read the log") }
+        if hasOwn { return unified }
+        let fromFile = file.lines(since: Date().addingTimeInterval(TimeInterval(-60 * minutes)))
+        guard !fromFile.isEmpty else { return unified }
+        return ["(the system log had no lines from this app; these are from \(file.url.path))"]
+            + fromFile.suffix(3000)
+    }
+
     /// The store can return the newest entries twice, once from memory and once
     /// from disk: the RC6 report ended with its last four lines each repeated
     /// at the same millisecond (U1, 2026-10-22). An entry with the same time
@@ -122,7 +207,7 @@ enum PWELogExport {
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
         Task.detached(priority: .userInitiated) {
-            let report = header + "\n" + recentLines(minutes: 30).joined(separator: "\n")
+            let report = header + "\n" + reportLines(minutes: 30).joined(separator: "\n")
             do {
                 try report.write(to: url, atomically: true, encoding: .utf8)
                 await MainActor.run { NSWorkspace.shared.activateFileViewerSelecting([url]) }

@@ -66,4 +66,33 @@ final class PWELogExportTests: XCTestCase {
         XCTAssertEqual(kept.map(\.message), ["[pwe] a", "[pwe] b", "[pwe] a"])
         XCTAssertEqual(kept.map(\.date), [t, t.addingTimeInterval(1), t.addingTimeInterval(2)])
     }
+
+    // T52: the report's own file, for Macs whose unified log has nothing from us.
+    private func tempLogFile() -> PWELogFile {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("pwe-logfile-\(UUID().uuidString)")
+        return PWELogFile(directory: dir)
+    }
+
+    func testLogFileKeepsRecentLinesOnly() {
+        let file = tempLogFile()
+        let now = Date()
+        file.append("[pwe] old", at: now.addingTimeInterval(-3600))
+        file.append("[pwe] new", at: now.addingTimeInterval(-60))
+        let lines = file.lines(since: now.addingTimeInterval(-1800))
+        XCTAssertEqual(lines.count, 1)
+        XCTAssertTrue(lines[0].hasSuffix(" [pwe] new"))
+        XCTAssertFalse(lines[0].hasPrefix("20"), "the date part is dropped, the time stays")
+    }
+
+    func testLogFileRotatesAtTheLimit() throws {
+        let file = tempLogFile()
+        let chunk = String(repeating: "x", count: 64 * 1024)
+        for _ in 0..<40 { file.append(chunk) }   // about 2.5 MB
+        file.flush()
+        let size = try FileManager.default.attributesOfItem(atPath: file.url.path)[.size] as? Int ?? 0
+        XCTAssertLessThanOrEqual(size, PWELogFile.maxBytes)
+        let old = file.url.deletingLastPathComponent().appendingPathComponent("sender.old.log")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: old.path))
+    }
 }
+

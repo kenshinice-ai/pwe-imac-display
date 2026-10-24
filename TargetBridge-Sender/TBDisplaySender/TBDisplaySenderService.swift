@@ -3323,6 +3323,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             self.pipeline = pipeline
             pweCaptureStartedAt = ProcessInfo.processInfo.systemUptime
             TBLog.connection.info("capture: pipeline started preset=\(preset.rawValue, privacy: .public) source=\(String(describing: self.captureSource), privacy: .public) codec=\(codecName, privacy: .public) rawNV12=\(usesRawNV12, privacy: .public)")
+            PWELog.note("[pwe] capture: pipeline started preset=\(preset.rawValue) source=\(String(describing: self.captureSource)) codec=\(codecName)")
 
             let display: SCDisplay
             if captureSource == .desktopMirror {
@@ -3357,6 +3358,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                     if await startDirectDisplayStream(displayID: session.displayID, preset: preset) {
                         pweExtendedUsesDirect = true
                         TBLog.connection.notice("capture: extended desktop uses direct stream id=\(self.session.displayID, privacy: .public) (\(choice == .always ? "asked for" : "the only display", privacy: .public))")
+                        PWELog.note("[pwe] capture: extended desktop uses direct stream (\(choice == .always ? "asked for" : "the only display"))")
                         return true
                     }
                     pweDirectFailed = true
@@ -4294,6 +4296,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             usesRawNV12: activeCodecType == nil)
         guard wantsDirect != pweExtendedUsesDirect else { return }
         TBLog.connection.notice("capture: displays changed; extended desktop moves to \(wantsDirect ? "the direct stream" : "ScreenCaptureKit", privacy: .public)")
+        PWELog.note("[pwe] capture: displays changed; extended desktop moves to \(wantsDirect ? "the direct stream" : "ScreenCaptureKit")")
         scheduleCaptureRestart(reason: "capture path change", delaySeconds: 0)
     }
 
