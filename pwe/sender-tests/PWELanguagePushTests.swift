@@ -14,7 +14,13 @@ final class PWELanguagePushTests: XCTestCase {
     }
 
     func testNoAddressSendsNothing() {
-        // Returns at once: no host, no connection.
-        PWESecureOneShot.send(Data([1]), toFirstOf: [], expectedID: Data(count: 32))
+        XCTAssertFalse(PWESecureOneShot.send(Data([1]), toFirstOf: [], expectedID: Data(count: 32)))
+    }
+
+    /// A dead address ahead of others holds them up 1 s, not 3.
+    func testEachAddressBeforeTheLastGetsOneSecond() {
+        XCTAssertEqual(PWESecureOneShot.timeout(remaining: 3), 1)
+        XCTAssertEqual(PWESecureOneShot.timeout(remaining: 2), 1)
+        XCTAssertEqual(PWESecureOneShot.timeout(remaining: 1), 3)
     }
 }
