@@ -2344,6 +2344,9 @@ unsigned int tb_disp_poll_actions(struct tb_display *d) {
         else if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_DISPLAY_CHANGED) {
             if (d->vsync && d->mtl) tb_vsync_set_display(d->vsync, tb_mtl_display_id(d->mtl));
         }
+        else if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) {
+            actions |= TB_DISP_ACTION_FOCUS_GAINED;   /* PWE (1.1.1): main.c re-checks permissions */
+        }
         else if (own_keys &&
                  tb_disp_is_shortcut(&ev, SDLK_ESCAPE, SDL_SCANCODE_ESCAPE)) tb_disp_escape(d);
         else if (own_keys &&

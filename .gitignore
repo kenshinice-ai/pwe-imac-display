@@ -48,4 +48,5 @@ test_input_rate
 post_moves
 test_decthreads
 test_brightness
+test_permwatch
 *.dSYM/

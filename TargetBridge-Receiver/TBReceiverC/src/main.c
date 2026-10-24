@@ -31,6 +31,7 @@
 #include "tb_ratelimit.h"
 #include "tb_input_rate.h"
 #include "tb_runloop_thread.h"
+#include "tb_permwatch.h"
 #include "tb_clipboard.h"
 #include "tb_sysinfo.h"
 #include "tb_running_app.h"
@@ -151,6 +152,13 @@ struct app {
     int      last_input_monitoring_trusted;
     int      last_accessibility_trusted;
     uint64_t last_permissions_poll_ms;
+    /* PWE (1.1.1, A8): the permissions, asked on their own thread every 5 s
+     * (tb_permwatch.h); NULL = asked here every 5 s. */
+    struct tb_permwatch *permwatch;
+    uint64_t permissions_seq;           /* the watcher's answer last taken */
+    uint64_t last_permissions_check_ms; /* without a watcher */
+    uint64_t last_tap_check_ms;         /* is the event tap still on */
+    atomic_int tap_switched_off;        /* the tap's thread saw macOS switch it off for good */
     int      input_permissions_requested;   /* PWE (1.1.1): asked macOS once this launch */
 
     DNSServiceRef bonjour_ref;
@@ -408,12 +416,71 @@ static void tb_receiver_refresh_login_item(struct app *a) {
                                                               : TB_DISP_LOGIN_ITEM_UNAVAILABLE));
 }
 
+/* PWE (1.1.1, A8): a listen-only event tap for key presses, made and thrown
+ * away at once, never attached to a run loop: whether the window server lets
+ * this process see the keyboard right now. About 2 ms (2021 MacBook Pro). */
+static CGEventRef tb_receiver_probe_tap_callback(CGEventTapProxy proxy, CGEventType type, CGEventRef event,
+                                                 void *user_info) {
+    (void)proxy; (void)type; (void)user_info;
+    return event;
+}
+
+static int tb_receiver_listen_probe(void) {
+    CFMachPortRef tap = CGEventTapCreate(kCGSessionEventTap, kCGTailAppendEventTap, kCGEventTapOptionListenOnly,
+                                         CGEventMaskBit(kCGEventKeyDown), tb_receiver_probe_tap_callback, NULL);
+    if (!tap) return 0;
+    CFMachPortInvalidate(tap);
+    CFRelease(tap);
+    return 1;
+}
+
+/* PWE (1.1.1, A8): what the watcher thread asks (any thread). In 1.1.0 a
+ * removed permission still read as allowed until the receiver was reopened
+ * (RC8, 2026-10-22), so Input Monitoring that macOS reports as allowed is
+ * also tried: when the window server refuses a listening tap twice in a row
+ * (10 s), it counts as removed. A refused tap means input capture cannot work
+ * anyway, so this never takes away anything that worked. */
+static void tb_receiver_check_permissions(int *input_monitoring, int *accessibility) {
+    static int refused;   /* the watcher's thread (or the main thread without one) */
+    int listen = tb_receiver_input_monitoring_trusted();
+    if (listen) {
+        if (tb_receiver_listen_probe()) {
+            refused = 0;
+        } else if (++refused >= 2) {
+            if (refused == 2) {
+                fprintf(stderr, "[input] macOS reports Input Monitoring as allowed, but the window server "
+                                "refuses an event tap: counted as not allowed\n");
+            }
+            listen = 0;
+        }
+    } else {
+        refused = 0;
+    }
+    *input_monitoring = listen;
+    *accessibility = tb_receiver_accessibility_trusted();
+}
+
+static void tb_receiver_apply_permissions(struct app *a, int input_monitoring, int accessibility);
+
+/* PWE (1.1.1, A8): take the latest answer, if there is a new one. Cheap:
+ * called from the main loop every 250 ms. */
 static void tb_receiver_poll_permissions(struct app *a) {
     if (!a) return;
+    int input_monitoring = 0, accessibility = 0;
+    if (a->permwatch) {
+        const uint64_t seq = tb_permwatch_read(a->permwatch, &input_monitoring, &accessibility);
+        if (seq == 0 || seq == a->permissions_seq) return;
+        a->permissions_seq = seq;
+    } else {
+        const uint64_t now = now_ms();
+        if (a->last_permissions_check_ms && now - a->last_permissions_check_ms < TB_PERMWATCH_INTERVAL_MS) return;
+        a->last_permissions_check_ms = now;
+        tb_receiver_check_permissions(&input_monitoring, &accessibility);
+    }
+    tb_receiver_apply_permissions(a, input_monitoring, accessibility);
+}
 
-    const int input_monitoring = tb_receiver_input_monitoring_trusted();
-    const int accessibility = tb_receiver_accessibility_trusted();
-
+static void tb_receiver_apply_permissions(struct app *a, int input_monitoring, int accessibility) {
     const int changed =
         input_monitoring != a->last_input_monitoring_trusted ||
         accessibility != a->last_accessibility_trusted;
@@ -1699,6 +1766,18 @@ static CGEventRef tb_receiver_input_tap_callback(CGEventTapProxy proxy,
 
     if (type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput) {
         if (a->input_tap) CGEventTapEnable(a->input_tap, true);
+        /* PWE (1.1.1): say so (once per 10 s); a tap that stays off (a removed
+         * permission) is rebuilt from the main loop. */
+        static struct tb_ratelimit disabled_log;   /* the tap's thread only */
+        unsigned long quiet = 0;
+        const int still_off = a->input_tap && !CGEventTapIsEnabled(a->input_tap);
+        if (tb_ratelimit_allow(&disabled_log, now_ms(), 10000, &quiet)) {
+            tb_receiver_input_log("[input] macOS switched the event tap off (%s); %s%s",
+                                  type == kCGEventTapDisabledByTimeout ? "timeout" : "user input",
+                                  still_off ? "it stays off" : "switched back on",
+                                  quiet ? "; it happened before since the last report" : "");
+        }
+        if (still_off) atomic_store(&a->tap_switched_off, 1);
         return event;
     }
 
@@ -2083,8 +2162,9 @@ static void tb_receiver_start_input_tap(struct app *a, int listen_only) {
  * (receiverMaster) in a launch, ask macOS for what the global event tap needs:
  * Input Monitoring to see keys and the pointer, Accessibility to keep them from
  * the iMac's own apps. macOS shows its own prompt for whichever is missing and
- * lists the receiver in Privacy & Security; the 250 ms poll picks up a grant
- * and restarts the tap. Once per launch, and only from a session: an idle
+ * lists the receiver in Privacy & Security; the permission watcher (every 5 s,
+ * and when the window comes back to the front) picks up a grant and restarts
+ * the tap. Once per launch, and only from a session: an idle
  * receiver never prompts. Without this, the receiver appeared in neither list
  * and the person had to add it by hand. */
 static void tb_receiver_request_input_permissions_once(struct app *a) {
@@ -2230,8 +2310,11 @@ static void send_receiver_info(struct app *a) {
         profile.capture_w,
         profile.capture_h,
         tb_dec_supports_hevc_hwdecode() ? "true" : "false",
-        tb_receiver_input_monitoring_trusted() ? "true" : "false",
-        tb_receiver_accessibility_trusted() ? "true" : "false",
+        /* PWE (1.1.1): the last answer when there is one (each ask is ~8 ms). */
+        (a->last_input_monitoring_trusted >= 0 ? a->last_input_monitoring_trusted
+                                               : tb_receiver_input_monitoring_trusted()) ? "true" : "false",
+        (a->last_accessibility_trusted >= 0 ? a->last_accessibility_trusted
+                                            : tb_receiver_accessibility_trusted()) ? "true" : "false",
         tb_night_shift_supported() ? "true" : "false",
         tb_true_tone_supported() ? "true" : "false",
         tb_receiver_draws_pointer() ? "true" : "false",
@@ -2838,6 +2921,7 @@ int main(int argc, char **argv) {
         pthread_mutexattr_destroy(&attr);
         atomic_init(&a.forwarding, 0);
         atomic_init(&a.window_on_active_space, 1);
+        atomic_init(&a.tap_switched_off, 0);
     }
     tb_refresh_idle_localized_strings(&a);
     build_display_host(a.display_host, sizeof(a.display_host), a.ip_text,
@@ -2950,6 +3034,11 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    /* PWE (1.1.1, A8): permissions asked off the main loop. */
+    a.permwatch = tb_permwatch_start(tb_receiver_check_permissions, TB_PERMWATCH_INTERVAL_MS,
+                                     TB_PERMWATCH_MIN_GAP_MS);
+    if (!a.permwatch) fprintf(stderr, "[input] no permission thread; permissions are asked on the main loop\n");
+
     /* Announce only once both listeners are up (PWE). */
     bonjour_update(&a, TB_PORT);
 
@@ -2976,6 +3065,8 @@ int main(int argc, char **argv) {
         TB_LOOP_PHASE("run loop sources (CFRunLoopRunInMode)");
         CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.0, true);
         if (disp_actions & TB_DISP_ACTION_QUIT) break;
+        /* PWE (1.1.1, A8): back at the receiver, perhaps from System Settings. */
+        if (disp_actions & TB_DISP_ACTION_FOCUS_GAINED) tb_permwatch_kick(a.permwatch);
         if ((disp_actions & TB_DISP_ACTION_CYCLE_LANGUAGE) && a.client_fd < 0) {
             TB_LOOP_PHASE("language change");
             tb_receiver_cycle_language_preference(&a);
@@ -3124,8 +3215,21 @@ int main(int argc, char **argv) {
 
         if (t - a.last_permissions_poll_ms >= 250) {
             a.last_permissions_poll_ms = t;
-            TB_LOOP_PHASE("permissions poll (TCC)");
+            TB_LOOP_PHASE("permissions: the watcher's latest answer");
             tb_receiver_poll_permissions(&a);
+            /* PWE (1.1.1, A8): an event tap macOS switched off for good (a
+             * permission removed during the session): build it again, which
+             * falls back to the window's own input if macOS refuses. */
+            if (a.input_tap && t - a.last_tap_check_ms >= TB_PERMWATCH_INTERVAL_MS) {
+                a.last_tap_check_ms = t;   /* at most one rebuild per 5 s */
+                if (atomic_exchange(&a.tap_switched_off, 0) || !CGEventTapIsEnabled(a.input_tap)) {
+                    TB_LOOP_PHASE("input: rebuild the event tap macOS switched off");
+                    tb_receiver_input_log("[input] the event tap is off; asking macOS again and rebuilding it");
+                    tb_permwatch_kick(a.permwatch);
+                    tb_receiver_stop_input_tap(&a);
+                    tb_receiver_refresh_input_capture(&a);
+                }
+            }
             TB_LOOP_PHASE("pairing notice");
             /* PWE: expire the pairing code; end short messages. */
             if (tb_conn_gate_tick(&a.gate, t) & PWE_SEC_EV_HIDE_CODE)
@@ -3305,6 +3409,8 @@ int main(int argc, char **argv) {
     }
 #endif
     tb_receiver_stop_input_tap(&a);
+    tb_permwatch_stop(a.permwatch);   /* PWE (1.1.1) */
+    a.permwatch = NULL;
     tb_rlthread_stop(a.tap_thread);   /* PWE (1.1.1) */
     a.tap_thread = NULL;
     tb_pwe_drop_held(&a);
