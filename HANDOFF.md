@@ -36,13 +36,15 @@
 
 ## 阶段
 
-- **[阶段] 内测** — 下一步：10-28 按发布步骤 1–9 发布 1.1.0（Lee 10-26 定 go，发布前测试已过）；1.1.1 约 11-04 · 负责：Lee（go/no-go）、本仓库会话（发布步骤）· 卡在：没有 · 自 2026-10-22
+- **[阶段] 上线** — 下一步：官网部署 1.1.0 下载按钮（Lee 在工具站会话说「部署」）；1.1.1 约 11-04 · 负责：Lee（部署）、本仓库会话 · 卡在：工具站会话未打开 · 自 2026-10-28 · 负责：Lee（go/no-go）、本仓库会话（发布步骤）· 卡在：没有 · 自 2026-10-22
 
 ## 宣发
 
 - **[排队] 小红书 · 发布图文 1 篇（T+1，10-29 12:00 墨尔本）** — 9 张定稿在 `~/Documents/ClaudeCode/小红书-图文/PWE-Screen-Encore-返场/out/`，2026-10-22 Claude 核过事实（删了一句没出处的线材说法）；不放网址和 GitHub（小红书判站外引导会限流），结尾请机主在评论区报机型 · Lee 2026-10-22 已定：标题「家里那台5K iMac｜别卖，接上当5K屏」、只写 A$2,599 起。小红书会话 10-28 19:17 确认发布后换截图、核价、设定时
 - **[排队] 朋友圈 · 测评邀请 1 条** — 正文 A 定稿、P3 文字卡在 `docs/pwe/launch-kit-2026-10-22/moments-beta-invite.md` 和 `moments-beta/` · 等 Blender（P1）和 ChatGPT（P2）出图，Claude 加「效果图」后 Lee 发
-- **[已发] 官网 · 2026-10-21 · /screenencore/ 加逐年机型表（2014–2020，状态和最高 macOS）和「21.5 吋 4K 还没测过、暂不承诺」** — 工具站会话部署（main 62b3590，Cloudflare 36566e3b），PWE Assist 知识已同步；线上已核对；仍无下载链接 · 数据：未抄
+- **[已发] GitHub · 2026-10-28 · PWE Screen Encore 1.1.0** — https://github.com/kenshinice-ai/pwe-imac-display/releases/tag/pwe-1.1.0 · 数据：未抄
+- **[排队] 官网 · /screenencore/ 1.1.0 下载按钮** — 分支 site-encore-110（9fd567a）· 等 Lee 在工具站会话说「部署」
+- **[排队] YouTube · ENCORE001 产品片** — 等官网下载按钮上线后告诉 YouTube 会话，它设 10-28 21:00 公开
 - **[排队] 微信、小红书、V2EX · 3 条** — 草稿在宣发简报附录 A · 等 10-28 发布后由 Lee 发
 
 ## 等 Lee
@@ -94,6 +96,7 @@
 | 发布后 | 使用说明和官网加「只接 iMac 的台式 Mac」一节（Lee 2026-10-23 定，不动 1.1.0）。2026-10-23 在 Mac Studio 上实测：锁屏、睡醒 1–2 秒都在 iMac 上出密码界面，用 iMac 的键盘能解锁 | Claude 写，工具站会话上网站 | — |
 | 10-28～11-04 | 第一周：看 issue 和 support 邮件，填 COMPATIBILITY.md；先攒 bug，不逐个发版 | Claude | 每个 issue 48 小时内有回复 |
 | 约 11-11（T+14） | 宣传可以提配对和加密；上游 PR 一周一个，先提不涉及安全的 | Claude，Lee 定 | — |
+| 2026-10-28 | **1.1.0 已发布（Claude 按步骤做，Lee 当天「开始发布」）。** 1 合并 `pwe-1.1` 进 main（5405751，HANDOFF 取 main 的，README 取 1.1 的下载说明）；1b 文档扫过（63 个待推提交里没有安全细节、测试者名单或私下链接；`LAUNCH-PLAN-2026-10-20.md` 加了「60 Hz 已撤回」的注，ec2861e）；2 未入库文档今天不入库；4 推了 main（41795e7..ec2861e）和唯一标签 `pwe-1.1.0`；5 release https://github.com/kenshinice-ai/pwe-imac-display/releases/tag/pwe-1.1.0（latest；下载回来校验值对、Gatekeeper Notarized Developer ID、9,503,562 字节）；6 cask `kenshinice-ai/tap/pwe-screen-encore`（tap 3749f5a；brew style 改了两处写法）——`brew fetch` 没做成：**Homebrew 7 拒绝加载非官方 tap 的 cask，要先 `brew trust kenshinice-ai/tap`**（改信任设置要 Lee 自己做；用户安装也会碰到）；7 README 已是下载说明；8 已回信 Marco（10-14 那封的线程）；9 删了本地分支 `security-1.0.1`（已全部在 main，162a064）。**还没做：** 7a 官网（工具站会话不在线；要 Lee 打开它并说「部署」，分支 site-encore-110 9fd567a）、7c 小红书、YouTube 确认、7b 产品片插拔秒数（正式版 X3：3.2–4.9 s）——这几个会话都不在线 | Lee 打开会话 | 官网显示 1.1.0 下载按钮 |
 | 2026-10-27 | **私有审计仓库**（Lee 定）：`kenshinice-ai/pwe-screen-encore-audit`（PRIVATE），只推了分支 `pwe-1.1.1`（45b7a60），没有标签、没有 main、没有未入库文档；worktree `~/Developer/pwe-encore-111` 里 remote 名 `audit`。给 cloud 做 1.1.1 发布前审计；1.1.0 不动。审完 Lee 可删这个仓库 | Lee 安排 cloud | 审计报告 |
 | 2026-10-26 21:17 | **1.1.0 正式版发布前测试 X0–X4 全部通过**（MacBook + iMac，两端都是 20261022232403）：MacBook 打开不弹窗（macOS 27.2 对已公证 App 不再提示）；iMac 只弹 Apple 的「已检查、未发现恶意软件」确认框；插拔 5 次 3.2–4.9 s；换画面 1.6–1.8 s；三种声音对；睡眠唤醒 3.8 s；键鼠和 ⌃⌥⌘K 正常。两端留在正式版。BASELINE「1.1.0 正式版（发布前）」 | — | **可以发布** |
 | 2026-10-26 | **Lee 定 go：10-28 发布 1.1.0（原包 20261022232403）。** 剪贴板 R1 留到 1.1.1；1.1.1 的无屏测试 Lee 安排测试者；Windows 不急；官网 Intel 一行随 10-28 部署上线（5K 措辞 10-26 已上线，e861a0f6）。发布前在 MacBook 上做 X0–X4（`TEST-1.1-rc-2026-10-21.md` 最上面一节，说明 `docs/pwe/test-mac-2026-10-22/RELEASE-1.1.0-instructions.md`，包在 `docs/pwe/test-mac-2026-10-22/pkg-1.1.0-20261022232403/`）；YouTube 会话已告知 10-28、App 约 17:00 前上线 | Lee + 测试机 | BASELINE「1.1.0 正式版（发布前）」 |
