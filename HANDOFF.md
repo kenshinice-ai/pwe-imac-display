@@ -40,7 +40,7 @@
 
 ## 宣发
 
-- **[排队] 小红书 · 发布图文 1 篇（T+1，10-29 12:00 墨尔本）** — 9 张定稿在 `~/Documents/ClaudeCode/小红书-图文/PWE-Screen-Encore-返场/out/`，2026-10-22 Claude 核过事实（删了一句没出处的线材说法）；不放网址和 GitHub（小红书判站外引导会限流），结尾请机主在评论区报机型 · Lee 2026-10-22 已定：标题「家里那台5K iMac｜别卖，接上当5K屏」、只写 A$2,599 起。小红书会话 10-28 19:17 确认发布后换截图、核价、设定时
+- **[排队] 小红书 · 发布图文 1 篇（T+1，10-29 12:00 墨尔本）** — 已设定时（小红书显示北京时间 09:00）；截图换成正式版（05 用去掉帧率行的那版）；A$2,599 起 10-28 复核；正文写「Mac（Apple 芯片）」；不放网址；话题 8 个 · 等 Lee 在主页简介写上 pwestudio.site/screenencore（10-29 12:00 前）
 - **[排队] 朋友圈 · 测评邀请 1 条** — 正文 A 定稿、P3 文字卡在 `docs/pwe/launch-kit-2026-10-22/moments-beta-invite.md` 和 `moments-beta/` · 等 Blender（P1）和 ChatGPT（P2）出图，Claude 加「效果图」后 Lee 发
 - **[已发] GitHub · 2026-10-28 · PWE Screen Encore 1.1.0** — https://github.com/kenshinice-ai/pwe-imac-display/releases/tag/pwe-1.1.0 · 数据：未抄
 - **[已发] 官网 · 2026-10-28 · /screenencore/ 1.1.0 下载按钮** — 部署 84465b89、4a7187ee；下载 200、9,503,562 字节、sha256 与 release 一致；更新接口对 1.0.0 返回 1.1.0；Install 一行先 `brew trust` · 数据：未抄
