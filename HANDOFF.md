@@ -44,6 +44,7 @@
 - **[排队] 朋友圈 · 测评邀请 1 条** — 正文 A 定稿、P3 文字卡在 `docs/pwe/launch-kit-2026-10-22/moments-beta-invite.md` 和 `moments-beta/` · 等 Blender（P1）和 ChatGPT（P2）出图，Claude 加「效果图」后 Lee 发
 - **[已发] GitHub · 2026-10-28 · PWE Screen Encore 1.1.0** — https://github.com/kenshinice-ai/pwe-imac-display/releases/tag/pwe-1.1.0 · 数据：未抄
 - **[已发] 官网 · 2026-10-28 · /screenencore/ 1.1.0 下载按钮** — 部署 84465b89、4a7187ee；下载 200、9,503,562 字节、sha256 与 release 一致；更新接口对 1.0.0 返回 1.1.0；Install 一行先 `brew trust` · 数据：未抄
+- **[排队] LinkedIn · 1 条（2026-11-03 8:30 墨尔本）** — 已排期（Lee 10-28 说「发」）；草稿 `PWE-Desk/docs/linkedin/2026-10-28-screen-encore.md`，配实拍 P0；发后 Lee 在第一条评论补产品片链接 · LinkedIn 会话抄数
 - **[排队] YouTube · ENCORE001 产品片** — 已上传并定时：https://youtu.be/CYHKZ5LTn34 ，2026-10-28 21:00 墨尔本公开，在「PWE 工具」播放列表 · YouTube 会话
 - **[排队] 微信、小红书、V2EX · 3 条** — 草稿在宣发简报附录 A · 等 10-28 发布后由 Lee 发
 
