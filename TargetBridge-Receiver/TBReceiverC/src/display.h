@@ -1,4 +1,4 @@
-/* display.h — SDL2 fullscreen window + NV12 GPU texture renderer. */
+/* display.h — SDL2 fullscreen window + video renderer (Metal zero-copy or OpenGL). */
 
 #ifndef TB_DISPLAY_H
 #define TB_DISPLAY_H
@@ -6,7 +6,9 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include "decoder.h"
 #include "input_queue.h"
+#include "tb_cursor_image.h"
 
 struct tb_display;
 
@@ -25,10 +27,29 @@ struct tb_display_info {
 enum tb_display_action {
     TB_DISP_ACTION_NONE = 0,
     TB_DISP_ACTION_QUIT = 1 << 0,
-    TB_DISP_ACTION_CYCLE_LANGUAGE = 1 << 1
+    TB_DISP_ACTION_CYCLE_LANGUAGE = 1 << 1,
+    TB_DISP_ACTION_TOGGLE_LOGIN_ITEM = 1 << 2
 };
 
+/* What the details screen says about opening at login. HIDDEN keeps the
+ * upstream details screen. */
+enum tb_display_login_item {
+    TB_DISP_LOGIN_ITEM_HIDDEN = 0,
+    TB_DISP_LOGIN_ITEM_OFF,
+    TB_DISP_LOGIN_ITEM_ON,
+    TB_DISP_LOGIN_ITEM_UNAVAILABLE   /* this copy runs from a disk image or translocated path */
+};
+
+/* A switch from the environment, else from the app's defaults (a string or a
+ * boolean, booleans as "1"/"0"). 1 when found; `out` is "" when not. */
+int tb_disp_setting(const char *env_name, const char *defaults_key, char *out, size_t size);
+
 struct tb_display *tb_disp_create(int fullscreen);
+
+/* PWE: the renderer the Mac asked for at the start of a session ("metal" or
+ * "opengl"; NULL = an upstream sender, OpenGL). Rebuilds the renderer when it
+ * differs; a local TBReceiverRenderDriver setting wins. Main thread. */
+void               tb_disp_use_renderer(struct tb_display *d, const char *wish);
 void               tb_disp_destroy(struct tb_display *d);
 void               tb_disp_set_connection_state(struct tb_display *d, int connected);
 void               tb_disp_set_input_capture_active(struct tb_display *d, int active);
@@ -42,11 +63,14 @@ int                tb_disp_window_on_active_space(struct tb_display *d);
 /* Resize/recreate texture when frame dimensions change. */
 int  tb_disp_ensure_texture(struct tb_display *d, int w, int h);
 
-/* Upload NV12 planes + render. Called once per decoded frame. */
-void tb_disp_render_nv12(struct tb_display *d,
-                         const uint8_t *y, int y_stride,
-                         const uint8_t *uv, int uv_stride,
-                         int w, int h);
+/* Show one decoded frame (CPU planes or a VideoToolbox pixel buffer). Called
+ * once per decoded frame. On the paced Metal path the frame may wait for the
+ * next display refresh; tb_disp_tick draws it then. */
+void tb_disp_show_frame(struct tb_display *d, const struct tb_frame *frame);
+
+/* Call every main-loop iteration: draws a waiting frame or a moved pointer
+ * when the next refresh has begun. Cheap when there is nothing to do. */
+void tb_disp_tick(struct tb_display *d);
 
 /* Update low-latency local cursor overlay in source-frame coordinates. */
 void tb_disp_set_cursor(struct tb_display *d,
@@ -56,6 +80,10 @@ void tb_disp_set_cursor(struct tb_display *d,
                         int type,
                         int large);
 
+/* The sender's pointer picture (0x39); NULL goes back to the drawn shapes.
+ * The pixels are copied. */
+void tb_disp_set_cursor_image(struct tb_display *d, const struct tb_cursor_image *image);
+
 void tb_disp_set_brightness(struct tb_display *d, double level);
 
 /* Poll input actions while idle/connected. */
@@ -64,6 +92,20 @@ int          tb_disp_pop_input_event(struct tb_display *d, struct tb_input_event
 
 /* Query active display/window/drawable information for UI/debug metadata. */
 int  tb_disp_get_info(struct tb_display *d, struct tb_display_info *info);
+
+/* PWE pairing: a notice on the calm idle screen (the pairing code, a short
+ * message, a warning, an error); a warning or an error also shows on the
+ * connecting screen. A warning needs the person's attention (not encrypted);
+ * an error says something failed (a refused computer, an unreadable keychain). */
+enum tb_display_notice {
+    TB_DISP_NOTICE_NONE = 0,
+    TB_DISP_NOTICE_PAIRING_CODE,   /* line1 large: the code digits; line2, line3: what to do */
+    TB_DISP_NOTICE_INFO,
+    TB_DISP_NOTICE_WARNING,
+    TB_DISP_NOTICE_ERROR
+};
+void tb_disp_set_notice(struct tb_display *d, enum tb_display_notice kind,
+                        const char *line1, const char *line2, const char *line3);
 
 /* Render a simple launcher/status UI before the video stream starts. */
 void tb_disp_render_status(struct tb_display *d,
@@ -75,5 +117,6 @@ void tb_disp_render_status(struct tb_display *d,
                            const char *language,
                            const char *permissions);
 void tb_disp_render_connecting(struct tb_display *d);
+void tb_disp_set_login_item_state(struct tb_display *d, enum tb_display_login_item state);
 
 #endif

@@ -12,8 +12,12 @@
 #     binary under its own name, so it ships an LGPL build instead.
 #
 # What gets built: FFmpeg with H.264 and HEVC decoding, VideoToolbox and
-# swscale only — everything the receiver calls and nothing else — and SDL2.
-# Both static, both for macOS 11. Sources are pinned by SHA-256.
+# swscale only — everything the receiver calls and nothing else — SDL2, and
+# libsodium (pairing and encryption, used by both apps). All static, all for
+# macOS 11. Sources are pinned by SHA-256.
+#
+# libsodium is also merged into one universal library for the sender:
+#   <prefix-root>/universal/{include,lib/libsodium.a}
 #
 # Known trade-off: no nasm on the build Mac, so FFmpeg's hand-written x86
 # assembly is off. Hardware decoding through VideoToolbox is unaffected; only
@@ -30,13 +34,18 @@ FFMPEG_URL=https://ffmpeg.org/releases/$FFMPEG.tar.xz
 SDL=SDL2-2.32.10
 SDL_SHA=5f5993c530f084535c65a6879e9b26ad441169b3e25d789d83287040a9ca5165
 SDL_URL=https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/$SDL.tar.gz
+# PWE pairing: libsodium (ISC). Release of 2026-04-09; the SHA-256 matches
+# Homebrew's formula for the same tarball (checked 2026-10-19).
+SODIUM=libsodium-1.0.22
+SODIUM_SHA=adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349
+SODIUM_URL=https://download.libsodium.org/libsodium/releases/$SODIUM.tar.gz
 
 # The cache is reused only when everything that shaped it is unchanged: the
 # sources, the target, this script (its configure flags), and the compiler.
 SCRIPT_HASH="$(shasum -a 256 "$0" | cut -c1-16)"
 CC_VERSION="$(clang --version | head -1)"
 SDK_VERSION="$(xcrun --show-sdk-version)"
-STAMP="$FFMPEG+$SDL+macos$MIN_MACOS+script:$SCRIPT_HASH+$CC_VERSION+sdk$SDK_VERSION"
+STAMP="$FFMPEG+$SDL+$SODIUM+macos$MIN_MACOS+script:$SCRIPT_HASH+$CC_VERSION+sdk$SDK_VERSION"
 
 # One build at a time per cache: a second run waits instead of building over it.
 LOCK="$ROOT/.lock"
@@ -61,6 +70,7 @@ fetch() {  # fetch <file> <url> <sha256>
 
 fetch "$FFMPEG.tar.xz" "$FFMPEG_URL" "$FFMPEG_SHA"
 fetch "$SDL.tar.gz" "$SDL_URL" "$SDL_SHA"
+fetch "$SODIUM.tar.gz" "$SODIUM_URL" "$SODIUM_SHA"
 
 for ARCH in arm64 x86_64; do
   PREFIX="$ROOT/$ARCH"
@@ -118,6 +128,33 @@ for ARCH in arm64 x86_64; do
   )
   mv "$ROOT/build-$ARCH/configuration" "$PREFIX/ffmpeg-configuration.txt"
 
+  # PWE pairing: libsodium. Not --enable-minimal: that leaves out ristretto255.
+  echo "▸ $ARCH: libsodium"
+  tar -xzf "$SRC/$SODIUM.tar.gz" -C "$ROOT/build-$ARCH"
+  (
+    cd "$ROOT/build-$ARCH/$SODIUM"
+    env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME="$HOME" \
+      CC="$CC_ARCH" MACOSX_DEPLOYMENT_TARGET=$MIN_MACOS \
+      ./configure --host="$HOST" --prefix="$PREFIX" \
+        --enable-static --disable-shared --disable-dependency-tracking \
+        >"$ROOT/build-$ARCH/sodium-configure.log" 2>&1
+    env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME="$HOME" MACOSX_DEPLOYMENT_TARGET=$MIN_MACOS \
+      make -j"$JOBS" >"$ROOT/build-$ARCH/sodium-make.log" 2>&1
+    make install >"$ROOT/build-$ARCH/sodium-install.log" 2>&1
+  )
+
   print -r -- "$STAMP" > "$PREFIX/.stamp"
   echo "▸ $ARCH: done → $PREFIX"
 done
+
+# PWE pairing: one universal libsodium for the sender (Xcode links both slices).
+UNIVERSAL="$ROOT/universal"
+if [[ ! -f "$UNIVERSAL/.stamp" || "$(<"$UNIVERSAL/.stamp")" != "$STAMP" ]]; then
+  rm -rf "$UNIVERSAL"
+  mkdir -p "$UNIVERSAL/lib"
+  cp -R "$ROOT/arm64/include" "$UNIVERSAL/include"
+  lipo -create "$ROOT/arm64/lib/libsodium.a" "$ROOT/x86_64/lib/libsodium.a" \
+    -output "$UNIVERSAL/lib/libsodium.a"
+  print -r -- "$STAMP" > "$UNIVERSAL/.stamp"
+fi
+echo "▸ universal libsodium → $UNIVERSAL"

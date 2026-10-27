@@ -29,6 +29,10 @@
  * type 0x35 = brightness update (JSON)
  * type 0x36 = clipboard update (JSON)
  * type 0x37 = volume update (JSON)
+ * type 0x38 = display tweaks (JSON)
+ * type 0x39 = cursor image (binary, receiver-drawn pointer)
+ *
+ * types 0x50-0x5F = PWE pairing and encrypted sessions (see below)
  *
  * Compatible with the new TBDisplaySender Swift app.
  */
@@ -59,7 +63,29 @@
  * Both are private CoreBrightness features, so the receiver reports whether it
  * can honour them in its display profile. */
 #define TB_PKT_DISPLAY_TWEAKS   0x38
+/* Receiver-drawn pointer: the pointer's picture, binary (tb_cursor_image.h).
+ * Sent only to a receiver whose display profile says "cursorImage": true;
+ * positions keep coming in TB_PKT_CURSOR, with "image" naming the picture. */
+#define TB_PKT_CURSOR_IMAGE     0x39
 #define TB_PKT_TEST_DATA        0x40
+
+/* ---- PWE: pairing and encrypted sessions (types 0x50-0x5F) -------------
+ * Negotiated: a PWE sender opens with SEC_HELLO; a receiver that does not
+ * know these types ignores them, which is how the sender tells the two apps
+ * apart. Formats and the state machine: TargetBridge-Shared/secure/pwe_secure.h.
+ * Once the session is secure, every other packet travels inside SEC_SEALED. */
+#define TB_PKT_SEC_HELLO        0x50
+#define TB_PKT_SEC_HELLO_REPLY  0x51
+#define TB_PKT_SEC_PAIR_REQUEST 0x52
+#define TB_PKT_SEC_PAIR_READY   0x53
+#define TB_PKT_SEC_PAIR_A       0x54
+#define TB_PKT_SEC_PAIR_B       0x55
+#define TB_PKT_SEC_PAIR_CONFIRM 0x56
+#define TB_PKT_SEC_KK_1         0x57
+#define TB_PKT_SEC_KK_2         0x58
+#define TB_PKT_SEC_ERROR        0x5E
+#define TB_PKT_SEC_SEALED       0x5F
+/* ---- end PWE ------------------------------------------------------------ */
 
 #define TB_HDR_BYTES        5   /* 4 length + 1 type */
 

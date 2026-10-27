@@ -327,4 +327,59 @@ final class TBMonitorProtocolTests: XCTestCase {
     func testInputEventEncoderParityExtremeValues() {
         assertEncoderParity(makeEvent(kind: "move", dx: Int.min, dy: Int.max))
     }
+
+    // MARK: - Receiver-drawn pointer (0x39)
+
+    func testCursorImagePacketLayout() throws {
+        let pixels = Data((0..<(2 * 3 * 4)).map { UInt8($0) })
+        let image = TBMonitorCursorImage(id: 0x0102_0304, width: 2, height: 3, hotX: 1, hotY: 2,
+                                         frameWidth: 4, frameHeight: 6, bgra: pixels)
+        let packet = try XCTUnwrap(TBMonitorProtocol.makeCursorImagePacket(image))
+        var buffer = packet
+        let (type, payload) = try XCTUnwrap(TBMonitorProtocol.drainPacket(from: &buffer))
+        XCTAssertEqual(type, .cursorImage)
+        XCTAssertEqual(TBMonitorPacketType.cursorImage.rawValue, 0x39)
+        XCTAssertEqual(payload.count, TBMonitorCursorImage.headerLength + pixels.count)
+        XCTAssertEqual([UInt8](payload.prefix(16)),
+                       [0x01, 0x02, 0x03, 0x04, 0, 2, 0, 3, 0, 1, 0, 2, 0, 4, 0, 6])
+        XCTAssertEqual(payload.suffix(pixels.count), pixels)
+    }
+
+    func testCursorImagePacketRejectsBadPictures() {
+        func image(width: Int = 2, height: Int = 2, hotX: Int = 0, hotY: Int = 0,
+                   frame: Int = 2, bytes: Int? = nil) -> TBMonitorCursorImage {
+            TBMonitorCursorImage(id: 1, width: width, height: height, hotX: hotX, hotY: hotY,
+                                 frameWidth: frame, frameHeight: frame,
+                                 bgra: Data(count: bytes ?? max(0, width * height * 4)))
+        }
+        XCTAssertNotNil(TBMonitorProtocol.makeCursorImagePacket(image()))
+        XCTAssertNil(TBMonitorProtocol.makeCursorImagePacket(image(width: 0)))
+        XCTAssertNil(TBMonitorProtocol.makeCursorImagePacket(image(width: 257)))
+        XCTAssertNil(TBMonitorProtocol.makeCursorImagePacket(image(hotX: 3)))
+        XCTAssertNil(TBMonitorProtocol.makeCursorImagePacket(image(frame: 0)))
+        XCTAssertNil(TBMonitorProtocol.makeCursorImagePacket(image(frame: 1025)))
+        XCTAssertNil(TBMonitorProtocol.makeCursorImagePacket(image(bytes: 15)))
+    }
+
+    func testDisplayProfileCursorImageIsOptional() throws {
+        let base = """
+        "receiverName": "iMac", "panelWidth": 5120, "panelHeight": 2880, "modeWidth": 2560,
+        "modeHeight": 1440, "refreshRate": 60, "hiDPI": true, "captureWidth": 5120, "captureHeight": 2880
+        """
+        let older = try JSONDecoder().decode(TBMonitorDisplayProfile.self, from: Data("{\(base)}".utf8))
+        XCTAssertNil(older.cursorImage)
+        let newer = try JSONDecoder().decode(TBMonitorDisplayProfile.self,
+                                             from: Data("{\(base), \"cursorImage\": true}".utf8))
+        XCTAssertEqual(newer.cursorImage, true)
+    }
+
+    func testCursorPacketCarriesImageOnlyWhenSet() throws {
+        var cursor = TBMonitorCursor(x: 1, y: 2, width: 3, height: 4, visible: true, type: 0, large: false)
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(cursor), as: UTF8.self).contains("image"))
+        cursor.image = 7
+        let json = String(decoding: try JSONEncoder().encode(cursor), as: UTF8.self)
+        XCTAssertTrue(json.contains("\"image\":7"))
+        // The receiver's flat JSON scanner looks for "x" and "y"; the new key must not collide.
+        XCTAssertFalse(json.contains("\"x\":7") || json.contains("\"y\":7"))
+    }
 }

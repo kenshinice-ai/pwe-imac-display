@@ -525,4 +525,98 @@ enum TBConnectionDiagnostics {
         }
         return interfaces
     }
+
+    // MARK: - PWE: IPv6 link-local over the Thunderbolt Bridge (T34)
+    //
+    // A "Using DHCP" Thunderbolt Bridge has no IPv4 address for about 19 s
+    // after the cable goes in (DHCP must give up first); its IPv6 link-local
+    // address is there within a second or two. A receiver from PWE 1.1 on
+    // announces that address as `tbIP6`. It is meaningful only together with
+    // the local interface it is reached on: "fe80::…%bridge0".
+
+    /// `fe80::/10`, with or without a `%scope`.
+    static func isIPv6LinkLocal(_ address: String) -> Bool {
+        guard let parsed = IPv6Address(address) else { return false }
+        return parsed.isLinkLocal
+    }
+
+    /// A link-local IPv6 address scoped to a bridge interface, as dialed over
+    /// the Thunderbolt Bridge: "fe80::1c2:3ff:fe04:506%bridge0".
+    static func isScopedBridgeIPv6(_ address: String) -> Bool {
+        guard let scope = ipv6Scope(of: address) else { return false }
+        return scope.hasPrefix("bridge") && isIPv6LinkLocal(address)
+    }
+
+    /// The interface name after the `%`, if any.
+    static func ipv6Scope(of address: String) -> String? {
+        guard let index = address.firstIndex(of: "%") else { return nil }
+        let scope = String(address[address.index(after: index)...])
+        return scope.isEmpty ? nil : scope
+    }
+
+    /// Where to dial a receiver's advertised `tbIP6` from this Mac.
+    /// `cableBridges`: this Mac's Thunderbolt Bridge interfaces that hold a
+    /// link-local address (settings-listed bridges, `currentCableBridgeIPv6Interfaces`).
+    /// - Bonjour resolved the address on one of them: dial it there.
+    /// - Bonjour resolved it on any other interface: nothing; that is not the cable.
+    /// - Bonjour has not resolved it yet: the one cable bridge, if there is
+    ///   exactly one; otherwise nothing.
+    /// Nothing ("") means the caller waits for the IPv4 address, as before.
+    static func scopedBridgeIPv6(
+        advertised: String,
+        resolved: [String],
+        cableBridges: [String]
+    ) -> String {
+        guard !advertised.contains("%"),
+              let target = IPv6Address(advertised), target.isLinkLocal
+        else { return "" }
+        let bridges = Set(cableBridges)
+        let sightings = resolved.compactMap { candidate -> String? in
+            guard let address = IPv6Address(candidate), address.rawValue == target.rawValue else { return nil }
+            return ipv6Scope(of: candidate) ?? ""
+        }
+        if let onBridge = sightings.first(where: { bridges.contains($0) }) {
+            return "\(advertised)%\(onBridge)"
+        }
+        guard sightings.isEmpty, bridges.count == 1, let only = bridges.first else { return "" }
+        return "\(advertised)%\(only)"
+    }
+
+    /// The bridges this Mac's network settings know: the Thunderbolt Bridge,
+    /// not a bridge made for a virtual machine or Internet Sharing (bridge100).
+    /// The receiver applies the same rule (net.c, interface_is_cable_bridge).
+    static func settingsListedBridges() -> Set<String> {
+        guard let all = SCNetworkInterfaceCopyAll() as? [SCNetworkInterface] else { return [] }
+        return Set(all.compactMap { SCNetworkInterfaceGetBSDName($0) as String? }.filter { $0.hasPrefix("bridge") })
+    }
+
+    /// This Mac's Thunderbolt Bridge interfaces holding a link-local address.
+    static func currentCableBridgeIPv6Interfaces() -> [String] {
+        let listed = settingsListedBridges()
+        return currentBridgeIPv6Interfaces().filter { listed.contains($0) }
+    }
+
+    /// This Mac's bridge interfaces that are up and running and hold an IPv6
+    /// link-local address.
+    static func currentBridgeIPv6Interfaces() -> [String] {
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0 else { return [] }
+        defer { freeifaddrs(ifaddr) }
+
+        var names = Set<String>()
+        var pointer = ifaddr
+        while let iface = pointer {
+            defer { pointer = iface.pointee.ifa_next }
+            guard let sa = iface.pointee.ifa_addr, sa.pointee.sa_family == UInt8(AF_INET6) else { continue }
+            let name = String(cString: iface.pointee.ifa_name)
+            let flags = Int32(iface.pointee.ifa_flags)
+            guard name.hasPrefix("bridge"), (flags & IFF_UP) != 0, (flags & IFF_RUNNING) != 0 else { continue }
+            let isLinkLocal = sa.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) {
+                $0.pointee.sin6_addr.__u6_addr.__u6_addr8.0 == 0xfe
+                    && ($0.pointee.sin6_addr.__u6_addr.__u6_addr8.1 & 0xc0) == 0x80
+            }
+            if isLinkLocal { names.insert(name) }
+        }
+        return names.sorted()
+    }
 }

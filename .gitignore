@@ -23,4 +23,21 @@ test_input_queue
 test_idle_watchdog
 test_receiver_profile
 test_monitor_shield
+# PWE: secure layer tests and loopback hooks
+test_secure
+bench_secure
+secure_receiver
+secure_peer
+# PWE: receiver rendering and log tests
+test_trace
+test_metal_video
+test_cursor_image
+test_log
+test_loopwatch
+test_audio_out
+test_audio_ring
+test_clipboard
+test_sysinfo
+smoke_peer
+pboard_tool
 *.dSYM/

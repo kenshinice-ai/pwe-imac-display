@@ -40,6 +40,8 @@ struct TBLocalLinkInterface: Identifiable, Hashable {
 
 @MainActor
 final class TBDisplaySenderService: ObservableObject {
+    /// PWE: language last pushed to each idle paired receiver (by Bonjour identity).
+    private var pweLanguagePushed: [String: String] = [:]
     static let shared = TBDisplaySenderService()
 
     @Published var sessions: [TBDisplaySenderSession] = []
@@ -115,6 +117,7 @@ final class TBDisplaySenderService: ObservableObject {
     private var lastClipboardChangeCount: Int = NSPasteboard.general.changeCount
 
     private init() {
+        TBSystemSleepGate.install()
         discoveryCancellable = receiverDiscovery.$receivers.sink { [weak self] receivers in
             guard let self else { return }
             discoveredReceivers = receivers
@@ -131,7 +134,7 @@ final class TBDisplaySenderService: ObservableObject {
         refreshLocalInterfaces()
         addonStore.refresh()
         restorePersistedSessions()
-        startClipboardMonitoring()
+        updateClipboardMonitoring()
         activationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification,
             object: nil,
@@ -512,9 +515,11 @@ final class TBDisplaySenderService: ObservableObject {
             ?? .automatic
     }
 
-    func refreshLocalInterfaces() {
+    /// PWE: `restartDiscovery: false` keeps Bonjour's current list. A restart
+    /// empties it, so a receiver already listed must be found and resolved again.
+    func refreshLocalInterfaces(restartDiscovery: Bool = true) {
         localInterfaces = detectLocalInterfaces()
-        receiverDiscovery.refresh()
+        if restartDiscovery { receiverDiscovery.refresh() }
         normalizeSessionInterfaces()
         objectWillChange.send()
     }
@@ -731,6 +736,8 @@ final class TBDisplaySenderService: ObservableObject {
             self?.updateInputRelayController()
             self?.schedulePersist()
             self?.objectWillChange.send()
+            // PWE: objectWillChange precedes the change; look again once it is made.
+            DispatchQueue.main.async { [weak self] in self?.updateClipboardMonitoring() }
         }
     }
 
@@ -822,6 +829,7 @@ final class TBDisplaySenderService: ObservableObject {
     }
 
     private func updateInputRelayController() {
+        updateClipboardMonitoring()
         guard inputDockstationAvailable,
               let session = sessions.first(where: { $0.inputControlRole == .senderMaster })
         else {
@@ -847,8 +855,23 @@ final class TBDisplaySenderService: ObservableObject {
         )
     }
 
+    /// PWE: the 10 Hz pasteboard poll runs only while a connected session relays
+    /// this Mac's clipboard (senderMaster). Unconditional, it woke the process
+    /// ten times a second for the whole of the app's life (1.1.1).
+    private func updateClipboardMonitoring() {
+        let wanted = sessions.contains { $0.inputControlRole == .senderMaster && ($0.isConnected || $0.isStreaming) }
+        if wanted, clipboardTimer == nil {
+            startClipboardMonitoring()
+        } else if !wanted, let timer = clipboardTimer {
+            timer.invalidate()
+            clipboardTimer = nil
+        }
+    }
+
     private func startClipboardMonitoring() {
         clipboardTimer?.invalidate()
+        // What is on the pasteboard now was there before the relay: not sent.
+        lastClipboardChangeCount = NSPasteboard.general.changeCount
         clipboardTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.pollClipboardIfNeeded()
@@ -898,42 +921,30 @@ final class TBDisplaySenderService: ObservableObject {
         let receivers = discoveredReceivers
         let languageCode = language.fileStem
         for receiver in receivers {
-            let candidateIPs = [receiver.preferredIP, receiver.thunderboltIP, receiver.networkIP]
+            let candidateIPs = [receiver.preferredIP, receiver.thunderboltIP, receiver.thunderboltIPv6, receiver.networkIP]
+            // PWE: a receiver showing this Mac gets the language inside its session;
+            // the others only when paired, over a short encrypted connection, once
+            // per language (discovery updates arrive often).
+            if sessions.contains(where: { $0.isConnected && candidateIPs.contains($0.receiverIP) }) { continue }
+            let hint = receiver.stableIdentity
+            guard let expectedID = PWEPairingStore.shared.expectedReceiverID(forHint: hint),
+                  pweLanguagePushed[hint] != languageCode else { continue }
+            pweLanguagePushed[hint] = languageCode
             var sentTo = Set<String>()
             for ip in candidateIPs where !ip.isEmpty && sentTo.insert(ip).inserted {
-                sendLanguageUpdate(to: ip, languageCode: languageCode)
+                sendLanguageUpdate(to: ip, languageCode: languageCode, expectedID: expectedID)
             }
         }
     }
 
-    private func sendLanguageUpdate(to receiverIP: String, languageCode: String) {
+    private func sendLanguageUpdate(to receiverIP: String, languageCode: String, expectedID: Data) {
         guard !receiverIP.isEmpty,
               let packet = TBMonitorProtocol.makeJSONPacket(
                 type: .uiLanguage,
                 value: TBMonitorUILanguageUpdate(uiLanguage: languageCode)
               )
         else { return }
-
-        let connection = NWConnection(
-            host: NWEndpoint.Host(receiverIP),
-            port: NWEndpoint.Port(rawValue: TBMonitorProtocol.port)!,
-            using: .tcp
-        )
-
-        connection.stateUpdateHandler = { state in
-            switch state {
-            case .ready:
-                connection.send(content: packet, completion: .contentProcessed { _ in
-                    connection.cancel()
-                })
-            case .failed, .cancelled:
-                connection.cancel()
-            default:
-                break
-            }
-        }
-
-        connection.start(queue: DispatchQueue.global(qos: .utility))
+        PWESecureOneShot.send(packet, to: receiverIP, expectedID: expectedID)
     }
 
     private func detectLocalInterfaces() -> [TBLocalLinkInterface] {

@@ -1,8 +1,11 @@
-/* decoder.c — FFmpeg HEVC hardware decoder.
+/* decoder.c — FFmpeg H.264/HEVC decoder, VideoToolbox when available.
  *
- * Strategy: VideoToolbox HW decode → av_hwframe_transfer_data → NV12 in CPU
- * memory → upload to SDL texture (Metal renderer). Single GPU→CPU→GPU hop,
- * acceptable for ~30 fps 2560×1440. Zero ObjC at this layer.
+ * Hardware frames leave here as the CVPixelBufferRef VideoToolbox decoded
+ * into, untouched: the display either textures its IOSurface directly (Metal,
+ * no copy) or locks it and uploads the planes (OpenGL, one CPU read and one
+ * upload per frame). Software frames leave as NV12 planes in CPU memory,
+ * converted with swscale when FFmpeg's output is another format.
+ * Zero ObjC at this layer.
  */
 
 #include "decoder.h"
@@ -16,9 +19,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+
+#include "tb_loopwatch.h"
+#include "tb_sysinfo.h"
+#include "tb_trace.h"
 
 #if defined(__APPLE__)
 #  include <CoreVideo/CoreVideo.h>
+#  include <VideoToolbox/VideoToolbox.h>
 #endif
 
 #define ANNEXB_START   "\x00\x00\x00\x01"
@@ -48,6 +57,12 @@ struct tb_decoder {
     void             *ud;
 
     int               opened;
+
+    /* PWE (1.1.1): after a decode error or a (re)open, frames that are not a
+     * keyframe would decode against missing references into smeared blocks.
+     * They are dropped instead, and the screen keeps the last good picture. */
+    int               await_keyframe;
+    unsigned long     dropped_awaiting;
 };
 
 /* Detect available HW device type (platform-specific). */
@@ -98,10 +113,31 @@ struct tb_decoder *tb_dec_create(tb_frame_cb cb, void *ud) {
     if (!d->hw_frame || !d->sw_frame || !d->nv12_frame || !d->pkt) {
         tb_dec_destroy(d); return NULL;
     }
+#if defined(__APPLE__)
+    /* FFmpeg only allows hardware HEVC, it does not require it: without a
+     * hardware decoder VideoToolbox decodes in software and the log still
+     * says videotoolbox_vld. The trace says which one this Mac has. */
+    if (tb_trace_enabled()) {
+        fprintf(stderr, "[trace] VTIsHardwareDecodeSupported HEVC=%d H.264=%d\n",
+                (int)VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC),
+                (int)VTIsHardwareDecodeSupported(kCMVideoCodecType_H264));
+    }
+#endif
     return d;
 }
 
+/* PWE: asked once. FFmpeg alone says yes on every Mac (it allows hardware
+ * HEVC, it does not require it); tb_sysinfo adds whether VideoToolbox has a
+ * hardware HEVC decoder here (tb_sysinfo.h). */
+static int ffmpeg_hevc_hw_config(void);
+
 int tb_dec_supports_hevc_hwdecode(void) {
+    static int cached = -1;
+    if (cached < 0) cached = tb_sysinfo_advertise_hevc(ffmpeg_hevc_hw_config(), tb_sysinfo_hevc_hw_decode());
+    return cached;
+}
+
+static int ffmpeg_hevc_hw_config(void) {
     const AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_HEVC);
     if (!codec) return 0;
 
@@ -132,7 +168,9 @@ int tb_dec_supports_hevc_hwdecode(void) {
 
 void tb_dec_reset(struct tb_decoder *d) {
     if (!d) return;
+    const char *outer = TB_LOOP_ENTER("decoder: avcodec_free_context (VideoToolbox session)");
     if (d->ctx) avcodec_free_context(&d->ctx);
+    TB_LOOP_LEAVE(outer);
     av_free(d->extradata);
     d->extradata      = NULL;
     d->extradata_size = 0;
@@ -266,12 +304,17 @@ static int open_decoder(struct tb_decoder *d) {
         d->ctx->extradata_size = d->extradata_size;
     }
 
-    if (avcodec_open2(d->ctx, d->codec, NULL) < 0) {
+    const char *outer = TB_LOOP_ENTER("decoder: avcodec_open2 (VideoToolbox session)");
+    const int opened = avcodec_open2(d->ctx, d->codec, NULL);
+    TB_LOOP_LEAVE(outer);
+    if (opened < 0) {
         fprintf(stderr, "[dec] avcodec_open2 failed\n");
         avcodec_free_context(&d->ctx);
         return -1;
     }
     d->opened = 1;
+    d->await_keyframe = 1;
+    d->dropped_awaiting = 0;
     return 0;
 }
 
@@ -307,9 +350,20 @@ int tb_dec_set_param_sets(struct tb_decoder *d, const uint8_t *payload, size_t l
 }
 
 /* Convert AVCC (length-prefixed) frame to Annex B (start codes) in scratch. */
+/* Whether a NAL unit header starts a picture a decoder can begin from: an
+ * H.264 IDR slice (type 5), or an HEVC IRAP picture (BLA, IDR, CRA: 16-21). */
+static int nal_is_keyframe(enum AVCodecID codec, uint8_t header) {
+    if (codec == AV_CODEC_ID_HEVC) {
+        const int type = (header >> 1) & 0x3F;
+        return type >= 16 && type <= 21;
+    }
+    return (header & 0x1F) == 5;
+}
+
 static int avcc_to_annexb(struct tb_decoder *d,
                           const uint8_t *in, size_t in_len,
-                          uint8_t **out, size_t *out_len) {
+                          uint8_t **out, size_t *out_len, int *is_keyframe) {
+    *is_keyframe = 0;
     if (d->scratch_cap < in_len + AV_INPUT_BUFFER_PADDING_SIZE) {
         size_t nc = in_len + AV_INPUT_BUFFER_PADDING_SIZE;
         uint8_t *nb = (uint8_t *)realloc(d->scratch, nc);
@@ -327,6 +381,7 @@ static int avcc_to_annexb(struct tb_decoder *d,
         off += 4;
         if (off + nal > in_len) return -1;
         if (dst + 4 + nal > d->scratch_cap) return -1;
+        if (nal > 0 && nal_is_keyframe(d->codec_id, in[off])) *is_keyframe = 1;
         memcpy(d->scratch + dst, ANNEXB_START, ANNEXB_START_N);
         dst += ANNEXB_START_N;
         memcpy(d->scratch + dst, in + off, nal);
@@ -339,45 +394,97 @@ static int avcc_to_annexb(struct tb_decoder *d,
     return 0;
 }
 
-int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len) {
+/* PWE (1.1.1): a decode error on every frame of a bad stretch (60 a second)
+ * would flood the log and rotate it away within minutes. One line every 10 s,
+ * with how many more there were since the last one, as main.c does for
+ * refused senders. `r`: FFmpeg's error code, or 0 when there is none. */
+static void tb_dec_log_error(const char *what, int r) {
+    static uint64_t last_ms;
+    static unsigned long quiet;
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    const uint64_t t = (uint64_t)ts.tv_sec * 1000ull + (uint64_t)ts.tv_nsec / 1000000ull;
+    if (last_ms && t - last_ms < 10000) { quiet++; return; }
+    if (r) {
+        char why[AV_ERROR_MAX_STRING_SIZE];
+        av_strerror(r, why, sizeof(why));
+        fprintf(stderr, "[dec] %s=%d (%s)", what, r, why);
+    } else {
+        fprintf(stderr, "[dec] %s", what);
+    }
+    if (quiet) fprintf(stderr, "; %lu more decode errors since the last report", quiet);
+    fputc('\n', stderr);
+    last_ms = t;
+    quiet = 0;
+}
+
+/* PWE (1.1.1): after a decode error, forget the broken references and hold
+ * the last good picture until the next keyframe. */
+static void tb_dec_hold_until_keyframe(struct tb_decoder *d) {
+    if (d->ctx) avcodec_flush_buffers(d->ctx);
+    if (!d->await_keyframe) d->dropped_awaiting = 0;
+    d->await_keyframe = 1;
+}
+
+static uint32_t frame_trace_id(const AVFrame *f) {
+    return (f->pts != AV_NOPTS_VALUE && f->pts > 0 && f->pts <= UINT32_MAX) ? (uint32_t)f->pts : 0;
+}
+
+int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len, uint32_t trace_id) {
     if (!d->opened) return -1;
 
     uint8_t *anb = NULL;
     size_t   anb_len = 0;
-    if (avcc_to_annexb(d, avcc, len, &anb, &anb_len) < 0) return -1;
+    int      keyframe = 0;
+    if (avcc_to_annexb(d, avcc, len, &anb, &anb_len, &keyframe) < 0) return -1;
+
+    if (d->await_keyframe) {
+        if (!keyframe) {
+            d->dropped_awaiting++;
+            tb_trace_frame_replaced(trace_id);
+            return 0;
+        }
+        if (d->dropped_awaiting) {
+            fprintf(stderr, "[dec] keyframe: decoding again after %lu dropped frames\n", d->dropped_awaiting);
+        }
+        d->await_keyframe = 0;
+        d->dropped_awaiting = 0;
+    }
 
     d->pkt->data = anb;
     d->pkt->size = (int)anb_len;
+    d->pkt->pts  = trace_id ? (int64_t)trace_id : AV_NOPTS_VALUE;
 
+    const char *outer = TB_LOOP_ENTER("decoder: avcodec_send_packet (VideoToolbox decode)");
     int r = avcodec_send_packet(d->ctx, d->pkt);
+    TB_LOOP_LEAVE(outer);
     if (r < 0 && r != AVERROR(EAGAIN)) {
-        fprintf(stderr, "[dec] send_packet=%d\n", r);
+        tb_dec_log_error("send_packet", r);
+        tb_dec_hold_until_keyframe(d);
         return -1;
     }
 
     while (1) {
         r = avcodec_receive_frame(d->ctx, d->hw_frame);
         if (r == AVERROR(EAGAIN) || r == AVERROR_EOF) return 0;
-        if (r < 0) { fprintf(stderr, "[dec] recv_frame=%d\n", r); return -1; }
+        if (r < 0) {
+            tb_dec_log_error("recv_frame", r);
+            tb_dec_hold_until_keyframe(d);
+            return -1;
+        }
 
 #if defined(__APPLE__)
-        /* Zero-copy fast path: VideoToolbox decoded frames carry a
-         * CVPixelBufferRef in data[3]. Locking its base address gives direct
-         * access to the IOSurface-backed NV12 planes without the
-         * GPU→staging→CPU copy that av_hwframe_transfer_data performs.
-         * Major win on Intel iMac + Radeon (~6× faster in practice). */
+        /* VideoToolbox frames carry their CVPixelBufferRef in data[3]: pass it
+         * on as it is, so the display can texture it without a copy. */
         if (d->hw_frame->format == d->hw_pix_fmt && d->hw_frame->data[3]) {
             CVPixelBufferRef pb = (CVPixelBufferRef)d->hw_frame->data[3];
-            if (CVPixelBufferLockBaseAddress(pb, kCVPixelBufferLock_ReadOnly) == 0) {
-                uint8_t *y   = (uint8_t *)CVPixelBufferGetBaseAddressOfPlane(pb, 0);
-                size_t   ys  =            CVPixelBufferGetBytesPerRowOfPlane(pb, 0);
-                uint8_t *uv  = (uint8_t *)CVPixelBufferGetBaseAddressOfPlane(pb, 1);
-                size_t   uvs =            CVPixelBufferGetBytesPerRowOfPlane(pb, 1);
-                int      w   = (int)CVPixelBufferGetWidth(pb);
-                int      h   = (int)CVPixelBufferGetHeight(pb);
-                d->cb(y, (int)ys, uv, (int)uvs, w, h, d->ud);
-                CVPixelBufferUnlockBaseAddress(pb, kCVPixelBufferLock_ReadOnly);
-            }
+            struct tb_frame f = {
+                .width = (int)CVPixelBufferGetWidth(pb),
+                .height = (int)CVPixelBufferGetHeight(pb),
+                .pixel_buffer = pb,
+                .trace_id = frame_trace_id(d->hw_frame),
+            };
+            d->cb(&f, d->ud);
             av_frame_unref(d->hw_frame);
             continue;
         }
@@ -388,7 +495,7 @@ int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len) {
         if (d->hw_frame->format == d->hw_pix_fmt) {
             d->sw_frame->format = AV_PIX_FMT_NV12;
             if (av_hwframe_transfer_data(d->sw_frame, d->hw_frame, 0) < 0) {
-                fprintf(stderr, "[dec] hwframe_transfer failed\n");
+                tb_dec_log_error("hwframe_transfer failed", 0);
                 av_frame_unref(d->hw_frame);
                 continue;
             }
@@ -396,9 +503,13 @@ int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len) {
         }
 
         if (out->format == AV_PIX_FMT_NV12) {
-            d->cb(out->data[0], out->linesize[0],
-                  out->data[1], out->linesize[1],
-                  out->width,   out->height, d->ud);
+            struct tb_frame f = {
+                .y = out->data[0], .y_stride = out->linesize[0],
+                .uv = out->data[1], .uv_stride = out->linesize[1],
+                .width = out->width, .height = out->height,
+                .trace_id = frame_trace_id(d->hw_frame),
+            };
+            d->cb(&f, d->ud);
         } else {
             d->sws = sws_getCachedContext(d->sws,
                                           out->width, out->height, (enum AVPixelFormat)out->format,
@@ -409,14 +520,18 @@ int tb_dec_feed_frame(struct tb_decoder *d, const uint8_t *avcc, size_t len) {
             d->nv12_frame->width = out->width;
             d->nv12_frame->height = out->height;
             if (!d->sws || av_frame_get_buffer(d->nv12_frame, 32) < 0) {
-                fprintf(stderr, "[dec] could not allocate NV12 software frame\n");
+                tb_dec_log_error("could not allocate NV12 software frame", 0);
             } else if (sws_scale(d->sws, (const uint8_t * const *)out->data, out->linesize,
                                  0, out->height, d->nv12_frame->data, d->nv12_frame->linesize) <= 0) {
-                fprintf(stderr, "[dec] software frame conversion failed\n");
+                tb_dec_log_error("software frame conversion failed", 0);
             } else {
-                d->cb(d->nv12_frame->data[0], d->nv12_frame->linesize[0],
-                      d->nv12_frame->data[1], d->nv12_frame->linesize[1],
-                      d->nv12_frame->width, d->nv12_frame->height, d->ud);
+                struct tb_frame f = {
+                    .y = d->nv12_frame->data[0], .y_stride = d->nv12_frame->linesize[0],
+                    .uv = d->nv12_frame->data[1], .uv_stride = d->nv12_frame->linesize[1],
+                    .width = d->nv12_frame->width, .height = d->nv12_frame->height,
+                    .trace_id = frame_trace_id(d->hw_frame),
+                };
+                d->cb(&f, d->ud);
             }
         }
         av_frame_unref(d->nv12_frame);

@@ -1,4 +1,5 @@
 import CoreMedia
+import AppKit
 import XCTest
 @testable import TargetBridge
 
@@ -241,6 +242,65 @@ final class TBSenderAutomationParsingTests: XCTestCase {
         )
         XCTAssertEqual(h264ToHEVC?.codecType, kCMVideoCodecType_HEVC)
         XCTAssertEqual(h264ToHEVC?.usedFallback, true)
+    }
+
+    /// A 5K preset to an iMac without HEVC hardware decode (2014, mid-2015):
+    /// no H.264 hardware encoder at 5120x2880, so HEVC, decoded in software.
+    func testNoHEVCDecodeAndNoH264EncoderFallsBackToHEVCInSoftware() {
+        for preference in [TBDisplayCodecPreference.automatic, .h264, .hevc] {
+            let decision = TBDisplaySenderSession.chooseCodec(
+                preference: preference,
+                preset: .native5k,
+                receiverSupportsHEVC: false,
+                senderSupportsH264: false,
+                senderSupportsHEVC: true
+            )
+            XCTAssertEqual(decision?.codecType, kCMVideoCodecType_HEVC, "\(preference)")
+            XCTAssertEqual(decision?.usedFallback, true, "\(preference)")
+            XCTAssertEqual(decision?.receiverDecodesInSoftware, true, "\(preference)")
+        }
+    }
+
+    /// The whole table: receiver HEVC decode x sender H.264 encode x sender
+    /// HEVC encode x preference. Software decode only when nothing else exists.
+    func testCodecDecisionTable() {
+        let hevc = kCMVideoCodecType_HEVC, h264 = kCMVideoCodecType_H264
+        typealias Row = (rx: Bool, h264: Bool, hevc: Bool, pref: TBDisplayCodecPreference,
+                         codec: CMVideoCodecType?, fallback: Bool, software: Bool)
+        let rows: [Row] = [
+            (true, true, true, .automatic, hevc, false, false),
+            (true, true, true, .h264, h264, false, false),
+            (true, true, true, .hevc, hevc, false, false),
+            (true, true, false, .automatic, h264, true, false),
+            (true, true, false, .h264, h264, false, false),
+            (true, true, false, .hevc, h264, true, false),
+            (true, false, true, .automatic, hevc, false, false),
+            (true, false, true, .h264, hevc, true, false),
+            (true, false, true, .hevc, hevc, false, false),
+            (true, false, false, .automatic, nil, false, false),
+            (false, true, true, .automatic, h264, true, false),
+            (false, true, true, .h264, h264, false, false),
+            (false, true, true, .hevc, h264, true, false),
+            (false, true, false, .automatic, h264, true, false),
+            (false, false, true, .automatic, hevc, true, true),
+            (false, false, true, .h264, hevc, true, true),
+            (false, false, true, .hevc, hevc, true, true),
+            (false, false, false, .automatic, nil, false, false),
+            (false, false, false, .hevc, nil, false, false),
+        ]
+        for row in rows {
+            // native5k's own codec is HEVC, so .automatic prefers HEVC here.
+            let decision = TBDisplaySenderSession.chooseCodec(
+                preference: row.pref, preset: .native5k,
+                receiverSupportsHEVC: row.rx, senderSupportsH264: row.h264, senderSupportsHEVC: row.hevc
+            )
+            let label = "rx=\(row.rx) h264=\(row.h264) hevc=\(row.hevc) pref=\(row.pref)"
+            XCTAssertEqual(decision?.codecType, row.codec, label)
+            if row.codec != nil {
+                XCTAssertEqual(decision?.usedFallback, row.fallback, label)
+                XCTAssertEqual(decision?.receiverDecodesInSoftware, row.software, label)
+            }
+        }
     }
 
     func testCodecSelectionFailsCleanlyWhenNoHardwarePathExists() {
@@ -617,5 +677,67 @@ final class TBSenderAutomationParsingTests: XCTestCase {
         XCTAssertNil(TBSenderAutomation.resolveSessionIndex("abc", sessionCount: 3, createDefaultIfNeeded: true))
         XCTAssertNil(TBSenderAutomation.resolveSessionIndex("0", sessionCount: 3, createDefaultIfNeeded: true))
         XCTAssertNil(TBSenderAutomation.resolveSessionIndex("-1", sessionCount: 3, createDefaultIfNeeded: true))
+    }
+
+    // MARK: - Receiver-drawn pointer
+
+    func testReceiverDrawnPointerLeavesThePointerOutOfTheStream() {
+        for role in [TBInputControlRole.off, .receiverMaster] {
+            XCTAssertTrue(role.usesLowLatencyCursorOverlay(largeCursorEnabled: false, receiverDrawsPointer: true))
+            XCTAssertFalse(role.changesCursorCaptureMode(from: .off, largeCursorEnabled: false,
+                                                         receiverDrawsPointer: true))
+        }
+        // While this Mac drives the receiver the overlay is hidden: keep the pointer in the video.
+        XCTAssertFalse(TBInputControlRole.senderMaster.usesLowLatencyCursorOverlay(
+            largeCursorEnabled: false, receiverDrawsPointer: true))
+        XCTAssertTrue(TBInputControlRole.senderMaster.changesCursorCaptureMode(
+            from: .off, largeCursorEnabled: false, receiverDrawsPointer: true))
+    }
+
+    func testPointerGeometryFullFrame() {
+        let bounds = CGRect(x: 1440, y: 0, width: 2560, height: 1440)   // a 5K virtual display, 2x
+        XCTAssertEqual(TBReceiverPointerGeometry.scale(displaySize: bounds.size, frameWidth: 5120, frameHeight: 2880), 2)
+        let p = TBReceiverPointerGeometry.place(CGPoint(x: 1440 + 100, y: 50), displayBounds: bounds,
+                                                frameWidth: 5120, frameHeight: 2880)
+        XCTAssertEqual(p, .init(x: 200, y: 100, inside: true))
+        let outside = TBReceiverPointerGeometry.place(CGPoint(x: 500, y: 50), displayBounds: bounds,
+                                                      frameWidth: 5120, frameHeight: 2880)
+        XCTAssertFalse(outside.inside)
+        XCTAssertEqual(outside.x, 0)   // clamped to the display's edge
+    }
+
+    func testPointerGeometryLetterboxedMirror() {
+        // A 16:10 Mac (1440 x 900 pt) mirrored into a 16:9 5K stream: scale 3.2,
+        // content 4608 x 2880, black bars of 256 px left and right.
+        let bounds = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        XCTAssertEqual(TBReceiverPointerGeometry.scale(displaySize: bounds.size, frameWidth: 5120, frameHeight: 2880),
+                       3.2, accuracy: 1e-9)
+        XCTAssertEqual(TBReceiverPointerGeometry.place(.zero, displayBounds: bounds, frameWidth: 5120, frameHeight: 2880),
+                       .init(x: 256, y: 0, inside: true))
+        XCTAssertEqual(TBReceiverPointerGeometry.place(CGPoint(x: 1440, y: 900), displayBounds: bounds,
+                                                       frameWidth: 5120, frameHeight: 2880),
+                       .init(x: 256 + 4608, y: 2880, inside: true))
+        XCTAssertEqual(TBReceiverPointerGeometry.place(CGPoint(x: 720, y: 450), displayBounds: bounds,
+                                                       frameWidth: 5120, frameHeight: 2880).x, 2560)
+    }
+
+    @MainActor
+    func testPointerPictureMatchesTheFrameScale() throws {
+        let arrow = NSCursor.arrow
+        let picture = try XCTUnwrap(TBDisplaySenderSession.pointerPicture(of: arrow, pixelsPerPoint: 2))
+        XCTAssertEqual(picture.width, Int((arrow.image.size.width * 2).rounded()))
+        XCTAssertEqual(picture.height, Int((arrow.image.size.height * 2).rounded()))
+        XCTAssertEqual(picture.frameWidth, picture.width)
+        XCTAssertEqual(picture.bgra.count, picture.width * picture.height * 4)
+        XCTAssertEqual(picture.hotX, Int((arrow.hotSpot.x * 2).rounded()))
+        XCTAssertEqual(picture.hotY, Int((arrow.hotSpot.y * 2).rounded()))
+        XCTAssertTrue(picture.bgra.contains { $0 != 0 }, "the arrow drew nothing")
+        XCTAssertNotNil(TBMonitorProtocol.makeCursorImagePacket(picture))
+
+        // Shrunk to the packet limit, but still covering its full size on the frame.
+        let huge = try XCTUnwrap(TBDisplaySenderSession.pointerPicture(of: arrow, pixelsPerPoint: 40))
+        XCTAssertLessThanOrEqual(max(huge.width, huge.height), TBMonitorCursorImage.maxSide)
+        XCTAssertGreaterThan(huge.frameWidth, huge.width)
+        XCTAssertNotNil(TBMonitorProtocol.makeCursorImagePacket(huge))
     }
 }

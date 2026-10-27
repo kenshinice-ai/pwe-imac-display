@@ -15,6 +15,9 @@ final class TBReceiverDiscoveryModelTests: XCTestCase {
         thunderboltIP: String = "",
         usbIP: String = "",
         networkIP: String = "",
+        ethernetIP: String = "",
+        wifiIP: String = "",
+        resolvedIPv4Addresses: [String] = [],
         panelSummary: String = "",
         version: String = "3.1.0",
         supportsHEVCDecode: Bool = true,
@@ -28,6 +31,9 @@ final class TBReceiverDiscoveryModelTests: XCTestCase {
             thunderboltIP: thunderboltIP,
             usbIP: usbIP,
             networkIP: networkIP,
+            ethernetIP: ethernetIP,
+            wifiIP: wifiIP,
+            resolvedIPv4Addresses: resolvedIPv4Addresses,
             panelSummary: panelSummary,
             version: version,
             supportsHEVCDecode: supportsHEVCDecode,
@@ -42,9 +48,21 @@ final class TBReceiverDiscoveryModelTests: XCTestCase {
         XCTAssertEqual(receiver.ip(for: .thunderboltBridge), "169.254.89.80")
     }
 
-    func testThunderboltTransportFallsBackToPreferredIP() {
+    func testThunderboltTransportNeverDialsTheLANAddress() {
+        // A receiver whose bridge has no address yet advertises its Wi-Fi address as `ip`.
         let receiver = makeReceiver(preferredIP: "192.168.1.64", thunderboltIP: "", networkIP: "192.168.1.64")
-        XCTAssertEqual(receiver.ip(for: .thunderboltBridge), "192.168.1.64")
+        XCTAssertEqual(receiver.ip(for: .thunderboltBridge), "")
+    }
+
+    func testThunderboltTransportAcceptsALegacyLinkLocalIP() {
+        // Receivers before 3.0 send no `tbIP`; their `ip` is the bridge address.
+        let receiver = makeReceiver(preferredIP: "169.254.89.80", thunderboltIP: "")
+        XCTAssertEqual(receiver.ip(for: .thunderboltBridge), "169.254.89.80")
+    }
+
+    func testThunderboltTransportNeverDialsTheUSBAddress() {
+        let receiver = makeReceiver(preferredIP: "169.254.189.3", thunderboltIP: "", usbIP: "169.254.189.3")
+        XCTAssertEqual(receiver.ip(for: .thunderboltBridge), "")
     }
 
     func testNetworkTransportPrefersNetworkIP() {
@@ -52,9 +70,42 @@ final class TBReceiverDiscoveryModelTests: XCTestCase {
         XCTAssertEqual(receiver.ip(for: .networkLink), "192.168.1.64")
     }
 
-    func testNetworkTransportFallsBackToPreferredIP() {
-        let receiver = makeReceiver(preferredIP: "169.254.89.80", thunderboltIP: "169.254.89.80", networkIP: "")
-        XCTAssertEqual(receiver.ip(for: .networkLink), "169.254.89.80")
+    func testNetworkTransportNeverDialsTheBridgeAddress() {
+        // A receiver announced on the cable only (PWE 1.1 without its network
+        // allowed): `ip` and the resolved address are the bridge address.
+        let receiver = makeReceiver(
+            preferredIP: "169.254.6.224", thunderboltIP: "169.254.6.224", networkIP: "",
+            resolvedIPv4Addresses: ["169.254.6.224"]
+        )
+        XCTAssertEqual(receiver.ip(for: .networkLink), "")
+        XCTAssertEqual(receiver.ip(for: .networkLink, localInterfaceIP: "10.0.0.126"), "")
+    }
+
+    func testNetworkTransportNeverDialsTheUSBAddressFromTheLAN() {
+        let receiver = makeReceiver(preferredIP: "169.254.189.3", usbIP: "169.254.189.3")
+        XCTAssertEqual(receiver.ip(for: .networkLink, localInterfaceIP: "192.168.178.93"), "")
+    }
+
+    func testNetworkTransportUsesTheWiFiOrEthernetAddressWithoutNetIP() {
+        let wifi = makeReceiver(preferredIP: "169.254.6.224", thunderboltIP: "169.254.6.224", wifiIP: "10.0.0.183")
+        XCTAssertEqual(wifi.ip(for: .networkLink), "10.0.0.183")
+        let ethernet = makeReceiver(preferredIP: "169.254.6.224", thunderboltIP: "169.254.6.224",
+                                    ethernetIP: "192.168.1.20", wifiIP: "10.0.0.183")
+        XCTAssertEqual(ethernet.ip(for: .networkLink), "192.168.1.20")
+    }
+
+    func testNetworkTransportUsesAResolvedNetworkAddress() {
+        let receiver = makeReceiver(
+            preferredIP: "169.254.6.224", thunderboltIP: "169.254.6.224",
+            resolvedIPv4Addresses: ["10.0.0.183", "169.254.6.224"]
+        )
+        XCTAssertEqual(receiver.ip(for: .networkLink), "10.0.0.183")
+    }
+
+    func testNetworkTransportFallsBackToANetworkPreferredIP() {
+        // An older receiver that sends only `ip`, and that is a LAN address.
+        let receiver = makeReceiver(preferredIP: "192.168.1.64", thunderboltIP: "", networkIP: "")
+        XCTAssertEqual(receiver.ip(for: .networkLink), "192.168.1.64")
     }
 
     func testNetworkTransportUsesUSBIPForLinkLocalLocalInterface() {

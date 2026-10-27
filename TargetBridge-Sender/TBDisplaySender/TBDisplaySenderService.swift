@@ -398,6 +398,10 @@ enum TBDisplayCodecPreference: String, CaseIterable, Identifiable, Codable {
 struct TBDisplayCodecDecision: Equatable {
     let codecType: CMVideoCodecType
     let usedFallback: Bool
+    /// PWE: HEVC to a receiver that reported no HEVC hardware decode, because
+    /// the sender has no H.264 hardware encoder at this size. The receiver
+    /// decodes it in software: slow, but a picture.
+    var receiverDecodesInSoftware = false
 }
 
 enum TBDisplayCaptureSource: String, CaseIterable, Identifiable {
@@ -432,19 +436,109 @@ enum TBInputControlRole: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    func usesLowLatencyCursorOverlay(largeCursorEnabled: Bool) -> Bool {
+    func usesLowLatencyCursorOverlay(largeCursorEnabled: Bool, receiverDrawsPointer: Bool = false) -> Bool {
         // ScreenCaptureKit preserves every native macOS cursor shape, including
         // temporary system cursors such as the screenshot crosshair. The custom
-        // overlay is reserved for the explicit large-cursor accessibility option.
-        largeCursorEnabled
+        // overlay is reserved for the explicit large-cursor accessibility option,
+        // and for a receiver that draws the real pointer picture itself — except
+        // while this Mac drives the receiver (senderMaster), where the overlay
+        // is hidden and the pointer must stay in the video.
+        largeCursorEnabled || (receiverDrawsPointer && self != .senderMaster)
     }
 
     func changesCursorCaptureMode(
         from previousRole: TBInputControlRole,
-        largeCursorEnabled: Bool
+        largeCursorEnabled: Bool,
+        receiverDrawsPointer: Bool = false
     ) -> Bool {
-        usesLowLatencyCursorOverlay(largeCursorEnabled: largeCursorEnabled)
-            != previousRole.usesLowLatencyCursorOverlay(largeCursorEnabled: largeCursorEnabled)
+        usesLowLatencyCursorOverlay(largeCursorEnabled: largeCursorEnabled, receiverDrawsPointer: receiverDrawsPointer)
+            != previousRole.usesLowLatencyCursorOverlay(
+                largeCursorEnabled: largeCursorEnabled,
+                receiverDrawsPointer: receiverDrawsPointer
+            )
+    }
+}
+
+/// Where the pointer is on the video frame. The capture scales the display to
+/// fit the frame and centres it (`scalesToFit`), so a display whose shape differs
+/// from the frame — a 16:10 Mac mirrored into a 16:9 stream — sits between black
+/// bars, and positions must be mapped into that content rectangle, not the whole frame.
+enum TBReceiverPointerGeometry {
+    struct Placement: Equatable {
+        var x: Int
+        var y: Int
+        var inside: Bool
+    }
+
+    /// Frame pixels per display point.
+    static func scale(displaySize: CGSize, frameWidth: Int, frameHeight: Int) -> Double {
+        guard displaySize.width > 0, displaySize.height > 0, frameWidth > 0, frameHeight > 0 else { return 1 }
+        return min(Double(frameWidth) / displaySize.width, Double(frameHeight) / displaySize.height)
+    }
+
+    /// `point` in global display coordinates (top-left origin, points).
+    static func place(_ point: CGPoint, displayBounds: CGRect, frameWidth: Int, frameHeight: Int) -> Placement {
+        let s = scale(displaySize: displayBounds.size, frameWidth: frameWidth, frameHeight: frameHeight)
+        let originX = (Double(frameWidth) - displayBounds.width * s) / 2
+        let originY = (Double(frameHeight) - displayBounds.height * s) / 2
+        let localX = point.x - displayBounds.origin.x
+        let localY = point.y - displayBounds.origin.y
+        let inside = localX >= 0 && localY >= 0 && localX <= displayBounds.width && localY <= displayBounds.height
+        let clampedX = max(0, min(displayBounds.width, localX))
+        let clampedY = max(0, min(displayBounds.height, localY))
+        return Placement(x: Int((originX + clampedX * s).rounded(.down)),
+                         y: Int((originY + clampedY * s).rounded(.down)),
+                         inside: inside)
+    }
+}
+
+/// Where a relayed mouse move from the receiver (input role receiverMaster) puts
+/// this Mac's pointer. Global display coordinates: Quartz, top-left origin, points.
+enum TBRelayedPointer {
+    /// The point a relayed move starts from. The last injected point is exact
+    /// while the pointer is still where this relay left it: the real position
+    /// can lag a posted drag by an event or two. Anything else moved the pointer
+    /// (the trackpad, an app, a display change, a new session): start from where
+    /// it really is. Without this the next iMac move threw the pointer back to
+    /// the stale spot, often on another screen (T30, iMac18,3, 2026-10-20).
+    static func start(cached: CGPoint?, recentTargets: [CGPoint], real: CGPoint?) -> CGPoint? {
+        guard let cached else { return real }
+        guard let real else { return cached }
+        let ours = ([cached] + recentTargets).contains { abs($0.x - real.x) <= 2 && abs($0.y - real.y) <= 2 }
+        return ours ? cached : real
+    }
+
+    /// `current` moved by (dx, dy), kept on a display. A target on a display is
+    /// taken as is. One in the gap beside a display keeps the axis that still
+    /// lands on a display and pins the other inside it, so a diagonal move near
+    /// the end of a shared edge slides across, as the trackpad does, instead of
+    /// stopping on the old display. Otherwise the pointer stays on the display it
+    /// is on (the nearest one if it is on none), pinned at that display's edge.
+    static func target(from current: CGPoint, dx: Int, dy: Int, displays: [CGRect]) -> CGPoint {
+        let raw = CGPoint(x: current.x + CGFloat(dx), y: current.y + CGFloat(dy))
+        guard !displays.isEmpty else { return raw }
+        if displays.contains(where: { $0.contains(raw) }) { return raw }
+
+        let alongX = CGPoint(x: raw.x, y: current.y)
+        let alongY = CGPoint(x: current.x, y: raw.y)
+        let tries = abs(dx) >= abs(dy) ? [alongX, alongY] : [alongY, alongX]
+        for point in tries {
+            if let frame = displays.first(where: { $0.contains(point) }) { return pin(raw, to: frame) }
+        }
+        let frame = displays.first(where: { $0.contains(current) })
+            ?? displays.min { distance(current, $0) < distance(current, $1) }!
+        return pin(raw, to: frame)
+    }
+
+    private static func pin(_ point: CGPoint, to frame: CGRect) -> CGPoint {
+        CGPoint(x: min(max(point.x, frame.minX), frame.maxX - 1),
+                y: min(max(point.y, frame.minY), frame.maxY - 1))
+    }
+
+    private static func distance(_ point: CGPoint, _ frame: CGRect) -> CGFloat {
+        let x = max(frame.minX - point.x, 0, point.x - (frame.maxX - 1))
+        let y = max(frame.minY - point.y, 0, point.y - (frame.maxY - 1))
+        return x * x + y * y
     }
 }
 
@@ -453,6 +547,173 @@ enum TBInputGestureMode: String, CaseIterable, Identifiable {
     case relayToSlave
 
     var id: String { rawValue }
+}
+
+/// Pointer positions for a receiver that draws the pointer itself. Runs on its
+/// own thread so a busy main thread never holds the pointer back: a listen-only
+/// event tap sends a position on every mouse move, at most every 1/240 s, and a
+/// timer catches what the tap misses (the last move inside that interval,
+/// events the tap does not see, a tap the system turned off). Packets go
+/// straight onto the connection, as the video pipeline's do.
+private final class TBReceiverPointerSource: @unchecked Sendable {
+    private static let minimumInterval: CFTimeInterval = 1.0 / 240.0
+
+    private let connection: PWESecureLink   // PWE: seals once the session is encrypted
+    private let displayID: CGDirectDisplayID
+    private let frameWidth: Int
+    private let frameHeight: Int
+
+    // Set from the main thread, read on the pointer thread; guarded by `lock`.
+    private let lock = NSLock()
+    private var large = false
+    private var imageID: UInt32 = 0
+    private var cursorType = 0
+    private var forceNext = true
+    private var stopped = false
+    private var runLoop: CFRunLoop?
+
+    // Pointer thread only.
+    private var tap: CFMachPort?
+    private var lastSent: TBMonitorCursor?
+    private var lastSendTime: CFTimeInterval = 0
+
+    init(connection: PWESecureLink, displayID: CGDirectDisplayID, frameWidth: Int, frameHeight: Int) {
+        self.connection = connection
+        self.displayID = displayID
+        self.frameWidth = frameWidth
+        self.frameHeight = frameHeight
+    }
+
+    /// Frame pixels per point on the captured display: the scale for the picture.
+    var pixelsPerPoint: Double {
+        TBReceiverPointerGeometry.scale(displaySize: CGDisplayBounds(displayID).size,
+                                        frameWidth: frameWidth, frameHeight: frameHeight)
+    }
+
+    func update(large: Bool, imageID: UInt32, cursorType: Int) {
+        lock.lock()
+        if large != self.large || imageID != self.imageID || cursorType != self.cursorType { forceNext = true }
+        self.large = large
+        self.imageID = imageID
+        self.cursorType = cursorType
+        lock.unlock()
+    }
+
+    func start() {
+        let thread = Thread { [self] in run() }
+        thread.name = "TargetBridge pointer"
+        thread.qualityOfService = .userInteractive
+        thread.start()
+    }
+
+    func stop() {
+        lock.lock()
+        stopped = true
+        let loop = runLoop
+        lock.unlock()
+        if let loop { CFRunLoopStop(loop) }
+    }
+
+    private var isStopped: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return stopped
+    }
+
+    private func run() {
+        lock.lock()
+        runLoop = CFRunLoopGetCurrent()
+        lock.unlock()
+
+        let mask = [CGEventType.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
+            .reduce(CGEventMask(0)) { $0 | (CGEventMask(1) << CGEventMask($1.rawValue)) }
+        tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .tailAppendEventTap,
+            options: .listenOnly,
+            eventsOfInterest: mask,
+            callback: { _, type, event, refcon in
+                guard let refcon else { return Unmanaged.passUnretained(event) }
+                let source = Unmanaged<TBReceiverPointerSource>.fromOpaque(refcon).takeUnretainedValue()
+                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                    if let tap = source.tap { CGEvent.tapEnable(tap: tap, enable: true) }
+                } else {
+                    source.send(at: event.location)
+                }
+                return Unmanaged.passUnretained(event)
+            },
+            userInfo: Unmanaged.passUnretained(self).toOpaque()
+        )
+        if let tap, let source = CFMachPortCreateRunLoopSource(nil, tap, 0) {
+            CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+            CGEvent.tapEnable(tap: tap, enable: true)
+        }
+        TBLog.connection.info("pointer: receiver draws the pointer; event tap \(self.tap != nil ? "on" : "unavailable, polling", privacy: .public)")
+
+        // With the tap the timer only catches stragglers; without it, it is the source.
+        let interval: CFTimeInterval = tap != nil ? 1.0 / 120.0 : Self.minimumInterval
+        let timer = CFRunLoopTimerCreateWithHandler(nil, CFAbsoluteTimeGetCurrent(), interval, 0, 0) { [weak self] _ in
+            guard let self, let point = CGEvent(source: nil)?.location else { return }
+            self.send(at: point)
+        }
+        CFRunLoopAddTimer(CFRunLoopGetCurrent(), timer, .commonModes)
+
+        while !isStopped {
+            CFRunLoopRunInMode(.defaultMode, 0.5, false)
+        }
+        CFRunLoopTimerInvalidate(timer)
+        if let tap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            CFMachPortInvalidate(tap)
+        }
+        tap = nil
+    }
+
+    /// Pointer thread only.
+    private func send(at point: CGPoint) {
+        let now = CACurrentMediaTime()
+        lock.lock()
+        let force = forceNext
+        let large = self.large, imageID = self.imageID, cursorType = self.cursorType
+        lock.unlock()
+        if !force, now - lastSendTime < Self.minimumInterval { return }   // the timer sends the rest
+
+        let placement = TBReceiverPointerGeometry.place(point, displayBounds: CGDisplayBounds(displayID),
+                                                        frameWidth: frameWidth, frameHeight: frameHeight)
+        let cursor = TBMonitorCursor(
+            x: placement.x,
+            y: placement.y,
+            width: frameWidth,
+            height: frameHeight,
+            visible: placement.inside && Self.systemCursorVisible(),
+            type: cursorType,
+            large: large,
+            image: imageID
+        )
+        if !force, cursor == lastSent { return }
+        guard let packet = TBMonitorProtocol.makeJSONPacket(type: .cursor, value: cursor) else { return }
+        // Under the lock: once stop() returns, nothing more is sent, so the
+        // hidden-pointer packet the session sends next is the last word.
+        lock.lock()
+        defer { lock.unlock() }
+        guard !stopped else { return }
+        forceNext = false
+        lastSent = cursor
+        lastSendTime = now
+        connection.send(content: packet, completion: .contentProcessed({ _ in }))
+    }
+
+    /// Whether an app hid the pointer (a playing video, typing). CGCursorIsVisible
+    /// is deprecated but has no public replacement; looked up at run time so a
+    /// future SDK without it still builds, and treated as visible when missing.
+    private static let cursorIsVisibleFunction: (@convention(c) () -> Int32)? = {
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGCursorIsVisible") else { return nil }
+        return unsafeBitCast(symbol, to: (@convention(c) () -> Int32).self)
+    }()
+
+    private static func systemCursorVisible() -> Bool {
+        guard let function = cursorIsVisibleFunction else { return true }
+        return function() != 0
+    }
 }
 
 private final class TBDirectDisplayStreamCapture {
@@ -538,7 +799,7 @@ private final class TBVideoPipeline: @unchecked Sendable {
 
     private let preset: TBDisplayCapturePreset
     private let codecType: CMVideoCodecType
-    private let connection: NWConnection
+    private let connection: PWESecureLink   // PWE: seals once the session is encrypted
     private let displayName: String
     private let displayID: CGDirectDisplayID
     private let usesRawNV12: Bool
@@ -566,7 +827,7 @@ private final class TBVideoPipeline: @unchecked Sendable {
 
     init(preset: TBDisplayCapturePreset,
          codecType: CMVideoCodecType,
-         connection: NWConnection,
+         connection: PWESecureLink,
          displayName: String,
          displayID: CGDirectDisplayID,
          usesRawNV12: Bool,
@@ -1172,7 +1433,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         if let receiver = TBDisplaySenderService.shared.discoveredReceivers.first(where: {
             $0.matchesPersistedIdentity(selectedReceiverID) ||
             $0.preferredIP == receiverIP ||
-            $0.thunderboltIP == receiverIP ||
+            $0.thunderboltIP == receiverIP || $0.thunderboltIPv6 == receiverIP ||
             $0.networkIP == receiverIP
         }) {
             return receiver.shortHostName
@@ -1240,6 +1501,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     @Published var language: TBDisplaySenderLanguage {
         didSet {
             refreshLocalizedText()
+            pweSendLanguageUpdate()   // PWE: inside the encrypted session
         }
     }
     @Published var largeCursor: Bool
@@ -1295,11 +1557,13 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         didSet {
             let cursorCaptureModeChanged = inputControlRole.changesCursorCaptureMode(
                 from: oldValue,
-                largeCursorEnabled: largeCursor
+                largeCursorEnabled: largeCursor,
+                receiverDrawsPointer: receiverDrawsPointer
             )
             inputRelayActive = (inputControlRole == .senderMaster)
             if inputControlRole != .receiverMaster {
                 injectedRemoteMouseLocation = nil
+                recentInjectedMouseLocations.removeAll()
                 injectedLeftClickTracker.reset()
                 releaseInjectedModifiersIfNeeded()
                 remoteHeldModifierKeyCodes.removeAll()
@@ -1316,6 +1580,35 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     @Published var inputBindings: [TBInputBinding] = []
 
     private var connection: NWConnection?
+    // PWE: pairing and encrypted sessions (TBDisplayShared/PWESecureLink.swift).
+    private var pweLink: PWESecureLink?
+    @Published private(set) var pweSecurity: PWESecurityState = .none
+    /// PWE: the receiver's renderer for the next connection ("opengl" or "metal"),
+    /// sent in the hello; nil leaves it to the receiver. Set by PWESenderModel.
+    var pweReceiverRenderer: String?
+    private var pwePendingCode: String?
+    private var pweAllowUnencrypted = false
+    private var pweIdentityChanged = false
+    private var pweHelloTimeout: DispatchWorkItem?
+    /// PWE: the current dial is a redial of the last bridge address (TBBridgeRedial).
+    /// Until it connects, its failure is expected and leaves the status alone.
+    var pweSpeculativeDial = false
+    /// PWE: the running capture includes system audio (relay was on when it
+    /// started). Relay can then be turned off and on again inside this session;
+    /// while it is off, processAudio drops the audio before conversion (T14).
+    private(set) var pweCapturingAudio = false
+    /// PWE: when the current capture pipeline started, and when the screens last
+    /// went to sleep or locked (system uptime). See pweCaptureNeedsWakeRestart.
+    private var pweCaptureStartedAt: TimeInterval?
+    private var pweScreensAsleepAt: TimeInterval?
+    #if DEBUG
+    /// Tests only: stream this many generated frames through the real encoder
+    /// and the encrypted send path instead of capturing the screen (needs no
+    /// Screen Recording permission and no unlocked screen).
+    var pweTestSyntheticFrames: (count: Int, fps: Int)?
+    private(set) var pweTestFramesSent = 0
+    private(set) var pweTestStreamFinished = false
+    #endif
     private let connectionQueue = DispatchQueue(label: "fd.tbmonitor.sender.connection", qos: .userInteractive)
     private var recvBuffer = Data()
 
@@ -1332,12 +1625,17 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
 
     private var sentSnapshot = 0
     private var sessionAckSent = false
+    /// PWE: the software-decode codec fallback is logged once per session, not
+    /// again on every capture restart.
+    private var pweSoftwareDecodeLogged = false
     private var captureBlockedByScreenRecordingPermission = false
     private var fpsTimer: Timer?
-    private var heartbeatTimer: Timer?
+    /// PWE (T39): off the main thread; see PWEHeartbeat.
+    private var heartbeat: PWEHeartbeat?
     private var firstFrameTimer: Timer?
     private var cursorTimer: Timer?
     private var connectTimeoutWorkItem: DispatchWorkItem?
+    private var routeLossWorkItem: DispatchWorkItem?
     /// Name of the local interface the current connect attempt is bound to
     /// (e.g. "bridge0"), resolved when dialing. Diagnostic context only.
     private var connectInterfaceName: String?
@@ -1345,7 +1643,6 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     /// "waiting(No route to host)") — surfaced when a connect fails or times
     /// out so the real reason is not lost.
     private var lastConnectionStateDetail: String?
-    private var heartbeatSequence: UInt64 = 0
     private var statusState: TBDisplaySenderStatusState = .ready
     private var streamingActivity: NSObjectProtocol?
     private var displayWakeAssertionID = IOPMAssertionID(0)
@@ -1355,7 +1652,14 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     private var headlessMirrorUsesVirtualDisplay = false
     private var cursorDisplayID: CGDirectDisplayID = kCGNullDirectDisplay
     private var lastCursorPacket: TBMonitorCursor?
+    /// Receiver-drawn pointer: positions from its own thread, the picture from here.
+    private var pointerSource: TBReceiverPointerSource?
+    private var pointerImageTimer: Timer?
+    private var pointerImageID: UInt32 = 0
+    private var lastPointerPicture: TBMonitorCursorImage?
     private var injectedRemoteMouseLocation: CGPoint?
+    /// The points injected just before the last one (TBRelayedPointer.start).
+    private var recentInjectedMouseLocations: [CGPoint] = []
     private var cachedLocalInputEventSource: CGEventSource?
     private var injectedLeftClickTracker = TBInjectedClickStateTracker()
     private let localPointerModifierBridge = TBLocalPointerModifierBridge()
@@ -1493,6 +1797,18 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         if preferredCodec == kCMVideoCodecType_H264, hevcAvailable {
             return TBDisplayCodecDecision(codecType: kCMVideoCodecType_HEVC, usedFallback: true)
         }
+        // PWE: neither codec has a hardware path on both Macs. Apple's H.264
+        // encoders stop below 5120x2880 (require-hardware: -12903; 4096x2304
+        // works), so a 5K preset to an iMac without HEVC hardware decode (2014,
+        // mid-2015) lands here. Before the receiver reported that honestly it got
+        // HEVC and decoded it in software; keep that picture rather than none.
+        if senderSupportsHEVC {
+            return TBDisplayCodecDecision(
+                codecType: kCMVideoCodecType_HEVC,
+                usedFallback: true,
+                receiverDecodesInSoftware: true
+            )
+        }
 
         return nil
     }
@@ -1593,8 +1909,24 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         return details
     }
 
+    /// PWE (T34): over the Thunderbolt Bridge, a receiver whose bridge has
+    /// only its IPv6 link-local address yet is dialed there, scoped to this
+    /// Mac's bridge ("fe80::…%bridge0"). The scope picks the interface, so
+    /// this Mac needs no IPv4 address on its bridge either.
+    var pweDialsBridgeIPv6: Bool {
+        transportKind == .thunderboltBridge && TBConnectionDiagnostics.isScopedBridgeIPv6(receiverIP)
+    }
+
+    /// What connect() needs before it dials: a receiver address, and a local
+    /// address unless the dial is a scoped bridge IPv6 one.
+    var pweHasDialAddresses: Bool {
+        !receiverIP.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (pweDialsBridgeIPv6 || !localInterfaceIP.isEmpty)
+    }
+
     func connect() {
-        guard connection == nil, !receiverIP.isEmpty, !localInterfaceIP.isEmpty else { return }
+        let bridgeIPv6 = pweDialsBridgeIPv6
+        guard connection == nil, !receiverIP.isEmpty, pweHasDialAddresses else { return }
         connectTimeoutWorkItem?.cancel()
         connectTimeoutWorkItem = nil
         recvBuffer.removeAll(keepingCapacity: false)
@@ -1606,10 +1938,21 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
 
         let tcpOptions = NWProtocolTCP.Options()
         tcpOptions.noDelay = true
+        if transportKind == .thunderboltBridge {
+            // Backstop for the route watch below. A pulled cable was noticed
+            // only when TCP gave up retransmitting: 18.3-18.6 s after the unplug
+            // on an iMac18,3. A live bridge acknowledges within milliseconds, and
+            // the 2 s heartbeat keeps data in flight, so 5 s with nothing
+            // acknowledged means the link is gone. A receiver that stops reading
+            // (zero window) is not affected: that is TCP's persist state.
+            tcpOptions.connectionDropTime = 5
+        }
         let params = NWParameters(tls: nil, tcp: tcpOptions)
         params.allowLocalEndpointReuse = true
         params.serviceClass = .interactiveVideo
-        if let localPort = NWEndpoint.Port(rawValue: 0) {
+        // An IPv4 source address cannot reach an IPv6 peer: leave the source
+        // to the scoped destination.
+        if !bridgeIPv6, let localPort = NWEndpoint.Port(rawValue: 0) {
             params.requiredLocalEndpoint = .hostPort(host: NWEndpoint.Host(localInterfaceIP), port: localPort)
         }
 
@@ -1618,26 +1961,41 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         // interface — the routing table keeps 169.254/16 on the primary
         // interface (usually Wi-Fi), so an unscoped dial to a Thunderbolt
         // Bridge peer leaves via the wrong link and times out.
-        let interfaces = TBConnectionDiagnostics.currentIPv4Interfaces()
-        connectInterfaceName = TBConnectionDiagnostics.interfaceName(forLocalIP: localInterfaceIP, in: interfaces)
-        let scopedHost = TBConnectionDiagnostics.scopedReceiverHost(
-            receiverIP: receiverIP,
-            localIP: localInterfaceIP,
-            interfaces: interfaces
-        )
+        let scopedHost: String
         let dialHost: NWEndpoint.Host
-        if scopedHost != receiverIP, let scopedAddress = IPv4Address(scopedHost) {
-            dialHost = .ipv4(scopedAddress)
+        if bridgeIPv6 {
+            scopedHost = receiverIP
+            connectInterfaceName = TBConnectionDiagnostics.ipv6Scope(of: receiverIP)
+            if let address = IPv6Address(receiverIP), address.interface != nil {
+                dialHost = .ipv6(address)
+            } else {
+                // The bridge went away since discovery: the dial fails and the
+                // caller retries, as for any unreachable address.
+                TBLog.connection.warning("connect: \(self.receiverIP, privacy: .public) names no interface on this Mac")
+                dialHost = NWEndpoint.Host(receiverIP)
+            }
         } else {
-            dialHost = NWEndpoint.Host(receiverIP)
+            let interfaces = TBConnectionDiagnostics.currentIPv4Interfaces()
+            connectInterfaceName = TBConnectionDiagnostics.interfaceName(forLocalIP: localInterfaceIP, in: interfaces)
+            scopedHost = TBConnectionDiagnostics.scopedReceiverHost(
+                receiverIP: receiverIP,
+                localIP: localInterfaceIP,
+                interfaces: interfaces
+            )
+            if scopedHost != receiverIP, let scopedAddress = IPv4Address(scopedHost) {
+                dialHost = .ipv4(scopedAddress)
+            } else {
+                dialHost = NWEndpoint.Host(receiverIP)
+            }
         }
-        TBLog.connection.info("connect: dialing \(scopedHost, privacy: .public):\(TBMonitorProtocol.port) from \(self.localInterfaceIP, privacy: .public) (\(self.connectInterfaceName ?? "unknown interface", privacy: .public)) transport=\(self.transportKind.rawValue, privacy: .public)")
+        TBLog.connection.info("connect: dialing \(scopedHost, privacy: .public):\(TBMonitorProtocol.port) from \(bridgeIPv6 ? "IPv6 link-local" : self.localInterfaceIP, privacy: .public) (\(self.connectInterfaceName ?? "unknown interface", privacy: .public)) transport=\(self.transportKind.rawValue, privacy: .public)")
         let conn = NWConnection(
             host: dialHost,
             port: NWEndpoint.Port(integerLiteral: TBMonitorProtocol.port),
             using: params
         )
         connection = conn
+        pweLink = PWESecureLink(connection: conn, plaintext: pweAllowUnencrypted)
 
         conn.stateUpdateHandler = { [weak self, weak conn] state in
             Task { @MainActor [weak self, weak conn] in
@@ -1646,15 +2004,13 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                 case .ready:
                     self.connectTimeoutWorkItem?.cancel()
                     self.connectTimeoutWorkItem = nil
+                    self.pweSpeculativeDial = false
                     self.isConnected = true
                     TBLog.connection.info("connect: ready — \(self.receiverIP, privacy: .public) via \(self.connectInterfaceName ?? "?", privacy: .public)")
                     self.setStatus(.waitingDisplayProfile)
-                    self.startHeartbeat()
-                    self.sendHello()
-                    self.sendInputControlModeUpdate()
-                    self.sendBrightnessUpdate()
-                    self.sendVolumeUpdate()
                     self.receiveLoop(on: conn)
+                    // PWE: pair or authenticate first; pweSessionReady() starts the session.
+                    self.pweBeginSession()
                 case .waiting(let error):
                     // The dial cannot proceed yet (no route, host down, cable
                     // unplugged, firewall drop, …). Record and log the real
@@ -1663,6 +2019,11 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                     self.lastConnectionStateDetail = "waiting(\(error.localizedDescription))"
                     TBLog.connection.warning("connect: waiting — \(error.localizedDescription, privacy: .public)")
                 case .failed(let error):
+                    if self.pweSpeculativeDial, !self.isConnected {
+                        TBLog.connection.info("connect: redial failed — \(error.localizedDescription, privacy: .public)")
+                        self.pweAbandonSpeculativeDial()
+                        return
+                    }
                     self.lastConnectionStateDetail = "failed(\(error.localizedDescription))"
                     let detail = TBConnectionDiagnostics.failureDetail(
                         receiverHost: self.receiverIP,
@@ -1673,7 +2034,12 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                         lastNetworkState: nil
                     )
                     TBLog.connection.error("connect: failed — \(error.localizedDescription, privacy: .public); \(detail, privacy: .public)")
-                    self.setStatus(.connectionFailed("\(error.localizedDescription) — \(detail)"))
+                    if self.isConnected {
+                        // An established link that dropped, not a dial that failed.
+                        self.setStatus(.connectionClosed(error.localizedDescription))
+                    } else {
+                        self.setStatus(.connectionFailed("\(error.localizedDescription) — \(detail)"))
+                    }
                     self.stop(resetStatusTo: nil)
                 case .cancelled:
                     self.isConnected = false
@@ -1683,8 +2049,63 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             }
         }
 
+        // Network.framework marks the flow non-viable within a fraction of a
+        // second when its interface loses the route (a pulled Thunderbolt
+        // cable: 0.18 s on an iMac18,3), long before TCP gives up.
+        conn.viabilityUpdateHandler = { [weak self, weak conn] isViable in
+            Task { @MainActor [weak self, weak conn] in
+                guard let self, let conn, self.connection === conn else { return }
+                self.connectionViabilityChanged(isViable)
+            }
+        }
+
         startConnectWatchdog()
         conn.start(queue: connectionQueue)
+    }
+
+    /// A route that stays away for 2 s ends the connection, so the retry loop can
+    /// dial again as soon as the cable is back. A shorter flap is ridden out.
+    private func connectionViabilityChanged(_ isViable: Bool) {
+        routeLossWorkItem?.cancel()
+        routeLossWorkItem = nil
+        guard !isViable, isConnected else { return }
+        TBLog.connection.warning("connect: no route to \(self.receiverIP, privacy: .public) via \(self.connectInterfaceName ?? "?", privacy: .public); closing in 2 s unless it returns")
+        let workItem = DispatchWorkItem { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.isConnected else { return }
+                TBLog.connection.error("connect: route did not return; closing the connection")
+                self.setStatus(.connectionClosed(POSIXError(.ENETDOWN).localizedDescription))
+                self.stop(resetStatusTo: nil)
+            }
+        }
+        routeLossWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: workItem)
+    }
+
+    /// PWE: end a redial of the last bridge address (TBBridgeRedial) that has
+    /// not connected. Cancel the dial at once rather than through stop(): a
+    /// teardown queued on a dial that connects a moment later would hold the
+    /// receiver's only connection while the next redial arrives. The status
+    /// stays as it was; the retry loop decides what comes next.
+    func pweAbandonSpeculativeDial() {
+        guard pweSpeculativeDial else { return }
+        pweSpeculativeDial = false
+        guard !isConnected, let conn = connection else { return }
+        connectTimeoutWorkItem?.cancel()
+        connectTimeoutWorkItem = nil
+        conn.stateUpdateHandler = nil
+        conn.viabilityUpdateHandler = nil
+        conn.cancel()
+        connection = nil
+        pweLink = nil
+    }
+
+    /// PWE: the receiver is listed but has no address this transport can dial
+    /// (a Network Link to a receiver announced on the cable only). Say so instead
+    /// of leaving the last status, which pointed at the cable.
+    func pweReportNoAddress(_ reason: String) {
+        guard connection == nil, !isConnected, !isStreaming else { return }
+        setStatus(.connectionFailed(reason))
     }
 
     func startCableTest() {
@@ -1696,7 +2117,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     }
 
     private func performCableTest() async throws -> Double {
-        guard let conn = connection else {
+        guard let conn = pweLink else {
             throw NSError(domain: "TBDisplaySenderService", code: -1, userInfo: [NSLocalizedDescriptionKey: "No connection"])
         }
 
@@ -1810,6 +2231,9 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         completion: (@MainActor @Sendable () -> Void)? = nil
     ) {
         TBSenderAutomation.suspendAutomaticReconnectAfterUserStop()
+        // PWE: a Stop ends any consent to an unencrypted session.
+        pweAllowUnencrypted = false
+        if !pweSecurity.waitsForUser { pweSecurity = .none }
         stop(
             resetStatusTo: .stopped,
             persistArrangement: persistArrangement,
@@ -1839,6 +2263,19 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         teardownCompletion: (@MainActor @Sendable () -> Void)? = nil
     ) {
         let connectionToClose = connection
+        let linkToClose = pweLink
+        pweSpeculativeDial = false
+        pweCapturingAudio = false
+        pweCaptureStartedAt = nil
+        pweHelloTimeout?.cancel()
+        pweHelloTimeout = nil
+        // PWE: a code is typed into a live exchange only. With the connection
+        // gone, the iMac has dropped the code: start over on the next connection.
+        if case .needsCode = pweSecurity {
+            pweSecurity = .none
+        } else if !pweSecurity.waitsForUser, pweSecurity != .checkingCode {
+            pweSecurity = .none
+        }
         captureRestartGeneration &+= 1
         isRestartingCaptureAfterWake = false
         if persistArrangement {
@@ -1846,12 +2283,13 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         }
         connectTimeoutWorkItem?.cancel()
         connectTimeoutWorkItem = nil
-        heartbeatTimer?.invalidate()
-        heartbeatTimer = nil
+        routeLossWorkItem?.cancel()
+        routeLossWorkItem = nil
+        heartbeat?.stop()
+        heartbeat = nil
         firstFrameTimer?.invalidate()
         firstFrameTimer = nil
-        cursorTimer?.invalidate()
-        cursorTimer = nil
+        stopCursorUpdates()
         fpsTimer?.invalidate()
         fpsTimer = nil
         stopCaptureWatchdog()
@@ -1877,11 +2315,13 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         suppressedTriggerKeyCode = nil
         connectionToClose?.stateUpdateHandler = nil
         connection = nil
+        pweLink = nil
         sendTeardownAndClose(
             reason: teardownReason,
-            over: connectionToClose,
+            over: linkToClose,
             completion: teardownCompletion
         )
+        linkToClose?.close()
         let currentSession = session
         Task { @MainActor in
             currentSession.destroy()
@@ -1918,7 +2358,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         if let receiver = TBDisplaySenderService.shared.discoveredReceivers.first(where: {
             $0.matchesPersistedIdentity(selectedReceiverID) ||
             $0.preferredIP == receiverIP ||
-            $0.thunderboltIP == receiverIP ||
+            $0.thunderboltIP == receiverIP || $0.thunderboltIPv6 == receiverIP ||
             $0.networkIP == receiverIP
         }) {
             return receiver.stableIdentity
@@ -1966,7 +2406,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     private func loadSavedExtendedDisplayArrangement(for profile: TBMonitorDisplayProfile) -> SavedExtendedDisplayArrangement? {
         let receiver = TBDisplaySenderService.shared.discoveredReceivers.first {
             $0.matchesPersistedIdentity(selectedReceiverID) ||
-                $0.preferredIP == receiverIP || $0.thunderboltIP == receiverIP ||
+                $0.preferredIP == receiverIP || $0.thunderboltIP == receiverIP || $0.thunderboltIPv6 == receiverIP ||
                 $0.networkIP == receiverIP
         }
         var aliases: [String] = []
@@ -2036,7 +2476,8 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                 captureSource: captureSource.title(language),
                 captureWidth: preset.width,
                 captureHeight: preset.height,
-                codec: codecName(for: helloCodecType)
+                codec: codecName(for: helloCodecType),
+                receiverRenderer: pweReceiverRenderer
             )
         ) else { return }
         send(packet)
@@ -2075,7 +2516,11 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         send(packet)
     }
 
+    /// PWE: the iMac's system volume is set only while this Mac's sound plays
+    /// there. Sent on every connection, the remembered level (0.5 by default)
+    /// moved the iMac's own volume even with sound kept on this Mac (1.1.1).
     private func sendVolumeUpdate() {
+        guard shouldRelayAudio else { return }
         guard let packet = TBMonitorProtocol.makeJSONPacket(
             type: .volume,
             value: TBMonitorVolume(level: volume)
@@ -2091,18 +2536,9 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         send(packet)
     }
 
-    private func sendHeartbeat() {
-        heartbeatSequence += 1
-        guard let packet = TBMonitorProtocol.makeJSONPacket(
-            type: .heartbeat,
-            value: TBMonitorHeartbeat(sequence: heartbeatSequence)
-        ) else { return }
-        send(packet)
-    }
-
     private func sendTeardownAndClose(
         reason: String,
-        over connection: NWConnection?,
+        over connection: PWESecureLink?,
         completion: (@MainActor @Sendable () -> Void)? = nil
     ) {
         guard let connection else {
@@ -2173,7 +2609,12 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     }
 
     private func drainPacketsOrThrow() throws {
-        while let (type, payload) = try TBMonitorProtocol.drainPacket(from: &recvBuffer) {
+        while let (packetType, packetPayload) = try TBMonitorProtocol.drainPacket(from: &recvBuffer) {
+            // PWE: handshake packets and sealed records first; nil = handled here.
+            guard case let (type, payload)? = pweInbound(packetType, packetPayload) else {
+                if pweLink == nil { return }
+                continue
+            }
             switch type {
             case .displayProfile:
                 handleDisplayProfile(payload)
@@ -2218,6 +2659,9 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                     applyReportedDisplayTweaks(tweaks)
                 }
             case .clipboard:
+                // PWE: the receiver's clipboard is taken only while the receiver
+                // controls input, and only in an encrypted session.
+                guard Self.pweTakesReceiverClipboard(role: inputControlRole, linkMode: pweLink?.mode) else { break }
                 if let clipboard = TBMonitorProtocol.decodeJSON(TBMonitorClipboard.self, from: payload) {
                     let pasteboard = NSPasteboard.general
                     pasteboard.clearContents()
@@ -2248,32 +2692,12 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         activeDisplayBounds().first(where: { $0.contains(point) })
     }
 
-    private func clampedMouseTarget(from current: CGPoint, dx: Int, dy: Int) -> CGPoint {
-        let rawTarget = CGPoint(x: current.x + CGFloat(dx), y: current.y + CGFloat(dy))
-        let displays = activeDisplayBounds()
-        guard !displays.isEmpty else { return rawTarget }
-
-        // If the target lands on any display, allow it unchanged. This lets the
-        // relayed cursor cross from one screen onto an adjacent one (e.g. the
-        // receiver-backed virtual extended display), matching how the pointer
-        // behaves with the local touchpad. Clamping to a single screen's bounds
-        // previously trapped the pointer on the sender's main display (issue #97).
-        if displays.contains(where: { $0.contains(rawTarget) }) {
-            return rawTarget
-        }
-
-        // Off every display: keep the pointer on the display it is currently on so
-        // the injected cursor can never get lost in a gap between displays.
-        let frame = displays.first(where: { $0.contains(current) }) ?? displays[0]
-        let minX = frame.minX
-        let maxX = frame.maxX - 1
-        let minY = frame.minY
-        let maxY = frame.maxY - 1
-
-        return CGPoint(
-            x: min(max(rawTarget.x, minX), maxX),
-            y: min(max(rawTarget.y, minY), maxY)
-        )
+    /// Where the relayed pointer is now: the last injected point, unless
+    /// something else has moved the pointer since (TBRelayedPointer.start).
+    private func relayedMouseLocation() -> CGPoint? {
+        TBRelayedPointer.start(cached: injectedRemoteMouseLocation,
+                               recentTargets: recentInjectedMouseLocations,
+                               real: currentLocalMouseLocation())
     }
 
     private func localInputEventSource() -> CGEventSource? {
@@ -2296,8 +2720,13 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
 
     private func postLocalMouseMove(dx: Int, dy: Int, type: CGEventType = .mouseMoved, button: CGMouseButton = .left) {
         logLocalInputInjectionStateIfNeeded(context: "mouseMove")
-        guard let current = injectedRemoteMouseLocation ?? currentLocalMouseLocation() else { return }
-        let target = clampedMouseTarget(from: current, dx: dx, dy: dy)
+        guard let current = relayedMouseLocation() else { return }
+        let target = TBRelayedPointer.target(from: current, dx: dx, dy: dy, displays: activeDisplayBounds())
+        if let previous = injectedRemoteMouseLocation, previous == current {
+            recentInjectedMouseLocations = Array((recentInjectedMouseLocations + [previous]).suffix(8))
+        } else {
+            recentInjectedMouseLocations.removeAll()   // started again from the real pointer
+        }
         injectedRemoteMouseLocation = target
         let shouldWarp = (type == .mouseMoved)
         if shouldWarp {
@@ -2326,7 +2755,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
 
     private func postLocalMouseButton(type: CGEventType, button: CGMouseButton, clickCount: Int? = nil) {
         logLocalInputInjectionStateIfNeeded(context: "mouseButton")
-        guard let current = injectedRemoteMouseLocation ?? currentLocalMouseLocation() else { return }
+        guard let current = relayedMouseLocation() else { return }
         guard let event = TBInjectedPointerEvent.mouse(source: localInputEventSource(), type: type,
             position: current, button: button, modifiers: currentInjectedModifierFlags()) else { return }
         if let clickCount {
@@ -2624,6 +3053,13 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                 self.stop(resetStatusTo: .stopped)
                 return
             }
+            #if DEBUG
+            // PWE: tests only — generated frames instead of the screen (pweTestSyntheticFrames).
+            if let frames = self.pweTestSyntheticFrames {
+                self.pweRunSyntheticStream(profile: profile, frames: frames.count, fps: frames.fps)
+                return
+            }
+            #endif
 
             // A headless Sender may still expose a sleeping physical display.
             // Wake and hold the graphical session before virtual display setup.
@@ -2704,6 +3140,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             // armed against a session that has already delivered frames — it then
             // tears down a healthy stream ~4s in. See onFirstFrame wiring below.
             self.sessionAckSent = false
+            self.pweSoftwareDecodeLogged = false
             self.captureBlockedByScreenRecordingPermission = false
             self.setStatus(.startingCapture(self.capturePreset.description, self.captureSource))
             let started = await self.startCapture(for: profile)
@@ -2728,10 +3165,22 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                 self.scheduleDesktopMirrorRecovery(for: self.session.displayID)
             }
 
-            self.setStatus(.captureStartedWaitingFirstFrame)
-            self.startFirstFrameWatchdog()
+            self.pweCaptureDidStart()
         }
     }
+
+    /// PWE: startCapture returned. The first encoded frame can arrive while it
+    /// is suspended (see the note on sessionAckSent above); then the status is
+    /// already captureActive and handleFirstEncodedFrame will not run again.
+    /// Upstream wrote "waiting for the first frame" over it unconditionally, and
+    /// the session read so for as long as it streamed (T33, test Mac 2026-10-20).
+    func pweCaptureDidStart() {
+        if !sessionAckSent { setStatus(.captureStartedWaitingFirstFrame) }
+        startFirstFrameWatchdog()
+    }
+
+    /// PWE: the current capture has sent its first encoded frame.
+    var pweHasFirstFrame: Bool { sessionAckSent }
 
     private func startCapture(for profile: TBMonitorDisplayProfile) async -> Bool {
         do {
@@ -2764,12 +3213,19 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             let codecName = usesRawNV12 ? "NV12 RAW" : codecName(for: codecType)
             activeCodecType = usesRawNV12 ? nil : codecType
             activeCodecName = codecName
-            if codecDecision.usedFallback {
+            if codecDecision.receiverDecodesInSoftware {
+                if !pweSoftwareDecodeLogged {
+                    pweSoftwareDecodeLogged = true
+                    TBLog.connection.notice(
+                        "capture: HEVC with receiver software decode (no H.264 hw encoder at \(preset.width, privacy: .public)x\(preset.height, privacy: .public), receiver has no HEVC hw decode)"
+                    )
+                }
+            } else if codecDecision.usedFallback {
                 TBLog.connection.notice(
                     "capture: codec fallback preference=\(self.codecPreference.rawValue, privacy: .public) selected=\(codecName, privacy: .public)"
                 )
             }
-            guard let connection else { return false }
+            guard let connection = pweLink else { return false }
 
             // The encode/send pipeline runs entirely on its own serial queue,
             // off the main thread, so SwiftUI layout can never stall frame
@@ -2789,6 +3245,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             )
             guard pipeline.start() else { return false }
             self.pipeline = pipeline
+            pweCaptureStartedAt = ProcessInfo.processInfo.systemUptime
             TBLog.connection.info("capture: pipeline started preset=\(preset.rawValue, privacy: .public) source=\(String(describing: self.captureSource), privacy: .public) codec=\(codecName, privacy: .public) rawNV12=\(usesRawNV12, privacy: .public)")
 
             let display: SCDisplay
@@ -2815,7 +3272,8 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             }
 
             let usesCursorOverlay = inputControlRole.usesLowLatencyCursorOverlay(
-                largeCursorEnabled: largeCursor
+                largeCursorEnabled: largeCursor,
+                receiverDrawsPointer: receiverDrawsPointer
             )
             let configuration = SCStreamConfiguration()
             configuration.width = preset.width
@@ -2878,6 +3336,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             }
             try await stream.startCapture()
             scStream = stream
+            pweCapturingAudio = shouldRelayAudio
             isStreaming = true
             if usesCursorOverlay { startCursorUpdates(displayID: display.displayID) }
             beginCaptureActivity(wakeDisplay: false)
@@ -2930,7 +3389,8 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     private func startDirectDisplayStream(displayID: CGDirectDisplayID, preset: TBDisplayCapturePreset) async -> Bool {
         guard let pipeline else { return false }
         let usesCursorOverlay = inputControlRole.usesLowLatencyCursorOverlay(
-            largeCursorEnabled: largeCursor
+            largeCursorEnabled: largeCursor,
+            receiverDrawsPointer: receiverDrawsPointer
         )
         let codecName = activeCodecName ?? codecName(for: activeCodecType ?? preset.codecType)
         streamResolutionText = TBDisplaySenderL10n.streamSummary(
@@ -3011,6 +3471,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             try await stream.startCapture()
             captureDelegate = delegate
             scStream = stream
+            pweCapturingAudio = true
             TBLog.connection.info("capture: auxiliary audio stream active beside direct video")
         } catch {
             TBLog.connection.warning("capture: auxiliary audio unavailable: \(error.localizedDescription, privacy: .public)")
@@ -3033,6 +3494,11 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             )
         }
         guard wakeDisplay, preventDisplaySleep else { return }
+        // Declaring user activity on the way to sleep wakes the Mac straight back up.
+        guard !TBSystemSleepGate.isSleeping else {
+            TBLog.connection.info("capture: system going to sleep; not waking the graphical session")
+            return
+        }
 
         let result = IOPMAssertionDeclareUserActivity(
             "TargetBridge capture requested" as CFString,
@@ -3374,9 +3840,13 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         return Array(displays.prefix(Int(count)))
     }
     private func startCursorUpdates(displayID: CGDirectDisplayID) {
-        cursorTimer?.invalidate()
+        stopCursorUpdates()
         cursorDisplayID = displayID
         lastCursorPacket = nil
+        if receiverDrawsPointer && inputControlRole != .senderMaster {
+            startReceiverDrawnPointer(displayID: displayID)
+            return
+        }
 
         let timer = Timer(timeInterval: 1.0 / 120.0, repeats: true) { [weak self] _ in
             guard let self else { return }
@@ -3407,16 +3877,111 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         }
     }
 
+    /// The receiver said it draws the pointer itself ("cursorImage" in its
+    /// profile) and the user has not turned that off. The stream then leaves
+    /// the pointer out and the receiver draws it on every refresh, so it moves
+    /// at the display's rate, not the video's. Turn off with
+    /// `defaults write <sender bundle id> fd.tbdisplaysender.receiverDrawnPointer -bool false`;
+    /// it applies from the next capture start.
+    private var receiverDrawsPointer: Bool {
+        guard activeProfile?.cursorImage == true else { return false }
+        return UserDefaults.standard.object(forKey: Self.receiverDrawnPointerDefaultsKey) as? Bool ?? true
+    }
+
+    static let receiverDrawnPointerDefaultsKey = "fd.tbdisplaysender.receiverDrawnPointer"
+
+    private func stopCursorUpdates() {
+        cursorTimer?.invalidate()
+        cursorTimer = nil
+        pointerImageTimer?.invalidate()
+        pointerImageTimer = nil
+        pointerSource?.stop()
+        pointerSource = nil
+    }
+
+    private func startReceiverDrawnPointer(displayID: CGDirectDisplayID) {
+        guard let connection = pweLink else { return }
+        let source = TBReceiverPointerSource(connection: connection, displayID: displayID,
+                                             frameWidth: capturePreset.width, frameHeight: capturePreset.height)
+        pointerSource = source
+        lastPointerPicture = nil
+        sendPointerPictureIfChanged()
+        source.start()
+        // NSCursor is AppKit: its picture is read here, on the main thread.
+        let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            MainActor.assumeIsolated {
+                sendPointerPictureIfChanged()
+            }
+        }
+        pointerImageTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func sendPointerPictureIfChanged() {
+        guard let source = pointerSource, isConnected else { return }
+        let type = getCurrentCursorType()
+        if let cursor = NSCursor.currentSystem,
+           var picture = Self.pointerPicture(of: cursor, pixelsPerPoint: source.pixelsPerPoint),
+           picture != lastPointerPicture {
+            lastPointerPicture = picture
+            pointerImageID &+= 1
+            if pointerImageID == 0 { pointerImageID = 1 }
+            picture.id = pointerImageID
+            if let packet = TBMonitorProtocol.makeCursorImagePacket(picture) {
+                send(packet)
+            }
+        }
+        source.update(large: largeCursor, imageID: pointerImageID, cursorType: type)
+    }
+
+    /// The pointer's picture as premultiplied BGRA at the frame's scale (one
+    /// picture pixel per frame pixel), shrunk only to fit the packet limit.
+    /// `id` is left 0 for the caller.
+    static func pointerPicture(of cursor: NSCursor, pixelsPerPoint: Double) -> TBMonitorCursorImage? {
+        let size = cursor.image.size
+        guard size.width > 0, size.height > 0, pixelsPerPoint > 0 else { return nil }
+        let maxSide = Double(TBMonitorCursorImage.maxSide)
+        let longest = max(size.width, size.height) * pixelsPerPoint
+        let pixelScale = longest > maxSide ? pixelsPerPoint * maxSide / longest : pixelsPerPoint
+        let width = max(1, Int((size.width * pixelScale).rounded()))
+        let height = max(1, Int((size.height * pixelScale).rounded()))
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                                      bytesPerRow: width * 4, space: colorSpace,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+                                          | CGBitmapInfo.byteOrder32Little.rawValue)
+        else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        cursor.image.draw(in: NSRect(x: 0, y: 0, width: width, height: height),
+                          from: .zero, operation: .copy, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+        guard let pixels = context.data else { return nil }
+        let maxFrameSide = 4 * TBMonitorCursorImage.maxSide
+        // NSCursor's hot spot is measured from the picture's top-left corner.
+        return TBMonitorCursorImage(
+            id: 0,
+            width: width,
+            height: height,
+            hotX: max(0, min(width, Int((cursor.hotSpot.x * pixelScale).rounded()))),
+            hotY: max(0, min(height, Int((cursor.hotSpot.y * pixelScale).rounded()))),
+            frameWidth: max(1, min(maxFrameSide, Int((size.width * pixelsPerPoint).rounded()))),
+            frameHeight: max(1, min(maxFrameSide, Int((size.height * pixelsPerPoint).rounded()))),
+            bgra: Data(bytes: pixels, count: width * height * 4)
+        )
+    }
+
     private func applyCursorOverlayMode() {
         if inputRelayActive {
-            cursorTimer?.invalidate()
-            cursorTimer = nil
+            stopCursorUpdates()
             sendHiddenCursorPacketIfNeeded()
             return
         }
 
         let usesCursorOverlay = inputControlRole.usesLowLatencyCursorOverlay(
-            largeCursorEnabled: largeCursor
+            largeCursorEnabled: largeCursor,
+            receiverDrawsPointer: receiverDrawsPointer
         )
         guard usesCursorOverlay, isStreaming, cursorDisplayID != kCGNullDirectDisplay else { return }
         startCursorUpdates(displayID: cursorDisplayID)
@@ -3471,18 +4036,17 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         let bounds = CGDisplayBounds(cursorDisplayID)
         guard bounds.width > 0, bounds.height > 0 else { return }
 
-        let localX = point.x - bounds.origin.x
-        let localY = point.y - bounds.origin.y
-        let visible = localX >= 0 && localY >= 0 && localX <= bounds.width && localY <= bounds.height
-
-        let scaledX = Int((max(0, min(bounds.width, localX)) / bounds.width) * Double(capturePreset.width))
-        let scaledY = Int((max(0, min(bounds.height, localY)) / bounds.height) * Double(capturePreset.height))
+        // Into the content rectangle: a mirrored display of another shape sits
+        // between black bars, so a linear map over the whole frame is off.
+        let placement = TBReceiverPointerGeometry.place(point, displayBounds: bounds,
+                                                        frameWidth: capturePreset.width,
+                                                        frameHeight: capturePreset.height)
         let cursor = TBMonitorCursor(
-            x: scaledX,
-            y: scaledY,
+            x: placement.x,
+            y: placement.y,
             width: capturePreset.width,
             height: capturePreset.height,
-            visible: visible,
+            visible: placement.inside,
             type: getCurrentCursorType(),
             large: largeCursor
         )
@@ -3510,6 +4074,25 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             Task { @MainActor [weak self] in
                 self?.handleSystemWake()
             }
+        }
+        // PWE: the other half of each wake signal, so a wake can tell whether
+        // the running capture lived through the sleep (pweCaptureNeedsWakeRestart).
+        let asleep: @Sendable (Notification) -> Void = { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.pweScreensAsleepAt = ProcessInfo.processInfo.systemUptime
+            }
+        }
+        for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification] {
+            wakeObservers.append(
+                NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: nil, using: asleep)
+            )
+        }
+        for name in ["com.apple.screenIsLocked", "com.apple.screensaver.didstart"] {
+            wakeObservers.append(
+                DistributedNotificationCenter.default().addObserver(
+                    forName: Notification.Name(name), object: nil, queue: nil, using: asleep
+                )
+            )
         }
 
         wakeObservers.append(
@@ -3652,7 +4235,23 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
 
     private func handleSystemWake() {
         guard autoRestartOnWake else { return }
+        guard Self.pweCaptureNeedsWakeRestart(captureStartedAt: pweCaptureStartedAt, screensAsleepAt: pweScreensAsleepAt) else {
+            if isStreaming {
+                TBLog.connection.info("capture: started after the screens slept; no restart after wake")
+            }
+            return
+        }
         scheduleCaptureRestart(reason: "system wake", delaySeconds: 1.0)
+    }
+
+    /// PWE: restart capture after a wake only if it was running when the screens
+    /// went to sleep or locked. A session that connected after the wake has a
+    /// fresh capture; restarting it 3 s after its first frame only interrupts
+    /// the picture (T15: screen unlock, iMac18,3, 2026-10-20). With no sleep seen
+    /// since launch, keep upstream's restart.
+    nonisolated static func pweCaptureNeedsWakeRestart(captureStartedAt: TimeInterval?, screensAsleepAt: TimeInterval?) -> Bool {
+        guard let captureStartedAt, let screensAsleepAt else { return true }
+        return captureStartedAt <= screensAsleepAt
     }
 
     func restartCaptureNow() {
@@ -3692,8 +4291,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
 
     private func softRestartCapture(for profile: TBMonitorDisplayProfile) async {
         // Tear down only the capture pipeline — keep the network connection and virtual display.
-        cursorTimer?.invalidate()
-        cursorTimer = nil
+        stopCursorUpdates()
         fpsTimer?.invalidate()
         fpsTimer = nil
         firstFrameTimer?.invalidate()
@@ -3715,6 +4313,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         endCaptureActivity()
         pipeline?.stop()
         pipeline = nil
+        pweCapturingAudio = false
         isStreaming = false
         liveMetrics.senderFPS = 0
         senderFPS = 0
@@ -3755,12 +4354,14 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     }
 
     private func startHeartbeat() {
-        heartbeatTimer?.invalidate()
-        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.sendHeartbeat()
-            }
-        }
+        heartbeat?.stop()
+        heartbeat = nil
+        guard let link = pweLink else { return }
+        // PWE (T39): from its own queue, so a blocked or busy main thread
+        // cannot let the receiver's 10 s stale-session check fire.
+        let heartbeat = PWEHeartbeat(link: link)
+        heartbeat.start()
+        self.heartbeat = heartbeat
     }
 
     private func startFirstFrameWatchdog() {
@@ -3840,7 +4441,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     }
 
     private func send(_ packet: Data) {
-        connection?.send(content: packet, completion: .contentProcessed({ _ in }))
+        pweLink?.send(content: packet, completion: .contentProcessed({ _ in }))
     }
 
     func sendInputEvent(_ event: TBMonitorInputEvent) {
@@ -3983,3 +4584,344 @@ private final class SBAudioConverter: Sendable {
         return converterState.convert(sampleBuffer: sampleBuffer)
     }
 }
+
+// MARK: - PWE: pairing and encrypted sessions
+//
+// connect() opens the TCP connection; on .ready, pweBeginSession() runs the
+// handshake (TBDisplayShared/PWESecureLink.swift). Only when it ends secure, or
+// the user chose an unencrypted session, does pweSessionReady() start the
+// usual protocol (hello, input mode, brightness, volume, heartbeat).
+
+extension TBDisplaySenderSession {
+    /// The user typed the code shown on the iMac. Works while the connection
+    /// waits for it, and after a wrong or expired code (it reconnects).
+    func pweSubmitPairingCode(_ code: String) {
+        let digits = code.filter(\.isNumber)
+        guard digits.count == Int(PWE_SEC_CODE_DIGITS) else { return }
+        if let link = pweLink, link.mode == .negotiating, case .needsCode = pweSecurity {
+            pweSecurity = .checkingCode
+            pweHandle(link.submit(code: digits), on: link)
+            return
+        }
+        pwePendingCode = digits
+        pweSecurity = .checkingCode
+        if connection == nil { connect() }
+    }
+
+    /// The user closed the code dialog or a question without going on.
+    func pweCancelPairing() {
+        pwePendingCode = nil
+        if let link = pweLink, link.mode == .negotiating, case .needsCode = pweSecurity {
+            _ = link.submit(code: nil)   // tells the iMac to hide its code
+        }
+        pweSecurity = .none
+        stop()   // also holds automatic reconnect, as a Stop does
+    }
+
+    /// The code on screen has run out. Tell the iMac to drop it and end this
+    /// exchange, so the next connection gets a fresh code (PWE layer: PWEPairingRules).
+    func pweCodeExpired() {
+        guard let link = pweLink, link.mode == .negotiating, case .needsCode = pweSecurity else { return }
+        _ = link.submit(code: nil)
+        pwePendingCode = nil
+        pweClose(.codeExpired, "PWE: pairing code expired")
+    }
+
+    /// Try again after a refusal or a lock (the cable is back, the minute is up).
+    func pweRetry() {
+        pweSecurity = .negotiating
+        if connection == nil { connect() }
+    }
+
+    /// The user agreed to an unencrypted session with this receiver (after
+    /// `.legacyReceiver(previouslyPaired: false)`). Holds until Stop.
+    func pweConnectUnencrypted() {
+        guard PWEPairingStore.allowUnencrypted else {
+            pweSecurity = .refused(.unencryptedNotAllowed)
+            return
+        }
+        pweAllowUnencrypted = true
+        pweSecurity = .negotiating
+        if connection == nil { connect() }
+    }
+
+    /// Ask the iMac for a code and pair again, although both sides have keys.
+    func pwePairAgain() {
+        pwePendingCode = ""
+        if connection != nil { stopForAutomaticReconnect() }
+        pweSecurity = .negotiating
+        connect()
+    }
+
+    /// Bonjour identity of the receiver this session dials: only a hint, used
+    /// to notice a changed key and to never downgrade a paired iMac.
+    var pweReceiverHint: String {
+        if let receiver = TBDisplaySenderService.shared.discoveredReceivers.first(where: {
+            $0.matchesPersistedIdentity(selectedReceiverID) ||
+            $0.preferredIP == receiverIP ||
+            $0.thunderboltIP == receiverIP || $0.thunderboltIPv6 == receiverIP ||
+            $0.networkIP == receiverIP
+        }) {
+            return receiver.stableIdentity
+        }
+        let selected = selectedReceiverID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return selected.isEmpty ? receiverIP : selected
+    }
+
+    func pweBeginSession() {
+        guard let link = pweLink else { return }
+        pweIdentityChanged = false
+        if link.mode == .plaintext {
+            pweSecurity = .unencrypted
+            TBLog.connection.warning("pairing: unencrypted session with \(self.receiverIP, privacy: .public): picture, sound, brightness and volume only")
+            pweSessionReady()
+            return
+        }
+        guard link.hasKeys else {
+            pweSecurity = .refused(.senderKeychain)
+            setStatus(.connectionFailed("PWE: this Mac's keychain is unavailable"))
+            stop(resetStatusTo: nil)
+            return
+        }
+        if pwePendingCode == nil { pweSecurity = .negotiating }
+        let expected = PWEPairingStore.shared.expectedReceiverID(forHint: pweReceiverHint)
+        let step = link.start(expectedID: expected, code: pwePendingCode)
+        // An older receiver speaks first, in the clear (pweInbound notices that at
+        // once). This timeout is only the fallback for one that stays silent, and a
+        // reply can be late on a busy receiver: so a receiver this Mac paired with
+        // is never downgraded on silence, the attempt just fails and is retried.
+        let timeout = DispatchWorkItem { [weak self, weak link] in
+            Task { @MainActor [weak self, weak link] in
+                guard let self, let link, self.pweLink === link, link.mode == .negotiating,
+                      !self.pweSecurity.waitsForUser else { return }
+                self.pweHelloTimedOut()
+            }
+        }
+        pweHelloTimeout?.cancel()
+        pweHelloTimeout = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.pweHelloTimeoutSeconds, execute: timeout)
+        pweHandle(step, on: link)
+    }
+
+    /// Whether a clipboard sent by the receiver may replace this Mac's (P1-02):
+    /// only while the iMac controls input ("iMac controls Mac"), and only in an
+    /// encrypted session. Keyboard and mouse off, the Mac in control, an
+    /// unencrypted or unfinished session: dropped (PWEClipboardGateTests).
+    nonisolated static func pweTakesReceiverClipboard(role: TBInputControlRole, linkMode: PWESecureLink.Mode?) -> Bool {
+        role == .receiverMaster && linkMode == .secure
+    }
+
+    /// The handshake is done (or the user chose unencrypted): start the session.
+    func pweSessionReady() {
+        pweHelloTimeout?.cancel()
+        pweHelloTimeout = nil
+        if transportKind == .thunderboltBridge {
+            TBBridgeRedial.remember(receiverIP, for: selectedReceiverID)
+        }
+        startHeartbeat()
+        sendHello()
+        sendInputControlModeUpdate()
+        sendBrightnessUpdate()
+        sendVolumeUpdate()
+    }
+
+    /// Language changes reach a running session inside it.
+    func pweSendLanguageUpdate() {
+        guard let link = pweLink, link.mode == .secure,
+              let packet = TBMonitorProtocol.makeJSONPacket(
+                type: .uiLanguage,
+                value: TBMonitorUILanguageUpdate(uiLanguage: language.fileStem)
+              )
+        else { return }
+        link.send(content: packet, completion: .contentProcessed({ _ in }))
+    }
+
+    /// One packet from the receiver, before the switch in drainPacketsOrThrow.
+    /// Returns the packet to handle there, or nil when it was handled (or dropped) here.
+    func pweInbound(_ type: TBMonitorPacketType, _ payload: Data) -> (TBMonitorPacketType, Data)? {
+        guard let link = pweLink else { return nil }
+        let raw = type.rawValue
+        if type == .secSealed {
+            guard let (innerRaw, inner) = link.open(payload) else {
+                pweClose(.refused(.protocolError), "PWE: a record failed authentication")
+                return nil
+            }
+            guard !(0x50...0x5F).contains(innerRaw), let innerType = TBMonitorPacketType(rawValue: innerRaw) else {
+                return nil
+            }
+            return (innerType, inner)
+        }
+        if (0x50...0x5E).contains(raw) {
+            pweHelloTimeout?.cancel()
+            pweHelloTimeout = nil
+            pweHandle(link.handle(type: raw, payload: payload), on: link)
+            return nil
+        }
+        switch link.mode {
+        case .plaintext:
+            return link.allowsInbound(plaintextType: raw) ? (type, payload) : nil
+        case .negotiating:
+            // Only a receiver that does not know the handshake talks before it ends.
+            pweLegacyReceiverDetected()
+            return nil
+        case .secure, .closed:
+            pweClose(.refused(.protocolError), "PWE: an unsealed packet in an encrypted session")
+            return nil
+        }
+    }
+
+    func pweHandle(_ step: PWESecureLink.Step, on link: PWESecureLink) {
+        guard pweLink === link else { return }
+        let store = PWEPairingStore.shared
+        if step.has(PWE_SEC_EV_IDENTITY_CHANGED) {
+            pweIdentityChanged = true
+            TBLog.connection.warning("pairing: \(self.receiverIP, privacy: .public) has a different key than when it was paired")
+        }
+        if step.has(PWE_SEC_EV_PAIRED), let id = step.peerID {
+            store.rememberReceiver(hint: pweReceiverHint, id: id)
+            TBLog.connection.info("pairing: paired with \(step.peerName, privacy: .public)")
+        }
+        if step.has(PWE_SEC_EV_SECURE) {
+            pwePendingCode = nil
+            if let id = step.peerID { store.rememberReceiver(hint: pweReceiverHint, id: id) }
+            pweSecurity = .encrypted(receiverName: step.peerName)
+            TBLog.connection.info("pairing: encrypted session with \(step.peerName, privacy: .public)")
+            pweSessionReady()
+            return
+        }
+        if step.has(PWE_SEC_EV_NEED_CODE) {
+            pweSecurity = .needsCode(secondsLeft: step.codeSeconds, identityChanged: pweIdentityChanged)
+            return
+        }
+        guard step.closes else { return }
+
+        pwePendingCode = nil
+        let peer = pwe_sec_error(rawValue: UInt32(bitPattern: step.peerError))
+        let local = pwe_sec_error(rawValue: UInt32(bitPattern: step.localError))
+        if step.has(PWE_SEC_EV_WRONG_CODE) {
+            pweClose(.wrongCode, "PWE: wrong pairing code")
+        } else if step.has(PWE_SEC_EV_LOCKED) {
+            pweClose(.locked(seconds: max(step.lockSeconds, 1)), "PWE: pairing locked")
+        } else if peer == PWE_SEC_ERR_EXPIRED {
+            pweClose(.codeExpired, "PWE: pairing code expired")
+        } else if peer == PWE_SEC_ERR_NEED_PAIRING {
+            // The iMac no longer knows this Mac: ask it for a code right away.
+            TBLog.connection.warning("pairing: \(self.receiverIP, privacy: .public) does not know this Mac any more; pairing again")
+            pweClose(.negotiating, "PWE: pairing needed")
+            pwePendingCode = ""
+            connect()
+        } else if local == PWE_SEC_ERR_NOT_DIRECT || peer == PWE_SEC_ERR_NOT_DIRECT {
+            pweClose(.refused(.notOnCable), "PWE: pairing needs the cable")
+        } else if peer == PWE_SEC_ERR_STORE {
+            pweClose(.refused(.receiverKeychain), "PWE: the iMac cannot read its keychain")
+        } else if local == PWE_SEC_ERR_STORE {
+            pweClose(.refused(.senderKeychain), "PWE: this Mac's keychain is unavailable")
+        } else if peer == PWE_SEC_ERR_VERSION || local == PWE_SEC_ERR_VERSION {
+            pweClose(.refused(.version), "PWE: protocol version mismatch")
+        } else if local == PWE_SEC_ERR_CANCELLED || peer == PWE_SEC_ERR_CANCELLED {
+            pweClose(.none, "PWE: pairing cancelled")
+        } else {
+            pweClose(.refused(.protocolError), "PWE: handshake failed (local \(step.localError), receiver \(step.peerError))")
+        }
+    }
+
+    /// How long a silent receiver gets to answer HELLO.
+    static let pweHelloTimeoutSeconds: Double = 3
+
+    func pweHelloTimedOut() {
+        if PWEPairingStore.shared.expectedReceiverID(forHint: pweReceiverHint) != nil {
+            TBLog.connection.warning("pairing: \(self.receiverIP, privacy: .public) did not answer the handshake in \(Self.pweHelloTimeoutSeconds, privacy: .public) s; paired before, so retrying instead of downgrading")
+            pweSecurity = .none
+            setStatus(.connectionFailed("PWE: no handshake reply"))
+            stop(resetStatusTo: nil)
+            return
+        }
+        pweLegacyReceiverDetected()
+    }
+
+    func pweLegacyReceiverDetected() {
+        let previouslyPaired = PWEPairingStore.shared.expectedReceiverID(forHint: pweReceiverHint) != nil
+        TBLog.connection.warning("pairing: \(self.receiverIP, privacy: .public) does not support encrypted connections (previously paired: \(previouslyPaired, privacy: .public))")
+        if !PWEPairingStore.allowUnencrypted {
+            pweClose(.refused(.unencryptedNotAllowed), "PWE: unencrypted connections are turned off")
+        } else {
+            pweClose(.legacyReceiver(previouslyPaired: previouslyPaired), "PWE: the receiver does not support encrypted connections")
+        }
+    }
+
+    private func pweClose(_ state: PWESecurityState, _ detail: String) {
+        pweSecurity = state
+        setStatus(.connectionFailed(detail))
+        stop(resetStatusTo: nil)
+    }
+}
+
+#if DEBUG
+// PWE: tests only. The status steps of a capture start, through the engine's own
+// setters, in either order the first frame and startCapture's return can take
+// (PWEConnectionPhaseTests). No connection, display or screen capture.
+extension TBDisplaySenderSession {
+    func pweTestCaptureStart(firstFrameWhileStarting: Bool) {
+        sessionAckSent = false
+        setStatus(.startingCapture(capturePreset.description, captureSource))
+        if firstFrameWhileStarting { handleFirstEncodedFrame() }
+        isStreaming = true
+        pweCaptureDidStart()
+        if !firstFrameWhileStarting { handleFirstEncodedFrame() }
+    }
+
+    func pweTestCaptureEnd() {
+        firstFrameTimer?.invalidate()
+        firstFrameTimer = nil
+        sessionAckSent = false
+        isStreaming = false
+        setStatus(.stopped)
+    }
+}
+
+// PWE: tests only. The same pipeline, codec choice, sealing and pointer source as
+// a capture; only the pixels are generated here (a moving gradient, 5K BGRA).
+extension TBDisplaySenderSession {
+    fileprivate func pweRunSyntheticStream(profile: TBMonitorDisplayProfile, frames: Int, fps: Int) {
+        guard let connection = pweLink,
+              let decision = resolvedCodecDecision(for: capturePreset, profile: profile) else {
+            TBLog.connection.error("synthetic stream: no link or codec")
+            return
+        }
+        let preset = capturePreset
+        let pipeline = TBVideoPipeline(
+            preset: preset, codecType: decision.codecType, connection: connection,
+            displayName: "PWE synthetic", displayID: CGMainDisplayID(), usesRawNV12: false,
+            ackAlreadySent: sessionAckSent, onFirstFrame: {}
+        )
+        guard pipeline.start() else {
+            TBLog.connection.error("synthetic stream: encoder did not start")
+            return
+        }
+        self.pipeline = pipeline
+        if profile.cursorImage == true { startReceiverDrawnPointer(displayID: CGMainDisplayID()) }
+        let props: [CFString: Any] = [
+            kIOSurfaceWidth: preset.width, kIOSurfaceHeight: preset.height,
+            kIOSurfaceBytesPerElement: 4, kIOSurfacePixelFormat: kCVPixelFormatType_32BGRA,
+        ]
+        guard let surface = IOSurfaceCreate(props as CFDictionary) else { return }
+        TBLog.connection.info("synthetic stream: \(frames, privacy: .public) frames \(preset.width, privacy: .public)x\(preset.height, privacy: .public) at \(fps, privacy: .public) fps")
+        Task { @MainActor [weak self] in
+            for index in 0..<frames {
+                guard let self, self.pipeline === pipeline else { return }
+                IOSurfaceLock(surface, [], nil)
+                let base = IOSurfaceGetBaseAddress(surface).assumingMemoryBound(to: UInt8.self)
+                let rowBytes = IOSurfaceGetBytesPerRow(surface)
+                for y in stride(from: 0, to: preset.height, by: 1) {
+                    memset(base + y * rowBytes, Int32((y / 8 + index * 6) & 0xff), preset.width * 4)
+                }
+                IOSurfaceUnlock(surface, [], nil)
+                pipeline.encodeDisplaySurface(surface, displayTime: mach_absolute_time())
+                self.pweTestFramesSent = index + 1
+                try? await Task.sleep(nanoseconds: UInt64(1_000_000_000 / max(fps, 1)))
+            }
+            self?.pweTestStreamFinished = true
+        }
+    }
+}
+#endif

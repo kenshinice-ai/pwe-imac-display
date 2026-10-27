@@ -1,6 +1,6 @@
 #!/bin/zsh
 #
-# Build, sign and package PWE iMac Display as one disk image holding both apps.
+# Build, sign and package PWE Screen Encore as one disk image holding both apps.
 #
 #   pwe/package.sh                 build + sign + dmg   (local check, not for release)
 #   pwe/package.sh --notarize      also notarise and staple the apps and the image
@@ -9,11 +9,11 @@
 #                                  and SDL2 already built in <dir>/{arm64,x86_64}
 #                                  (how NOTICE.txt tells users to relink FFmpeg)
 #
-# Output: pwe/dist/PWE-iMac-Display-<version>.dmg, SHA256SUMS.txt, and the FFmpeg
+# Output: pwe/dist/PWE-Screen-Encore-<version>.dmg, SHA256SUMS.txt, and the FFmpeg
 # source the receiver was built from (LGPL: offered from the same place).
 #
 # The repository holds TargetBridge's code unchanged. Everything here happens to
-# a scratch copy in $TMPDIR: pwe/rebrand.py turns it into PWE iMac Display, the
+# a scratch copy in $TMPDIR: pwe/rebrand.py turns it into PWE Screen Encore, the
 # two apps are built and signed there (iCloud Drive re-attaches
 # com.apple.FinderInfo to anything inside it, and codesign refuses a bundle that
 # carries it), and only the finished image comes back.
@@ -22,14 +22,19 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO="$PWD"
 
-NAME="PWE iMac Display"
-RECEIVER_NAME="PWE iMac Display Receiver"
+NAME="PWE Screen Encore"
+RECEIVER_NAME="PWE Screen Encore Receiver"
+RECEIVER_EXE="PWEScreenEncoreReceiver"
+# Kept from before the 2026-10-20 rename: privacy permissions, pairing keys and
+# settings belong to the bundle identifier (pwe/rebrand.py, DATA_NAME).
 RECEIVER_ID="com.pwegroup.pweimacdisplay.receiver"
 IDENTITY="Developer ID Application: Li Liu (2SQV3H5MH9)"
 PROFILE="${NOTARY_PROFILE:-PWE_NOTARY}"
 BUILD="$(date +%Y%m%d%H%M%S)"
 
 # A fresh directory per run, so two builds never delete or mix each other's files.
+# The caches under $TMPDIR keep their pre-rename names: renaming them would only
+# rebuild FFmpeg, SDL2 and libsodium for nothing.
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/pwe-imacdisplay-release.XXXXXX")"
 DEPS="${PWE_DEPS:-${TMPDIR:-/tmp}/pwe-imacdisplay-deps}"
 SRC="$WORK/src"
@@ -82,8 +87,37 @@ git ls-files -z | rsync -a --from0 --files-from=- ./ "$SRC/"
 # change what gets built. (2026-10-14: a branch switch mid-build removed
 # pwe/receiver-deps.sh and the build stopped halfway.)
 VERSION="$(<"$SRC/pwe/VERSION")"
-DMG="$DIST/PWE-iMac-Display-$VERSION.dmg"   # the name the release and the cask use
+DMG="$DIST/PWE-Screen-Encore-$VERSION.dmg"   # the name the release and the cask use
 python3 -I "$SRC/pwe/rebrand.py" "$SRC" --version "$VERSION" --build "$BUILD"
+
+# ---------------------------------------------------------------- disk-image tool
+
+# dmgbuild lays out the disk-image window (background, icon places, volume icon)
+# by writing .DS_Store itself, so no Finder window opens during a build. Pinned
+# wheels in a cached venv, reinstalled when pwe/brand/dmg/requirements.txt changes.
+# Early, so a missing tool stops the run before ten minutes of building.
+DMGBUILD="${PWE_DMGBUILD:-${TMPDIR:-/tmp}/pwe-imacdisplay-dmgbuild}"
+DMG_REQS="$SRC/pwe/brand/dmg/requirements.txt"
+if ! cmp -s "$DMG_REQS" "$DMGBUILD/requirements.txt" || [[ ! -x "$DMGBUILD/bin/dmgbuild" ]]; then
+  echo "▸ Installing dmgbuild into $DMGBUILD…"
+  rm -rf "$DMGBUILD"
+  python3 -m venv "$DMGBUILD"
+  "$DMGBUILD/bin/pip" install -q --require-hashes --only-binary :all: -r "$DMG_REQS" \
+    || { rm -rf "$DMGBUILD"; echo "✗ could not install dmgbuild (pwe/brand/dmg/requirements.txt)"; exit 1; }
+  cp "$DMG_REQS" "$DMGBUILD/requirements.txt"
+fi
+
+# ---------------------------------------------------------------- libraries
+
+# Before the sender: it links libsodium from here too (pairing and encryption).
+if [[ "$OWN_DEPS" == 1 ]]; then
+  echo "▸ Using the receiver's libraries as built in $DEPS"
+else
+  echo "▸ Building the receiver's libraries (cached in $DEPS)…"
+  "$SRC/pwe/receiver-deps.sh" "$DEPS"
+fi
+[[ -f "$DEPS/universal/lib/libsodium.a" ]] \
+  || { echo "✗ no $DEPS/universal/lib/libsodium.a: run pwe/receiver-deps.sh $DEPS"; exit 1; }
 
 # ---------------------------------------------------------------- sender
 
@@ -95,6 +129,7 @@ echo "▸ Building the sender (arm64 + x86_64)…"
     -scheme TBDisplaySender -configuration Release \
     -derivedDataPath "$WORK/DerivedData" \
     ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
+    PWE_SODIUM_DIR="$DEPS/universal" \
     CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
     ENABLE_DEBUG_DYLIB=NO \
     build >"$WORK/sender-build.log" 2>&1 \
@@ -105,13 +140,6 @@ ditto "$WORK/DerivedData/Build/Products/Release/$NAME.app" "$SENDER"
 
 # ---------------------------------------------------------------- receiver
 
-if [[ "$OWN_DEPS" == 1 ]]; then
-  echo "▸ Using the receiver's libraries as built in $DEPS"
-else
-  echo "▸ Building the receiver's libraries (cached in $DEPS)…"
-  "$SRC/pwe/receiver-deps.sh" "$DEPS"
-fi
-
 echo "▸ Building the receiver (arm64 + x86_64, macOS 11)…"
 for ARCH in arm64 x86_64; do
   (
@@ -121,7 +149,7 @@ for ARCH in arm64 x86_64; do
     # exported -I/opt/homebrew/include would compile against other headers.
     env -i PATH="$PATH" HOME="$HOME" \
       PKG_CONFIG_LIBDIR="$DEPS/$ARCH/lib/pkgconfig" \
-      make CC="clang -arch $ARCH" PKG="pkg-config --static" \
+      make CC="clang -arch $ARCH" PKG="pkg-config --static" DIRECT_LINK_ONLY=1 COMPACT_IDLE=1 OFFER_LOGIN_ITEM=1 \
         APP_VERSION="$VERSION" APP_BUILD="$BUILD" >"$WORK/receiver-$ARCH.log" 2>&1 \
       || { tail -30 "$WORK/receiver-$ARCH.log"; exit 1; }
     mv tbreceiver "$WORK/tbreceiver-$ARCH"
@@ -131,9 +159,12 @@ done
 RECEIVER="$OUT/$RECEIVER_NAME.app"
 mkdir -p "$RECEIVER/Contents/MacOS" "$RECEIVER/Contents/Resources/Languages"
 lipo -create "$WORK/tbreceiver-arm64" "$WORK/tbreceiver-x86_64" \
-  -output "$RECEIVER/Contents/MacOS/PWEiMacDisplayReceiver"
+  -output "$RECEIVER/Contents/MacOS/$RECEIVER_EXE"
 cp "$SRC/TargetBridge-Shared/Languages/"*.json "$RECEIVER/Contents/Resources/Languages/"
-iconutil -c icns "$SRC/pwe/assets/AppIcon.iconset" -o "$RECEIVER/Contents/Resources/AppIcon.icns"
+# The receiver has its own icon: the same iMac, its frame in paper (pwe/icon/main.swift).
+iconutil -c icns "$SRC/pwe/assets/receiver/AppIcon.iconset" -o "$RECEIVER/Contents/Resources/AppIcon.icns"
+# The paper wing on the receiver's screens (display.c, tb_disp_draw_wing).
+cp "$SRC/pwe/brand/receiver/receiver-wing.pdf" "$RECEIVER/Contents/Resources/"
 cat > "$RECEIVER/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -141,7 +172,7 @@ cat > "$RECEIVER/Contents/Info.plist" <<EOF
 <dict>
     <key>CFBundleDevelopmentRegion</key><string>en</string>
     <key>CFBundleDisplayName</key><string>$RECEIVER_NAME</string>
-    <key>CFBundleExecutable</key><string>PWEiMacDisplayReceiver</string>
+    <key>CFBundleExecutable</key><string>$RECEIVER_EXE</string>
     <key>CFBundleIdentifier</key><string>$RECEIVER_ID</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
@@ -151,7 +182,7 @@ cat > "$RECEIVER/Contents/Info.plist" <<EOF
     <key>CFBundleVersion</key><string>$BUILD</string>
     <key>LSMinimumSystemVersion</key><string>11.0</string>
     <key>NSHighResolutionCapable</key><true/>
-    <key>NSHumanReadableCopyright</key><string>PWE Group. Based on TargetBridge (MIT).</string>
+    <key>NSHumanReadableCopyright</key><string>© 2026 PWE Group Pty Ltd. Based on TargetBridge (MIT).</string>
     <key>NSLocalNetworkUsageDescription</key><string>$RECEIVER_NAME receives the picture from your Mac over Thunderbolt Bridge.</string>
     <key>NSBonjourServices</key><array><string>_targetbridge._tcp</string></array>
 </dict>
@@ -164,6 +195,7 @@ printf 'APPL????' > "$RECEIVER/Contents/PkgInfo"
 # relink it ship with it, and its source goes next to the image.
 FFMPEG_SRC="$(sed -n 's/^FFMPEG=//p' "$SRC/pwe/receiver-deps.sh").tar.xz"
 SDL_SRC="$(sed -n 's/^SDL=//p' "$SRC/pwe/receiver-deps.sh").tar.gz"
+SODIUM_SRC="$(sed -n 's/^SODIUM=//p' "$SRC/pwe/receiver-deps.sh").tar.gz"
 DEPS_SRC="${PWE_DEPS_SRC:-$DEPS/src}"
 LICENSES="$WORK/Licenses"
 mkdir -p "$LICENSES"
@@ -171,6 +203,7 @@ cp "$SRC/LICENSE" "$LICENSES/TargetBridge LICENSE (MIT).txt"
 cp "$SRC/pwe/NOTICE.txt" "$LICENSES/NOTICE.txt"
 tar -xJf "$DEPS_SRC/$FFMPEG_SRC" -O '*/COPYING.LGPLv2.1' > "$LICENSES/FFmpeg COPYING.LGPLv2.1.txt"
 tar -xzf "$DEPS_SRC/$SDL_SRC" -O '*/LICENSE.txt' > "$LICENSES/SDL2 LICENSE (zlib).txt"
+tar -xzf "$DEPS_SRC/$SODIUM_SRC" -O '*/LICENSE' > "$LICENSES/libsodium LICENSE (ISC).txt"
 for ARCH in arm64 x86_64; do
   if [[ -f "$DEPS/$ARCH/ffmpeg-configuration.txt" ]]; then
     # The prefix is the builder's own path; it says nothing about the build.
@@ -187,11 +220,11 @@ done
 
 echo "▸ Checking the bundles…"
 for ARCH in arm64 x86_64; do
-  MIN="$(vtool -arch $ARCH -show-build "$RECEIVER/Contents/MacOS/PWEiMacDisplayReceiver" | awk '/minos/ {print $2}')"
+  MIN="$(vtool -arch $ARCH -show-build "$RECEIVER/Contents/MacOS/$RECEIVER_EXE" | awk '/minos/ {print $2}')"
   [[ "$MIN" == 11.0 ]] || { echo "✗ receiver $ARCH needs macOS $MIN, not 11.0"; exit 1; }
 done
 # Dependency lines are indented; a universal binary also prints one header per slice.
-if otool -L "$RECEIVER/Contents/MacOS/PWEiMacDisplayReceiver" | awk '/^[[:space:]]/ {print $1}' \
+if otool -L "$RECEIVER/Contents/MacOS/$RECEIVER_EXE" | awk '/^[[:space:]]/ {print $1}' \
      | grep -v -E '^(/System/Library/|/usr/lib/)'; then
   echo "✗ the receiver links a library outside the system"; exit 1
 fi
@@ -201,6 +234,8 @@ for ARCH in arm64 x86_64; do
   MIN="$(vtool -arch $ARCH -show-build "$SENDER/Contents/MacOS/$NAME" | awk '/minos/ {print $2}')"
   [[ "$MIN" == 14.0 ]] || { echo "✗ sender $ARCH needs macOS $MIN, not the 14.0 the docs promise"; exit 1; }
 done
+# Without the wing the receiver falls back to the app icon: it works, but it is not the design.
+[[ -s "$RECEIVER/Contents/Resources/receiver-wing.pdf" ]] || { echo "✗ the receiver has no receiver-wing.pdf"; exit 1; }
 # Weak imports for older systems, and the old URL scheme hidden in code.
 python3 -I "$SRC/pwe/check-bundle.py" "$SENDER" "$RECEIVER"
 
@@ -249,11 +284,26 @@ STAGE="$WORK/stage"
 mkdir -p "$STAGE"
 ditto "$SENDER" "$STAGE/$NAME.app"
 ditto "$RECEIVER" "$STAGE/$RECEIVER_NAME.app"
-ln -s /Applications "$STAGE/Applications"
 cp "$SRC/pwe/read-me-first.txt" "$STAGE/读我 Read Me First.txt"
 ditto "$LICENSES" "$STAGE/Licenses"
-hdiutil create -volname "$NAME $VERSION" -srcfolder "$STAGE" -ov -format UDZO \
-  "$WORK/image.dmg" >/dev/null
+iconutil -c icns "$SRC/pwe/assets/AppIcon.iconset" -o "$WORK/VolumeIcon.icns"
+# The window: pwe/brand/dmg/settings.py (icon places, the Applications link) and
+# pwe/brand/dmg/background{,@2x}.png (pwe/brand/make.py).
+"$DMGBUILD/bin/dmgbuild" -s "$SRC/pwe/brand/dmg/settings.py" \
+  -D stage="$STAGE" -D icon="$WORK/VolumeIcon.icns" \
+  -D background="$SRC/pwe/brand/dmg/background.png" \
+  "$NAME $VERSION" "$WORK/image.dmg" >"$WORK/dmgbuild.log" 2>&1 \
+  || { tail -20 "$WORK/dmgbuild.log"; exit 1; }
+# The apps must come out of the image as they went in: a Finder flag on a bundle
+# (dmgbuild's hide-extension, for one) breaks its signature. Read-only, not shown.
+CHECK_MNT="$WORK/check-mount"
+mkdir -p "$CHECK_MNT"
+hdiutil attach -quiet -nobrowse -readonly -noautoopen -mountpoint "$CHECK_MNT" "$WORK/image.dmg"
+for APP in "$NAME.app" "$RECEIVER_NAME.app"; do
+  codesign --verify --deep --strict "$CHECK_MNT/$APP" \
+    || { hdiutil detach -quiet "$CHECK_MNT"; echo "✗ $APP in the image fails codesign --verify"; exit 1; }
+done
+hdiutil detach -quiet "$CHECK_MNT"
 codesign --force "${TIMESTAMP[@]}" --sign "$IDENTITY" "$WORK/image.dmg"
 
 if [[ "$NOTARIZE" == 1 ]]; then
