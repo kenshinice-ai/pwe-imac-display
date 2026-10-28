@@ -489,12 +489,29 @@ final class PWEWindows {
             window.makeKeyAndOrderFront(nil)
         } else {
             openWindow?(id: "main")
-            // A1: a window just opened is made key once it exists, so the code
-            // box takes the keys even when no other window was active.
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    NSApp.windows.first(where: { Self.isMain($0) && $0.isVisible })?.makeKeyAndOrderFront(nil)
+        }
+        // A1, C6: the code box must get the keys, also on a Mac with no screen
+        // where nothing else was active. Check, and try again a few times.
+        ensureMainIsKey(attempt: 1)
+    }
+
+    /// C6: three more tries, 0.5 s apart, while the app is not active or the
+    /// main window not key; each failure is logged.
+    private func ensureMainIsKey(attempt: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + (attempt == 1 ? 0 : 0.5)) {
+            MainActor.assumeIsolated {
+                let window = NSApp.windows.first(where: { Self.isMain($0) && $0.isVisible })
+                if NSApp.isActive, window?.isKeyWindow == true { return }
+                guard attempt <= 3 else {
+                    PWELog.note("[pwe] the window did not become key (active=\(NSApp.isActive), window=\(window != nil))")
+                    return
                 }
+                if attempt > 1 {
+                    PWELog.note("[pwe] the window is not key yet (try \(attempt)); activating again")
+                }
+                NSApp.activate(ignoringOtherApps: true)
+                window?.makeKeyAndOrderFront(nil)
+                self.ensureMainIsKey(attempt: attempt + 1)
             }
         }
     }
