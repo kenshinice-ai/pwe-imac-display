@@ -289,11 +289,14 @@ enum PWESound: String, CaseIterable, Identifiable {
 /// engine captures system audio only when relay is on as the picture starts,
 /// so turning relay on reconnects unless this connection's capture already
 /// has audio (relay was on when it started, then turned off). Relay on with
-/// no audio captured (the direct path's sound stream stopped, K2) reconnects
-/// too when an iMac choice is made again: that rebuilds the stream.
+/// no audio captured while the picture is up (the direct path's sound stream
+/// stopped, K2) reconnects too when an iMac choice is made again: that
+/// rebuilds the stream. Not while connecting, retrying or waiting for a
+/// pairing code: nothing is captured yet then, and a reconnect would only
+/// interrupt it.
 enum PWESoundRules {
-    static func needsReconnect(relayOn: Bool, relayWasOn: Bool, capturingAudio: Bool) -> Bool {
-        relayOn && !capturingAudio
+    static func needsReconnect(relayOn: Bool, relayWasOn: Bool, capturingAudio: Bool, streaming: Bool = true) -> Bool {
+        relayOn && !capturingAudio && (!relayWasOn || streaming)
     }
 }
 
@@ -1208,7 +1211,8 @@ final class PWESenderModel: ObservableObject {
             if relayOn { soundOnlyOnIMac = newValue == .onlyIMac }
             objectWillChange.send()
             if PWESoundRules.needsReconnect(relayOn: relayOn, relayWasOn: relayWasOn,
-                                            capturingAudio: session?.pweCapturingAudio ?? false) {
+                                            capturingAudio: session?.pweCapturingAudio ?? false,
+                                            streaming: session?.isStreaming ?? false) {
                 // The engine captures audio only if relay was on when the picture
                 // started, and records nothing it does not send.
                 reconnectIfShowing(because: "sound now relayed to the iMac") {

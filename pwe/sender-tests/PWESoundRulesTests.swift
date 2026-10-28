@@ -5,9 +5,18 @@ import XCTest
 /// When a change of the sound choice reconnects (PWESoundRules, T14).
 /// pwe/rebrand.py copies this file into the sender's test target.
 final class PWESoundRulesTests: XCTestCase {
-    private func reconnects(from: PWESound, to: PWESound, capturingAudio: Bool) -> Bool {
+    private func reconnects(from: PWESound, to: PWESound, capturingAudio: Bool, streaming: Bool = true) -> Bool {
         PWESoundRules.needsReconnect(relayOn: to != .onlyThisMac, relayWasOn: from != .onlyThisMac,
-                                     capturingAudio: capturingAudio)
+                                     capturingAudio: capturingAudio, streaming: streaming)
+    }
+
+    /// Review 2026-10-28: between iMac choices while connecting, retrying or
+    /// waiting for a code, nothing is captured yet; no reconnect then.
+    func testBetweenIMacChoicesBeforeThePictureNeverReconnects() {
+        XCTAssertFalse(reconnects(from: .both, to: .onlyIMac, capturingAudio: false, streaming: false))
+        XCTAssertFalse(reconnects(from: .onlyIMac, to: .onlyIMac, capturingAudio: false, streaming: false))
+        // Turning relay on still reconnects, as before.
+        XCTAssertTrue(reconnects(from: .onlyThisMac, to: .onlyIMac, capturingAudio: false, streaming: false))
     }
 
     func testOnlyThisMacToTheIMacReconnectsToAddAudio() {
