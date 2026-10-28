@@ -56,33 +56,35 @@ SCHEME = "pweimacdisplay"
 REPO = "https://github.com/kenshinice-ai/pwe-imac-display"
 UPSTREAM = "github.com/swellweb/targetBridge"
 
-# Credits replace upstream's "Created by swellweb …" line in each language.
-# `⟪TB⟫` survives the generic rename and becomes "TargetBridge" at the end.
+# Credits replace upstream's "Created by swellweb …" line in each language: the
+# fixed credit sentence (PWEStrings, read-me-first) and, on a second line, the
+# upstream contributors. `⟪TB⟫` survives the generic rename and becomes
+# "TargetBridge" at the end; `\\n` is a newline inside the Swift literal.
 CREDITS = {
     "Created by swellweb": (
-        f"Based on ⟪TB⟫, created by Marco Caciotti (swellweb) with the ⟪TB⟫ open-source "
-        f"community, including ThomasWaldmann, DrDavidL and potar712 — {UPSTREAM}, MIT License. "
-        f"This build is made and signed by PWE Group."
+        f"Based on ⟪TB⟫ by Marco Caciotti and its community (MIT). "
+        f"Built and signed by PWE; not an official ⟪TB⟫ release.\\n"
+        f"Key contributors include ThomasWaldmann, DrDavidL and potar712 — {UPSTREAM}."
     ),
     "由 swellweb": (
-        f"基于 ⟪TB⟫。⟪TB⟫ 由 Marco Caciotti（swellweb）创建，开源社区共同完善，"
-        f"重要贡献者包括 ThomasWaldmann、DrDavidL、potar712 —— {UPSTREAM}，MIT 许可。"
-        f"本版本由 PWE Group 构建并签名。"
+        f"基于开源项目 ⟪TB⟫（Marco Caciotti 与社区，MIT）。"
+        f"由 PWE 构建并签名，不是 ⟪TB⟫ 的官方版本。\\n"
+        f"重要贡献者包括 ThomasWaldmann、DrDavidL、potar712 —— {UPSTREAM}。"
     ),
     "Creato da swellweb": (
-        f"Basato su ⟪TB⟫, creato da Marco Caciotti (swellweb) con la community open source di ⟪TB⟫, "
-        f"tra cui ThomasWaldmann, DrDavidL e potar712 — {UPSTREAM}, licenza MIT. "
-        f"Questa build è realizzata e firmata da PWE Group."
+        f"Basato su ⟪TB⟫ di Marco Caciotti e della sua community (MIT). "
+        f"Compilato e firmato da PWE; non è una versione ufficiale di ⟪TB⟫.\\n"
+        f"Tra i contributori principali: ThomasWaldmann, DrDavidL e potar712 — {UPSTREAM}."
     ),
     "Erstellt von swellweb": (
-        f"Basiert auf ⟪TB⟫, erstellt von Marco Caciotti (swellweb) mit der ⟪TB⟫-Open-Source-Community, "
-        f"darunter ThomasWaldmann, DrDavidL und potar712 — {UPSTREAM}, MIT-Lizenz. "
-        f"Dieser Build wird von PWE Group erstellt und signiert."
+        f"Basiert auf ⟪TB⟫ von Marco Caciotti und der Community (MIT). "
+        f"Von PWE erstellt und signiert; keine offizielle ⟪TB⟫-Version.\\n"
+        f"Wichtige Beiträge von ThomasWaldmann, DrDavidL und potar712 — {UPSTREAM}."
     ),
     "Créé par swellweb": (
-        f"Basé sur ⟪TB⟫, créé par Marco Caciotti (swellweb) avec la communauté open source de ⟪TB⟫, "
-        f"dont ThomasWaldmann, DrDavidL et potar712 — {UPSTREAM}, licence MIT. "
-        f"Cette version est compilée et signée par PWE Group."
+        f"Basé sur ⟪TB⟫ de Marco Caciotti et sa communauté (MIT). "
+        f"Compilé et signé par PWE ; ce n’est pas une version officielle de ⟪TB⟫.\\n"
+        f"Principaux contributeurs : ThomasWaldmann, DrDavidL et potar712 — {UPSTREAM}."
     ),
 }
 
