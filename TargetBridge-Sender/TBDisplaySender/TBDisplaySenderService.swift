@@ -3745,6 +3745,8 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             await self.startAuxiliaryAudioCapture(preferredDisplayID: self.pweAuxAudioDisplayID, epoch: epoch)
             guard self.pweIsCurrent(epoch) else { return }
             if self.pweCapturingAudio {
+                // A later stop gets its three tries again.
+                self.pweAuxAudioRetries = 0
                 self.objectWillChange.send()
                 PWELog.note("[pwe] capture: the sound stream beside the direct picture is back")
             } else {
