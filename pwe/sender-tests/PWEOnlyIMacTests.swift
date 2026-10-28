@@ -44,19 +44,56 @@ final class PWEOnlyIMacTests: XCTestCase {
         XCTAssertEqual(Rules.state(.remoteLogin, input), .check)
     }
 
-    func testSharingFromNetstat() {
-        let output = """
-        Active Internet connections (including servers)
-        Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)
-        tcp4       0      0  192.168.1.5.52100      17.57.144.1.443        ESTABLISHED
-        tcp6       0      0  *.5900                 *.*                    LISTEN
-        tcp4       0      0  *.5900                 *.*                    LISTEN
-        tcp4       0      0  127.0.0.1.631          *.*                    LISTEN
-        tcp4       0      0  192.168.1.5.22         192.168.1.9.50000      ESTABLISHED
+    private let netstat = """
+    Active Internet connections (including servers)
+    Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)
+    tcp4       0      0  192.168.1.5.52100      17.57.144.1.443        ESTABLISHED
+    tcp6       0      0  *.5900                 *.*                    LISTEN
+    tcp4       0      0  *.5900                 *.*                    LISTEN
+    tcp4       0      0  127.0.0.1.631          *.*                    LISTEN
+    tcp4       0      0  192.168.1.5.22         192.168.1.9.50000      ESTABLISHED
+    """
+
+    func testOnlyListenersBeyondThisMacCount() {
+        XCTAssertEqual(PWESharingState.externallyListeningPorts(netstat: netstat), [5900])
+        // Audit A3: loopback-only listeners on both ports.
+        let loopback = """
+        tcp4       0      0  127.0.0.1.22           *.*                    LISTEN
+        tcp6       0      0  ::1.5900               *.*                    LISTEN
+        tcp6       0      0  fe80::1%lo0.5900       *.*                    LISTEN
         """
-        XCTAssertEqual(PWESharingState.listeningPorts(netstat: output), [5900, 631])
-        XCTAssertEqual(PWESharingState.from(netstat: output), PWESharingState(screenSharing: true, remoteLogin: false))
-        XCTAssertEqual(PWESharingState.from(netstat: nil), PWESharingState(screenSharing: nil, remoteLogin: nil))
+        XCTAssertEqual(PWESharingState.externallyListeningPorts(netstat: loopback), [])
+        XCTAssertEqual(PWESharingState.from(netstat: loopback, printDisabled: ""),
+                       PWESharingState(screenSharing: false, remoteLogin: false))
+    }
+
+    func testOnNeedsTheServiceEnabledAndReachable() {
+        let enabled = """
+        disabled services = {
+            "com.apple.screensharing" => enabled
+            "com.openssh.sshd" => disabled
+        }
+        """
+        XCTAssertEqual(PWESharingState.launchdOverrides(enabled),
+                       ["com.apple.screensharing": true, "com.openssh.sshd": false])
+        XCTAssertEqual(PWESharingState.from(netstat: netstat, printDisabled: enabled),
+                       PWESharingState(screenSharing: true, remoteLogin: false))
+        // Older systems: true means disabled.
+        XCTAssertEqual(PWESharingState.launchdOverrides(#""com.openssh.sshd" => true"#), ["com.openssh.sshd": false])
+    }
+
+    func testWeakEvidenceIsNeverOn() {
+        // A listener with the service not on launchd's list, or no list at all: check by hand.
+        XCTAssertEqual(PWESharingState.from(netstat: netstat, printDisabled: ""),
+                       PWESharingState(screenSharing: nil, remoteLogin: false))
+        XCTAssertEqual(PWESharingState.from(netstat: netstat, printDisabled: nil),
+                       PWESharingState(screenSharing: nil, remoteLogin: false))
+        // Enabled but not listening.
+        XCTAssertNil(PWESharingState.serviceState(enabled: true, listensBeyondThisMac: false))
+        // Empty or failed netstat output.
+        XCTAssertEqual(PWESharingState.from(netstat: "", printDisabled: ""),
+                       PWESharingState(screenSharing: false, remoteLogin: false))
+        XCTAssertEqual(PWESharingState.from(netstat: nil, printDisabled: ""), PWESharingState())
     }
 
     func testTheWordsInBothLanguages() {

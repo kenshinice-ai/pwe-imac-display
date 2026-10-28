@@ -64,55 +64,105 @@ enum PWEOnlyIMacRules {
     }
 }
 
-/// Whether Screen Sharing and Remote Login are on, read without privileges:
-/// when on, launchd listens for them on their ports (5900 and 22) for the
-/// whole system, which `netstat -an` lists for any user. `launchctl print
-/// system/…` answers an ordinary user "Could not find service" whether they
-/// are on or not (measured 2026-10-24), so it cannot tell. nil when netstat
-/// could not be read.
+/// Whether Screen Sharing and Remote Login are on, read without privileges
+/// (K3, audit A3: a port in LISTEN alone is weak evidence). Two readings:
+///
+/// - launchd's on/off list for the system services (`launchctl print-disabled
+///   system`, readable by any user; measured on macOS 27.2, 2026-10-28, other
+///   versions not verified): `"com.apple.screensharing" => enabled` or
+///   `disabled`, likewise `com.openssh.sshd`; older systems wrote true for
+///   disabled. A service missing from the list is in its default state, which
+///   for both is off.
+/// - who listens on its port (`netstat -an`): only a listener on an address
+///   other than loopback (127.x, ::1, lo0) can be reached from elsewhere.
+///
+/// "On" needs both: the service enabled and listening beyond this Mac.
+/// Disabled, or not listening at all, is "off". Anything else (enabled but
+/// not listening, a listener with the service not on the list, a reading that
+/// failed) is nil: the row says "Check in System Settings…".
 struct PWESharingState: Equatable {
     var screenSharing: Bool?
     var remoteLogin: Bool?
 
     static let screenSharingPort = 5900
     static let remoteLoginPort = 22
+    static let screenSharingLabel = "com.apple.screensharing"
+    static let remoteLoginLabel = "com.openssh.sshd"
 
-    static func from(netstat output: String?) -> PWESharingState {
-        guard let output else { return PWESharingState() }
-        let ports = listeningPorts(netstat: output)
-        return PWESharingState(screenSharing: ports.contains(screenSharingPort),
-                               remoteLogin: ports.contains(remoteLoginPort))
+    static func from(netstat: String?, printDisabled: String?) -> PWESharingState {
+        guard let netstat else { return PWESharingState() }
+        let external = externallyListeningPorts(netstat: netstat)
+        let overrides = printDisabled.map(launchdOverrides) ?? [:]
+        func state(_ label: String, _ port: Int) -> Bool? {
+            serviceState(enabled: overrides[label], listensBeyondThisMac: external.contains(port))
+        }
+        return PWESharingState(screenSharing: state(screenSharingLabel, screenSharingPort),
+                               remoteLogin: state(remoteLoginLabel, remoteLoginPort))
     }
 
-    /// The local ports of the TCP sockets in LISTEN ("*.22", "127.0.0.1.631", "*.5900").
-    static func listeningPorts(netstat output: String) -> Set<Int> {
+    /// `enabled`: launchd's entry; nil when the service is not on its list
+    /// or the list could not be read.
+    static func serviceState(enabled: Bool?, listensBeyondThisMac: Bool) -> Bool? {
+        if enabled == false { return false }
+        if enabled == true { return listensBeyondThisMac ? true : nil }
+        // Not on the list: nothing reachable is off; a listener alone proves nothing.
+        return listensBeyondThisMac ? nil : false
+    }
+
+    /// `"label" => enabled|disabled` (or true for disabled, false for enabled).
+    static func launchdOverrides(_ output: String) -> [String: Bool] {
+        var result: [String: Bool] = [:]
+        for line in output.split(separator: "\n") {
+            let parts = line.split(separator: "=>", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+            guard parts.count == 2, parts[0].hasPrefix("\""), parts[0].hasSuffix("\""), parts[0].count > 2 else { continue }
+            let label = String(parts[0].dropFirst().dropLast())
+            switch parts[1] {
+            case "enabled", "false": result[label] = true
+            case "disabled", "true": result[label] = false
+            default: continue
+            }
+        }
+        return result
+    }
+
+    /// The ports of TCP sockets in LISTEN on an address other than loopback
+    /// ("*.22", "192.168.1.5.5900", "*.5900" yes; "127.0.0.1.22", "::1.22",
+    /// "fe80::1%lo0.22" no).
+    static func externallyListeningPorts(netstat output: String) -> Set<Int> {
         var ports = Set<Int>()
         for line in output.split(separator: "\n") {
             let columns = line.split(whereSeparator: \.isWhitespace)
             guard columns.count >= 6, columns.last == "LISTEN", columns[0].hasPrefix("tcp"),
                   let dot = columns[3].lastIndex(of: "."), let port = Int(columns[3][columns[3].index(after: dot)...])
             else { continue }
+            let address = String(columns[3][..<dot])
+            if address.hasPrefix("127.") || address == "::1" || address.hasSuffix("%lo0") || address == "localhost" { continue }
             ports.insert(port)
         }
         return ports
     }
 
-    /// Runs `netstat -an -p tcp`; call it off the main thread.
+    /// Runs `netstat -an` and `launchctl print-disabled system`; call it off
+    /// the main thread.
     static func read() -> PWESharingState {
+        from(netstat: run("/usr/sbin/netstat", ["-an"]), printDisabled: run("/bin/launchctl", ["print-disabled", "system"]))
+    }
+
+    private static func run(_ path: String, _ arguments: [String]) -> String? {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/netstat")
-        process.arguments = ["-an", "-p", "tcp"]
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = arguments
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
         do {
             try process.run()
         } catch {
-            return PWESharingState()
+            return nil
         }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return PWESharingState() }
-        return from(netstat: String(decoding: data, as: UTF8.self))
+        guard process.terminationStatus == 0 else { return nil }
+        return String(decoding: data, as: UTF8.self)
     }
 }
