@@ -139,13 +139,14 @@ enum PWEHeadlessPairingRules {
 
     /// C4: an iMac is on this Mac's cable when it was seen through this Mac's
     /// own bridge: its IPv6 link-local address resolved on one of this Mac's
-    /// cable bridges (`thunderboltIPv6` is scoped only then), or its bridge
+    /// cable bridges (TBDiscoveredReceiver.seenOnCableBridge, never the
+    /// lone-bridge guess `thunderboltIPv6` makes for dialing), or its bridge
     /// IPv4 address resolved while this Mac has a link-local address on a
     /// bridge. What the iMac announces about its own bridge does not count:
     /// an iMac on the LAN announces its bridge address too.
-    static func isOnCable(scopedBridgeIPv6: String, bridgeIPv4: String, resolvedIPv4: [String],
+    static func isOnCable(seenOnCableBridge: Bool, bridgeIPv4: String, resolvedIPv4: [String],
                           localBridgeIPv4: [String]) -> Bool {
-        if !scopedBridgeIPv6.isEmpty { return true }
+        if seenOnCableBridge { return true }
         guard bridgeIPv4.hasPrefix("169.254."), resolvedIPv4.contains(bridgeIPv4) else { return false }
         return localBridgeIPv4.contains { $0.hasPrefix("169.254.") }
     }

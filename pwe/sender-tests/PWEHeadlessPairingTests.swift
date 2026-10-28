@@ -56,15 +56,30 @@ final class PWEHeadlessPairingTests: XCTestCase {
 
     func testOnlyAnIMacSeenThroughThisMacsBridgeIsOnTheCable() {
         typealias Rules = PWEHeadlessPairingRules
-        XCTAssertTrue(Rules.isOnCable(scopedBridgeIPv6: "fe80::1%bridge0", bridgeIPv4: "", resolvedIPv4: [],
+        XCTAssertTrue(Rules.isOnCable(seenOnCableBridge: true, bridgeIPv4: "", resolvedIPv4: [],
                                       localBridgeIPv4: []))
-        XCTAssertTrue(Rules.isOnCable(scopedBridgeIPv6: "", bridgeIPv4: "169.254.6.224",
+        XCTAssertTrue(Rules.isOnCable(seenOnCableBridge: false, bridgeIPv4: "169.254.6.224",
                                       resolvedIPv4: ["169.254.6.224"], localBridgeIPv4: ["169.254.171.182"]))
         // On the LAN: it announces its bridge address, but was resolved on Wi-Fi.
-        XCTAssertFalse(Rules.isOnCable(scopedBridgeIPv6: "", bridgeIPv4: "169.254.6.224",
+        XCTAssertFalse(Rules.isOnCable(seenOnCableBridge: false, bridgeIPv4: "169.254.6.224",
                                        resolvedIPv4: ["192.168.1.20"], localBridgeIPv4: ["169.254.171.182"]))
         // This Mac has no bridge address.
-        XCTAssertFalse(Rules.isOnCable(scopedBridgeIPv6: "", bridgeIPv4: "169.254.6.224",
+        XCTAssertFalse(Rules.isOnCable(seenOnCableBridge: false, bridgeIPv4: "169.254.6.224",
                                        resolvedIPv4: ["169.254.6.224"], localBridgeIPv4: []))
+    }
+
+    /// Review 2026-10-28: a LAN receiver resolved only on en0, with one local
+    /// bridge. Dialing still gets the lone-bridge guess; the cable count does not.
+    func testTheLoneBridgeGuessIsNotASighting() {
+        let advertised = "fe80::1c2b:3cff:fe4d:5e6f"
+        XCTAssertEqual(TBConnectionDiagnostics.scopedBridgeIPv6(advertised: advertised, resolved: [],
+                                                                cableBridges: ["bridge0"]),
+                       "\(advertised)%bridge0")
+        XCTAssertFalse(TBConnectionDiagnostics.seenOnCableBridge(advertised: advertised,
+                                                                 resolved: ["192.168.1.20", "\(advertised)%en0"],
+                                                                 cableBridges: ["bridge0"]))
+        XCTAssertTrue(TBConnectionDiagnostics.seenOnCableBridge(advertised: advertised,
+                                                                resolved: ["\(advertised)%bridge0"],
+                                                                cableBridges: ["bridge0"]))
     }
 }

@@ -667,11 +667,13 @@ final class PWESenderModel: ObservableObject {
         let localBridgeIPv4 = TBConnectionDiagnostics.currentIPv4Interfaces()
             .filter { $0.name.hasPrefix("bridge") }.map(\.ip)
         let onCable = service.discoveredReceivers.filter {
-            PWEHeadlessPairingRules.isOnCable(scopedBridgeIPv6: $0.thunderboltIPv6, bridgeIPv4: $0.thunderboltIP,
+            PWEHeadlessPairingRules.isOnCable(seenOnCableBridge: $0.seenOnCableBridge, bridgeIPv4: $0.thunderboltIP,
                                               resolvedIPv4: $0.resolvedIPv4Addresses, localBridgeIPv4: localBridgeIPv4)
         }
         // C3: an iMac newly on the cable is a cable event.
-        if onCable.count > iMacsOnCableBefore { armHeadlessPairing(because: "an iMac is on the cable") }
+        // Bonjour can drop and list an iMac again without a replug: that opens
+        // the window but does not undo "already started" (review 2026-10-28).
+        if onCable.count > iMacsOnCableBefore { armHeadlessPairing(clearingStarted: false) }
         iMacsOnCableBefore = onCable.count
         let noPhysicalDisplay = TBDisplaySenderSession.pweNoPhysicalDisplay(
             onlineDisplayIDs: TBDisplaySenderSession.pweOnlineDisplays(),
