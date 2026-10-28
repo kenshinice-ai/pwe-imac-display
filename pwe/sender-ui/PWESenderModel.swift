@@ -288,10 +288,12 @@ enum PWESound: String, CaseIterable, Identifiable {
 /// When changing the sound choice must reconnect (PWESoundRulesTests). The
 /// engine captures system audio only when relay is on as the picture starts,
 /// so turning relay on reconnects unless this connection's capture already
-/// has audio (relay was on when it started, then turned off).
+/// has audio (relay was on when it started, then turned off). Relay on with
+/// no audio captured (the direct path's sound stream stopped, K2) reconnects
+/// too when an iMac choice is made again: that rebuilds the stream.
 enum PWESoundRules {
     static func needsReconnect(relayOn: Bool, relayWasOn: Bool, capturingAudio: Bool) -> Bool {
-        relayOn && !relayWasOn && !capturingAudio
+        relayOn && !capturingAudio
     }
 }
 
@@ -1149,7 +1151,10 @@ final class PWESenderModel: ObservableObject {
             return soundOnlyOnIMac ? .onlyIMac : .both
         }
         set {
-            guard newValue != sound else { return }
+            // K2: choosing an iMac option again rebuilds a relay whose sound stopped.
+            let relayLostItsSound = newValue != .onlyThisMac
+                && (session.map { $0.isStreaming && $0.audioEnabled && !$0.pweCapturingAudio } ?? false)
+            guard newValue != sound || relayLostItsSound else { return }
             guard let service else { previewSound = newValue; objectWillChange.send(); return }
             let relayWasOn = service.audioRelayAvailable && (session?.audioEnabled ?? service.audioEnabled)
             let relayOn = newValue != .onlyThisMac

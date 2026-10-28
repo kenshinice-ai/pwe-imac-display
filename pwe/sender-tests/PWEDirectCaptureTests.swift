@@ -133,4 +133,14 @@ final class PWEDirectCaptureTests: XCTestCase {
         XCTAssertFalse(Session.pweStallWasTheSleep(stalledAt: 95, sleepStartedAt: nil, wokeAt: 400))
         XCTAssertFalse(Session.pweStallWasTheSleep(stalledAt: 95, sleepStartedAt: 100, wokeAt: nil))
     }
+
+    // MARK: - C1 (review 2026-10-28)
+
+    func testAStartOvertakenByAStopIsNeitherStartedNorFailed() {
+        XCTAssertEqual(Session.pweCaptureOutcome(started: true, stillCurrent: true), .started)
+        XCTAssertEqual(Session.pweCaptureOutcome(started: false, stillCurrent: true), .failed)
+        // Its caller must not stop the session or suspend reconnecting.
+        XCTAssertEqual(Session.pweCaptureOutcome(started: false, stillCurrent: false), .superseded)
+        XCTAssertEqual(Session.pweCaptureOutcome(started: true, stillCurrent: false), .superseded)
+    }
 }

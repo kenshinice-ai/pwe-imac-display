@@ -1695,6 +1695,12 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     /// PWE: the direct stream did not start or sent no frames on this
     /// connection; it stays on ScreenCaptureKit until the connection ends.
     private var pweDirectFailed = false
+    /// PWE (C1): one count per capture start and per stop. A start that finds
+    /// it changed after an await was overtaken (pweIsCurrent) and stops there.
+    private var pweCaptureEpoch: UInt64 = 0
+    /// PWE (K2): tries to bring back the direct path's sound stream, and where.
+    private var pweAuxAudioRetries = 0
+    private var pweAuxAudioDisplayID: CGDirectDisplayID = kCGNullDirectDisplay
     /// PWE (T53): the displays or the Mac went to sleep (screensDidSleep,
     /// willSleep) and have not woken since (screensDidWake, didWake). A locked
     /// screen or a screen saver does not count: on a Mac with only the iMac,
@@ -1708,8 +1714,8 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     private var pweDirectRetriedAfterWake = false
     /// PWE (T53): first-frame waits put off because the displays slept.
     private var pweFirstFrameWaitsAsleep = 0
-    /// PWE (T53): when the direct path last stalled, so a wake can tell a stall
-    /// that only came from the screens going to sleep.
+    /// PWE (T53, C7): when the direct path last failed (stalled, sent no first
+    /// frame, did not start), so a wake can excuse a failure the sleep caused.
     private var pweDirectStalledAt: TimeInterval?
     private var pweCapturePathCheck: DispatchWorkItem?
     private var cursorDisplayID: CGDirectDisplayID = kCGNullDirectDisplay
@@ -2407,6 +2413,8 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         pweExtendedUsesDirect = false
         pweDirectFailed = false
         pweDirectStalledAt = nil
+        pweFirstFrameWaitsAsleep = 0
+        pweCaptureEpoch &+= 1
         pweCapturePathCheck?.cancel()
         pweCapturePathCheck = nil
         cursorDisplayID = kCGNullDirectDisplay
@@ -3242,8 +3250,10 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             self.pweSoftwareDecodeLogged = false
             self.captureBlockedByScreenRecordingPermission = false
             self.setStatus(.startingCapture(self.capturePreset.description, self.captureSource))
-            let started = await self.startCapture(for: profile)
-            guard started else {
+            let outcome = await self.startCapture(for: profile)
+            // PWE (C1): a stop or a newer start came during it; that one owns the session now.
+            if outcome == .superseded { return }
+            guard outcome == .started else {
                 if self.captureBlockedByScreenRecordingPermission {
                     self.captureBlockedByScreenRecordingPermission = false
                     TBSenderAutomation.suspendAutomaticReconnectForRequiredPermission()
@@ -3281,7 +3291,26 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     /// PWE: the current capture has sent its first encoded frame.
     var pweHasFirstFrame: Bool { sessionAckSent }
 
-    private func startCapture(for profile: TBMonitorDisplayProfile) async -> Bool {
+    /// PWE (C1): how a capture start ended. `superseded`: the session was
+    /// stopped, or another start began, while this one waited; it made no
+    /// change after that point and its caller must not stop the session.
+    enum PWECaptureStart: Equatable { case started, failed, superseded }
+
+    nonisolated static func pweCaptureOutcome(started: Bool, stillCurrent: Bool) -> PWECaptureStart {
+        guard stillCurrent else { return .superseded }
+        return started ? .started : .failed
+    }
+
+    private func pweIsCurrent(_ epoch: UInt64) -> Bool { epoch == pweCaptureEpoch }
+
+    private func startCapture(for profile: TBMonitorDisplayProfile) async -> PWECaptureStart {
+        pweCaptureEpoch &+= 1
+        let epoch = pweCaptureEpoch
+        let started = await pweStartCaptureBody(for: profile, epoch: epoch)
+        return Self.pweCaptureOutcome(started: started, stillCurrent: pweIsCurrent(epoch))
+    }
+
+    private func pweStartCaptureBody(for profile: TBMonitorDisplayProfile, epoch: UInt64) async -> Bool {
         do {
             guard CGPreflightScreenCaptureAccess() else {
                 captureBlockedByScreenRecordingPermission = true
@@ -3352,12 +3381,14 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             if captureSource == .desktopMirror {
                 if headlessMirrorUsesVirtualDisplay {
                     TBLog.connection.info("capture: headless virtual display uses direct stream id=\(self.session.displayID, privacy: .public)")
-                    return await startDirectDisplayStream(displayID: session.displayID, preset: preset)
+                    return await startDirectDisplayStream(displayID: session.displayID, preset: preset, epoch: epoch)
                 } else if let mirrorDisplay = try await resolveMirrorCaptureDisplay() {
+                    guard pweIsCurrent(epoch) else { return false }
                     display = mirrorDisplay
                 } else if let fallbackDisplayID = directMirrorFallbackDisplayID() {
+                    guard pweIsCurrent(epoch) else { return false }
                     TBLog.connection.warning("capture: no virtual ScreenCaptureKit display; using direct fallback id=\(fallbackDisplayID, privacy: .public)")
-                    return await startDirectDisplayStream(displayID: fallbackDisplayID, preset: preset)
+                    return await startDirectDisplayStream(displayID: fallbackDisplayID, preset: preset, epoch: epoch)
                 } else {
                     return false
                 }
@@ -3378,13 +3409,17 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                    Self.pweExtendedCapturesDirect(choice: choice, virtualDisplayID: session.displayID,
                                                   onlineDisplayIDs: onlineDisplayIDs(),
                                                   directFailed: pweDirectFailed, usesRawNV12: usesRawNV12) {
-                    var started = await startDirectDisplayStream(displayID: session.displayID, preset: preset)
+                    guard pweIsCurrent(epoch) else { return false }
+                    var started = await startDirectDisplayStream(displayID: session.displayID, preset: preset, epoch: epoch)
+                    guard pweIsCurrent(epoch) else { return false }
                     // PWE (T53): just after a wake the display may not be ready: one more try.
-                    if !started, pweDirectTroubleNow() != .fallBack {
+                    if !started, pweDirectTroubleNow() == .retryDirect {
                         pweDirectRetriedAfterWake = true
                         PWELog.note("[pwe] capture: the direct stream did not start just after a wake; trying once more")
                         try? await Task.sleep(nanoseconds: 1_000_000_000)
-                        started = await startDirectDisplayStream(displayID: session.displayID, preset: preset)
+                        guard pweIsCurrent(epoch) else { return false }
+                        started = await startDirectDisplayStream(displayID: session.displayID, preset: preset, epoch: epoch)
+                        guard pweIsCurrent(epoch) else { return false }
                     }
                     if started {
                         pweExtendedUsesDirect = true
@@ -3392,16 +3427,27 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                         PWELog.note("[pwe] capture: extended desktop uses direct stream (\(choice == .always ? "asked for" : "the only display"))")
                         return true
                     }
-                    pweDirectFailed = true
-                    TBLog.connection.warning("capture: direct stream for the extended desktop did not start; using ScreenCaptureKit for this connection")
-                    PWELog.note("[pwe] capture: direct stream for the extended desktop did not start; using ScreenCaptureKit for this connection")
+                    // PWE (C7): asleep, a display stream may not start; that is no
+                    // failure, and the wake picks the path again. Otherwise the time
+                    // is kept, so a wake can still excuse it (pweAfterWake).
+                    if pweDirectTroubleNow() == .ignore {
+                        PWELog.note("[pwe] capture: the direct stream did not start while the displays sleep; ScreenCaptureKit until the wake")
+                    } else {
+                        pweDirectFailed = true
+                        pweDirectStalledAt = ProcessInfo.processInfo.systemUptime
+                        TBLog.connection.warning("capture: direct stream for the extended desktop did not start; using ScreenCaptureKit for this connection")
+                        PWELog.note("[pwe] capture: direct stream for the extended desktop did not start; using ScreenCaptureKit for this connection")
+                    }
                 }
+                guard pweIsCurrent(epoch) else { return false }
                 let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+                guard pweIsCurrent(epoch) else { return false }
                 if session.displayID != kCGNullDirectDisplay,
                    let targetDisplay = content.displays.first(where: { $0.displayID == session.displayID }) {
                     display = targetDisplay
                 } else {
                     display = try await waitForCaptureDisplay()
+                    guard pweIsCurrent(epoch) else { return false }
                 }
             }
 
@@ -3455,7 +3501,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                     self.stop(resetStatusTo: nil)
                 }
             }
-            captureDelegate = delegate
+            // PWE (C1): kept in `delegate` until the start is known to be current.
 
             let filter = SCContentFilter(display: display, excludingWindows: [])
             captureDisplayText = TBDisplaySenderL10n.captureDisplaySCDisplay(language, id: display.displayID)
@@ -3473,6 +3519,11 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                 )
             }
             try await stream.startCapture()
+            guard pweIsCurrent(epoch) else {
+                stream.stopCapture(completionHandler: nil)
+                return false
+            }
+            captureDelegate = delegate
             scStream = stream
             pweCapturingAudio = shouldRelayAudio
             isStreaming = true
@@ -3524,8 +3575,9 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         return nil
     }
 
-    private func startDirectDisplayStream(displayID: CGDirectDisplayID, preset: TBDisplayCapturePreset) async -> Bool {
-        guard let pipeline else { return false }
+    private func startDirectDisplayStream(displayID: CGDirectDisplayID, preset: TBDisplayCapturePreset,
+                                          epoch: UInt64) async -> Bool {
+        guard pweIsCurrent(epoch), let pipeline else { return false }
         let usesCursorOverlay = inputControlRole.usesLowLatencyCursorOverlay(
             largeCursorEnabled: largeCursor,
             receiverDrawsPointer: receiverDrawsPointer
@@ -3545,8 +3597,20 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             return false
         }
 
+        // PWE (C1): a stream left from before is stopped, never just dropped:
+        // releasing one before its last frame crashes in SkyLight.
+        directDisplayStream?.stop()
         directDisplayStream = directCapture
-        await startAuxiliaryAudioCapture(preferredDisplayID: displayID)
+        pweAuxAudioRetries = 0
+        pweAuxAudioDisplayID = displayID
+        await startAuxiliaryAudioCapture(preferredDisplayID: displayID, epoch: epoch)
+        guard pweIsCurrent(epoch) else {
+            directCapture.stop()
+            if directDisplayStream === directCapture { directDisplayStream = nil }
+            return false
+        }
+        // PWE (K2): the sound stream did not start: this Mac keeps its sound, and it is tried again.
+        if shouldRelayAudio, !pweCapturingAudio { pweScheduleAuxAudioRetry(epoch: epoch) }
         captureDisplayText = TBDisplaySenderL10n.captureDisplayCGDisplayStream(language, id: displayID)
         isStreaming = true
         if usesCursorOverlay { startCursorUpdates(displayID: displayID) }
@@ -3560,7 +3624,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     /// display is the headless Mac's only online display, but it has no audio
     /// output. Keep that low-latency video path and run an audio-only
     /// ScreenCaptureKit stream beside it when audio relay is enabled.
-    private func startAuxiliaryAudioCapture(preferredDisplayID: CGDirectDisplayID) async {
+    private func startAuxiliaryAudioCapture(preferredDisplayID: CGDirectDisplayID, epoch: UInt64) async {
         guard Self.needsAuxiliaryAudioCapture(
             usingDirectDisplayStream: true,
             shouldRelayAudio: shouldRelayAudio
@@ -3592,12 +3656,17 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             delegate.onAudio = { [weak self] sampleBuffer in
                 self?.processAudio(sampleBuffer)
             }
-            delegate.onError = { error in
-                NSLog("TargetBridge: auxiliary audio stream stopped: %@", error.localizedDescription)
-            }
-
             let filter = SCContentFilter(display: display, excludingWindows: [])
             let stream = SCStream(filter: filter, configuration: configuration, delegate: delegate)
+            // PWE (K2): upstream only logged this. The session now stops relaying,
+            // gives this Mac its sound back and tries to bring the stream back.
+            delegate.onError = { [weak self, weak stream] error in
+                let message = error.localizedDescription
+                NSLog("TargetBridge: auxiliary audio stream stopped: %@", message)
+                Task { @MainActor [weak self] in
+                    self?.pweAuxAudioStopped(epoch: epoch, stream: stream, message: message)
+                }
+            }
             try stream.addStreamOutput(
                 delegate,
                 type: .audio,
@@ -3607,12 +3676,66 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                 )
             )
             try await stream.startCapture()
+            // PWE (C1): a stop or a newer start came meanwhile: this stream is nobody's.
+            guard pweIsCurrent(epoch) else {
+                stream.stopCapture(completionHandler: nil)
+                return
+            }
             captureDelegate = delegate
             scStream = stream
             pweCapturingAudio = true
             TBLog.connection.info("capture: auxiliary audio stream active beside direct video")
         } catch {
             TBLog.connection.warning("capture: auxiliary audio unavailable: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    // MARK: - PWE (K2): the direct path's sound stream
+
+    /// Seconds before each try to bring the sound stream back; after the last, none.
+    nonisolated static let pweAuxAudioRetryDelays: [TimeInterval] = [2, 5, 10]
+
+    /// A stop callback belongs to the running sound stream of the running
+    /// capture: one from an older stream or session changes nothing.
+    nonisolated static func pweAuxAudioCallbackIsCurrent(sameCapture: Bool, sameStream: Bool,
+                                                          directRunning: Bool) -> Bool {
+        sameCapture && sameStream && directRunning
+    }
+
+    /// The sound stream beside the direct picture stopped (its delegate's
+    /// error). This Mac stops counting on it: the model then lets the Mac's
+    /// own speakers play again (PWESenderModel.isRelayingSound).
+    func pweAuxAudioStopped(epoch: UInt64, stream: SCStream?, message: String) {
+        guard Self.pweAuxAudioCallbackIsCurrent(sameCapture: pweIsCurrent(epoch),
+                                                sameStream: stream != nil && scStream === stream,
+                                                directRunning: directDisplayStream != nil) else { return }
+        scStream = nil
+        captureDelegate = nil
+        pweCapturingAudio = false
+        objectWillChange.send()
+        PWELog.note("[pwe] capture: the sound stream beside the direct picture stopped (\(message)); this Mac plays the sound until it is back")
+        pweScheduleAuxAudioRetry(epoch: epoch)
+    }
+
+    private func pweScheduleAuxAudioRetry(epoch: UInt64) {
+        guard pweAuxAudioRetries < Self.pweAuxAudioRetryDelays.count else {
+            PWELog.note("[pwe] capture: the sound stream did not come back; choose Sound › Only on the iMac again to retry")
+            return
+        }
+        let delay = Self.pweAuxAudioRetryDelays[pweAuxAudioRetries]
+        pweAuxAudioRetries += 1
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard let self, self.pweIsCurrent(epoch), self.directDisplayStream != nil,
+                  self.shouldRelayAudio, !self.pweCapturingAudio else { return }
+            await self.startAuxiliaryAudioCapture(preferredDisplayID: self.pweAuxAudioDisplayID, epoch: epoch)
+            guard self.pweIsCurrent(epoch) else { return }
+            if self.pweCapturingAudio {
+                self.objectWillChange.send()
+                PWELog.note("[pwe] capture: the sound stream beside the direct picture is back")
+            } else {
+                self.pweScheduleAuxAudioRetry(epoch: epoch)
+            }
         }
     }
 
@@ -4719,8 +4842,8 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         lastCursorPacket = nil
 
         beginCaptureActivity()
-        let started = await startCapture(for: profile)
-        if !started {
+        // PWE (C1): a start overtaken by a stop or a newer start leaves the session to them.
+        if await startCapture(for: profile) == .failed {
             NSLog("TargetBridge: soft restart after wake failed — falling back to full stop")
             stop(resetStatusTo: .captureError("capture restart after wake failed"))
         }
@@ -4772,28 +4895,34 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                 guard isStreaming, !sessionAckSent else { return }
                 let sentFrames = self.pipeline?.sentFramesSnapshot ?? 0
                 TBLog.connection.error("capture: first-frame timeout preset=\(self.capturePreset.rawValue, privacy: .public) source=\(String(describing: self.captureSource), privacy: .public) connected=\(self.isConnected, privacy: .public) sentFrames=\(sentFrames, privacy: .public)")
-                // PWE: a direct stream that sent nothing gets one more try on
-                // ScreenCaptureKit, watched the same way, before the session stops.
-                // PWE (T53): asleep, no stream sends a frame: keep waiting, for a
-                // minute at most. Just after a wake: one more try on the direct path.
-                if self.pweExtendedUsesDirect {
-                    switch self.pweDirectTroubleNow() {
-                    case .ignore where self.pweFirstFrameWaitsAsleep < Self.pweFirstFrameWaitsAsleepLimit:
+                // PWE (T53, C7): while the displays sleep no capture sends a frame,
+                // direct or ScreenCaptureKit: keep waiting, a minute at most, then
+                // end this connection without suspending automatic reconnect, so
+                // it starts again after the wake.
+                let trouble = self.pweDirectTroubleNow()
+                if trouble == .ignore {
+                    if self.pweFirstFrameWaitsAsleep < Self.pweFirstFrameWaitsAsleepLimit {
                         self.pweFirstFrameWaitsAsleep += 1
                         self.startFirstFrameWatchdog()
                         return
-                    case .retryDirect where self.canRestartCapture:
-                        self.pweDirectRetriedAfterWake = true
-                        PWELog.note("[pwe] capture: no first frame from the direct stream just after a wake; restarting it once")
-                        self.scheduleCaptureRestart(reason: "direct stream not ready after wake", delaySeconds: 1,
-                                                    rearmFirstFrameWatchdog: true)
-                        return
-                    default:
-                        break
                     }
+                    PWELog.note("[pwe] capture: no first frame while the displays sleep; ending this connection until they wake")
+                    self.stop(resetStatusTo: nil, persistArrangement: false)
+                    return
                 }
+                // PWE (T53): just after a wake, one more try on the direct path.
+                if self.pweExtendedUsesDirect, trouble == .retryDirect, self.canRestartCapture {
+                    self.pweDirectRetriedAfterWake = true
+                    PWELog.note("[pwe] capture: no first frame from the direct stream just after a wake; restarting it once")
+                    self.scheduleCaptureRestart(reason: "direct stream not ready after wake", delaySeconds: 1,
+                                                rearmFirstFrameWatchdog: true)
+                    return
+                }
+                // PWE: a direct stream that sent nothing gets one more try on
+                // ScreenCaptureKit, watched the same way, before the session stops.
                 if Self.pweFallsBackFromDirect(usingDirect: self.pweExtendedUsesDirect, canRestart: self.canRestartCapture) {
                     self.pweDirectFailed = true
+                    self.pweDirectStalledAt = ProcessInfo.processInfo.systemUptime
                     TBLog.connection.warning("capture: the extended desktop's direct stream sent no frame; restarting on ScreenCaptureKit")
                     PWELog.note("[pwe] capture: the extended desktop's direct stream sent no frame; restarting on ScreenCaptureKit for this connection")
                     self.scheduleCaptureRestart(reason: "direct stream sent no frame", delaySeconds: 0,
