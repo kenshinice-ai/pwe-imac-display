@@ -49,4 +49,5 @@ post_moves
 test_decthreads
 test_brightness
 test_permwatch
+test_pairing_hint
 *.dSYM/

@@ -32,6 +32,7 @@
 #include "tb_input_rate.h"
 #include "tb_runloop_thread.h"
 #include "tb_permwatch.h"
+#include "tb_pairing_hint.h"
 #include "tb_clipboard.h"
 #include "tb_sysinfo.h"
 #include "tb_running_app.h"
@@ -216,8 +217,13 @@ struct app {
     int                     pwe_status_overridden;
     enum tb_display_notice  pwe_message_kind;
     char                    pwe_message_key[64];    /* the words are looked up when shown, */
+    char                    pwe_message_key2[64];   /* PWE (1.1.1): a second line, or "" */
     char                    pwe_message_name[128];  /* in the language of the moment */
     uint64_t                pwe_message_until_ms;
+    /* PWE (1.1.1, R5): this connection's last pairing code, for the hint when
+     * it runs out with no one typing it (tb_pairing_hint.h). */
+    uint64_t                pair_code_expires_ms;
+    int                     pair_code_answered;
     DNSServiceRef           bonjour_ref2;     /* second cable interface (USB), if any */
     unsigned int            bonjour_if1, bonjour_if2;  /* where the two are registered */
     uint16_t                bonjour_port;
@@ -2430,6 +2436,8 @@ static void send_receiver_info(struct app *a) {
 }
 
 static void tb_pwe_refresh_notice(struct app *a, uint64_t now);
+static void tb_pwe_message(struct app *a, enum tb_display_notice kind, const char *key, const char *name,
+                           uint64_t for_ms);
 
 static void close_client(struct app *a) {
 #if TB_RECEIVER_TEST_HOOKS
@@ -2445,6 +2453,11 @@ static void close_client(struct app *a) {
     }
     memset(a->pwe_test_counts, 0, sizeof(a->pwe_test_counts));
 #endif
+    /* PWE (1.1.1, R5): decided before the connection's own end events. */
+    const int code_unanswered =
+        a->client_fd >= 0 && tb_pairing_code_went_unanswered(a->pair_code_expires_ms, a->pair_code_answered, now_ms());
+    a->pair_code_expires_ms = 0;
+    a->pair_code_answered = 0;
     /* PWE (1.1.1): the tap's thread stops sending before the connection goes;
      * no modifier key stays down for the next session; no listen probe. */
     pthread_mutex_lock(&a->tx_lock);
@@ -2488,6 +2501,12 @@ static void close_client(struct app *a) {
     tb_catchup_reset(&a->catchup);
     TB_LOOP_PHASE("session end: sound idle");
     tb_audio_out_idle(a->audio);   /* the audio thread closes the device later */
+    if (code_unanswered) {
+        /* PWE (1.1.1, R5): until the next connection (tb_pwe_adopt_client). */
+        fprintf(stderr, "[sec] the pairing code ran out with no one typing it; the idle screen says how to try again\n");
+        tb_pwe_message(a, TB_DISP_NOTICE_INFO, "receiver.pairing.no_one_typed", NULL, 24ull * 3600u * 1000u);
+        snprintf(a->pwe_message_key2, sizeof(a->pwe_message_key2), "%s", "receiver.pairing.no_one_typed_hint");
+    }
     TB_LOOP_PHASE("session end: idle notice");
     tb_pwe_refresh_notice(a, now_ms());
     fprintf(stderr, "[main] client disconnected\n");
@@ -2506,6 +2525,7 @@ static void tb_pwe_message(struct app *a, enum tb_display_notice kind, const cha
                            uint64_t for_ms) {
     a->pwe_message_kind = kind;
     snprintf(a->pwe_message_key, sizeof(a->pwe_message_key), "%s", key);
+    a->pwe_message_key2[0] = '\0';
     snprintf(a->pwe_message_name, sizeof(a->pwe_message_name), "%s", name ? name : "");
     a->pwe_message_until_ms = now_ms() + for_ms;
 }
@@ -2529,6 +2549,7 @@ static void tb_pwe_refresh_notice(struct app *a, uint64_t now) {
     } else if (a->pwe_message_key[0] && now < a->pwe_message_until_ms) {
         struct tb_i18n_pair pairs[] = { { "name", a->pwe_message_name } };
         tb_format_i18n(line1, sizeof(line1), a->pwe_message_key, pairs, 1);
+        if (a->pwe_message_key2[0]) tb_copy_i18n(line2, sizeof(line2), a->pwe_message_key2);
         kind = a->pwe_message_kind;
     } else if (a->client_fd >= 0 && a->session_plaintext) {
         tb_copy_i18n(line1, sizeof(line1), "receiver.pairing.unencrypted");
@@ -2570,6 +2591,9 @@ static void tb_pwe_on_conn_event(struct tb_conn *c, int ev, void *ud) {
         fprintf(stderr, "[sec] session ready (%s)\n", a->session_plaintext ? "unencrypted" : "encrypted");
         send_receiver_info(a);
     }
+    /* PWE (1.1.1, R5): a code on screen, and whether anyone typed one. */
+    if ((ev & PWE_SEC_EV_SHOW_CODE) && a->gate.code[0]) a->pair_code_expires_ms = a->gate.code_expires_ms;
+    if (ev & (PWE_SEC_EV_WRONG_CODE | PWE_SEC_EV_PAIRED)) a->pair_code_answered = 1;
     if (ev & PWE_SEC_EV_PAIRED) {
         tb_pwe_message(a, TB_DISP_NOTICE_INFO, "receiver.pairing.paired", pwe_sec_peer_name(c->sec),
                        TB_PWE_PAIRED_NOTICE_MS);
@@ -2633,6 +2657,13 @@ static int tb_pwe_accept_checked(struct app *a, int listener, int is_ipv6, char 
 static void tb_pwe_adopt_client(struct app *a, int c, const char *ifname, int is_ipv6,
                                 struct tb_accept_policy policy, uint64_t t) {
     a->client_fd = c;
+    /* PWE (1.1.1, R5): a new connection ends the "no one typed the code" hint. */
+    if (strcmp(a->pwe_message_key, "receiver.pairing.no_one_typed") == 0) {
+        a->pwe_message_key[0] = '\0';
+        a->pwe_message_key2[0] = '\0';
+    }
+    a->pair_code_expires_ms = 0;
+    a->pair_code_answered = 0;
     a->have_video_frame = 0;
     a->session_active = 0;
     a->reported_night_shift = -1;   /* force one report per session */

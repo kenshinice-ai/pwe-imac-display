@@ -219,6 +219,8 @@
   "sender.input_bindings.record": "Appuyez sur les touches...",
   "receiver.pairing.code": "Code de jumelage %{code}",
   "receiver.pairing.enter_on_mac": "Saisissez ces 6 chiffres sur le clavier du Mac, puis appuyez sur Retour",
+  "receiver.pairing.no_one_typed": "Personne n’a saisi le code.",
+  "receiver.pairing.no_one_typed_hint": "Débranchez le câble et rebranchez-le pour réessayer.",
   "receiver.pairing.not_you": "Ce n’est pas vous ? Débranchez simplement le câble.",
   "receiver.pairing.paired": "Jumelé avec « %{name} »",
   "receiver.pairing.locked": "Trop de tentatives. Réessayez dans une minute.",

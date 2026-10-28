@@ -219,6 +219,8 @@
   "sender.input_bindings.record": "Premi i tasti...",
   "receiver.pairing.code": "Codice di abbinamento %{code}",
   "receiver.pairing.enter_on_mac": "Digita queste 6 cifre sulla tastiera del Mac, poi premi A capo",
+  "receiver.pairing.no_one_typed": "Nessuno ha inserito il codice.",
+  "receiver.pairing.no_one_typed_hint": "Scollega il cavo e ricollegalo per riprovare.",
   "receiver.pairing.not_you": "Non sei tu? Scollega il cavo.",
   "receiver.pairing.paired": "Abbinato a “%{name}”",
   "receiver.pairing.locked": "Troppi tentativi. Riprova tra un minuto.",

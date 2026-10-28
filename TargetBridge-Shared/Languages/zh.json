@@ -219,6 +219,8 @@
   "sender.input_bindings.record": "请按下快捷键…",
   "receiver.pairing.code": "配对码 %{code}",
   "receiver.pairing.enter_on_mac": "在 Mac 的键盘上输入这 6 位数字，然后按回车",
+  "receiver.pairing.no_one_typed": "没人输入配对码。",
+  "receiver.pairing.no_one_typed_hint": "拔掉线再插上，可以重试。",
   "receiver.pairing.not_you": "不是你在配对？拔掉线即可。",
   "receiver.pairing.paired": "已与“%{name}”配对",
   "receiver.pairing.locked": "尝试次数太多，请 1 分钟后再试。",
