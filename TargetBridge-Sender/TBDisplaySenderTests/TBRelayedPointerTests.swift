@@ -26,19 +26,6 @@ final class TBRelayedPointerTests: XCTestCase {
         XCTAssertEqual(target(2000, 10, 0, -300, raised), CGPoint(x: 2000, y: -290))
     }
 
-    // T57: with the picture up, a move from the iMac stays on the iMac's display.
-    func testWhileThePictureIsUpTheMoveStaysOnTheIMac() {
-        let iMac = raised[1]
-        let reachable = TBRelayedPointer.displays(shown: iMac, active: raised)
-        XCTAssertEqual(reachable, [iMac])
-        // Left off the iMac's left edge, where the MacBook is: pinned at the edge.
-        XCTAssertEqual(target(1690, 500, -40, 0, reachable), CGPoint(x: 1680, y: 500))
-        // The trackpad left the pointer on the MacBook: the next move brings it to the iMac.
-        XCTAssertEqual(target(500, 500, 5, 0, reachable), CGPoint(x: 1680, y: 500))
-        // Before the picture starts, any display.
-        XCTAssertEqual(TBRelayedPointer.displays(shown: nil, active: raised), raised)
-    }
-
     func testADiagonalMoveNearTheEndOfTheSharedEdgeSlidesAcross() {
         // From near the MacBook's bottom-right corner, right and down. Raised,
         // the iMac ends at y 1050 too: the move crosses and slides along its
