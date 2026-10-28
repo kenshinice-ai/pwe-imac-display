@@ -914,15 +914,17 @@ final class PWESenderModel: ObservableObject {
     }
 
     /// C3, C5: a replug or a newly seen iMac lets automatic pairing start
-    /// again for a while, also for an iMac it already started for.
-    private func armHeadlessPairing(because reason: String) {
+    /// for a while. Only a replug (`clearingStarted`) lets it start again for
+    /// an iMac it already started for.
+    private func armHeadlessPairing(clearingStarted: Bool) {
         headlessArmedUntil = ProcessInfo.processInfo.systemUptime + PWEHeadlessPairingRules.armedFor
-        headlessPairingStarted.removeAll()
+        if clearingStarted { headlessPairingStarted.removeAll() }
     }
 
-    /// `byPerson`: Disconnect or Cancel. The app's own disconnects (codes that
-    /// ran out unanswered, a forgotten iMac, unencrypted connections turned
-    /// off) do not stop automatic pairing for the rest of the run (C5).
+    /// `byPerson`: Disconnect, Cancel, Forget or turning off unencrypted
+    /// connections: no automatic pairing for the rest of the run, so an iMac
+    /// just forgotten is not paired again by itself. The app's own disconnect
+    /// after codes ran out unanswered does not stop it (C5).
     func disconnect(byPerson: Bool = true) {
         if byPerson { disconnectedThisRun = true }
         pausedUntilReplug = true
@@ -994,7 +996,7 @@ final class PWESenderModel: ObservableObject {
         case .replugged:
             bridgeLostAt = nil
             pausedUntilReplug = false
-            armHeadlessPairing(because: "replug")
+            armHeadlessPairing(clearingStarted: true)
             resumeIfDue(reason: "the iMac's Thunderbolt Bridge address came back (\(bridgeIP))")
         }
     }
@@ -1483,7 +1485,7 @@ final class PWESenderModel: ObservableObject {
             PWEPairingStore.allowUnencrypted = newValue
             objectWillChange.send()
             PWELog.note("[pwe] unencrypted connections \(newValue ? "allowed" : "turned off")")
-            if !newValue, session?.pweSecurity == .unencrypted { disconnect(byPerson: false) }
+            if !newValue, session?.pweSecurity == .unencrypted { disconnect(byPerson: true) }
         }
     }
 
@@ -1500,6 +1502,8 @@ final class PWESenderModel: ObservableObject {
     /// A failure stays on screen (forgetFailure) instead of passing silently (T37).
     func forget(_ receiver: PWEPairedReceiver) {
         guard service != nil else { return }
+        // C5: the person forgot an iMac: nothing pairs by itself in this run.
+        disconnectedThisRun = true
         let store = PWEPairingStore.shared
         // Decided before the hints go: they are how a session names its iMac's key.
         let endsSession = session.map {
@@ -1511,7 +1515,7 @@ final class PWESenderModel: ObservableObject {
             PWELog.note("[pwe] forgot the paired iMac \(receiver.name) (\(receiver.id))")
             if endsSession {
                 PWELog.note("[pwe] ending the encrypted session with the iMac just forgotten")
-                disconnect(byPerson: false)
+                disconnect(byPerson: true)
             }
         } else {
             forgetFailure = receiver.name
