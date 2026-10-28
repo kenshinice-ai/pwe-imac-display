@@ -276,6 +276,8 @@ C 函数 `CGVirtualDisplayCreate` 不存在，但用不到它。
 跟 PWE 免费工具一致：免费、开源（MIT，名称和标识保留，同 PWE Monitor 和 Lumen Bar）。
 支持走 `https://pwestudio.site/support`，所有免费 PWE 工具共用一页。
 
+分发只走 Developer ID 签名、Apple 公证、DMG 和 Homebrew。**不做 Mac App Store 版**（Lee 2026-10-29 定）：发送端的虚拟显示器靠 Apple 没公开的接口，审核不收；接收端单独上架，用户还是要去网站下发送端。Apple 公开这个接口时再看。
+
 ## 八、2026-10-19 真机基线（摘要）
 
 详细数据和证据：`docs/pwe/BASELINE-iMac18,3.md`。设备：发送端 MacBook Pro M1（macOS 27.2），接收端 iMac18,3（macOS 13.7.8），1.1.0 本地包。
