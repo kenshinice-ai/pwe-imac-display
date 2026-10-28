@@ -43,7 +43,9 @@
 #                       thread, also while the main loop is stalled for 1.5 s;
 #                       with TB_RECEIVER_TAP_ON_MAIN=1 (the 1.1.0 arrangement)
 #                       none get through during the stall (PWE 1.1.1, A15)
-#   9. log file      -> every receiver above also wrote a stamped receiver.log
+#   9. log file      -> every receiver above also wrote a stamped receiver.log;
+#                       at start-up the first one removed logs older receivers
+#                       left with sampled key events (PWE 1.1.1, R2)
 #
 # The receiver runs with TB_RECEIVER_NO_BONJOUR=1 on TB_RECEIVER_TEST_PORT, so a
 # sender running on the same Mac cannot find or redial it and take its single
@@ -136,8 +138,17 @@ fi
 pass "build"
 
 phase "Launch receiver (windowed, log -> $LOG)"
+# PWE (1.1.1, R2): logs left by older receivers with sampled key events: a
+# 1.1.0 receiver.old.log and a 1.0 input-debug.log (test path, never the real one).
+OLD_INPUT_LOG="$(mktemp -d -t tb_smoke_old)/Logs/input-debug.log"
+mkdir -p "${OLD_INPUT_LOG:h}"
+print "2026-10-15T10:00:00+1100 [input][receiver->sender] send #1 kind=keyDown key=12" > "$OLD_INPUT_LOG"
+print -l "2026-10-22 18:50:44.821 [log] receiver 1.1.0 (20261022173038) started, pid 1" \
+    "2026-10-22 18:56:50.501 [input][receiver->sender] send #1 kind=keyDown dx=0 dy=0 sx=0 sy=0 key=yes mode=receiverMaster" \
+    > "$TB_RECEIVER_LOG_DIR/receiver.old.log"
 TB_LANG=en TB_RECEIVER_NO_BONJOUR=1 TB_RECEIVER_TEST_PORT=$PORT \
     TB_RECEIVER_TEST_KEYCHAIN_SERVICE="$SMOKE_KEYCHAIN" TB_RECEIVER_TEST_CLEAN_ON_EXIT=1 \
+    TB_RECEIVER_TEST_OLD_INPUT_LOG="$OLD_INPUT_LOG" \
     "$SRC/tbreceiver" --windowed 2>"$LOG" &
 RECEIVER_PID=$!
 wait_listening
@@ -146,6 +157,13 @@ if ! kill -0 "$RECEIVER_PID" 2>/dev/null; then
 fi
 pass "receiver running (pid $RECEIVER_PID)"
 expect_log "[net] cable bridges: " "receiver names its cable bridges"
+expect_log "[log] removed 1 log file written before 1.1.1" "receiver removed a 1.1.0 log with key events"
+expect_log "[log] removed input-debug.log left by receiver 1.0" "receiver removed 1.0's input-debug.log"
+if [[ -e "$TB_RECEIVER_LOG_DIR/receiver.old.log" || -e "$OLD_INPUT_LOG" ]]; then
+    fail "an old log with key events is still there"
+else
+    pass "no old log with key events left"
+fi
 
 phase "Phase 1: handshake"
 mock --mode handshake --duration 3 || fail "mock handshake exited non-zero"

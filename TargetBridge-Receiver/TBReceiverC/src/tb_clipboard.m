@@ -27,6 +27,13 @@ struct tb_clipboard {
     char     slot[TB_CLIPBOARD_MAX_TEXT];        /* the iMac's new text, for the main loop */
     int      write_pending;
     char     write_text[TB_CLIPBOARD_MAX_TEXT];  /* the Mac's text, for the worker */
+    /* PWE (1.1.1, R1): the session the queued write belongs to (set when it is
+     * queued), and the change count the worker knew then (-1: unknown). */
+    unsigned write_session;
+    long     write_base_seen;
+    /* A write that finished after its session ended: the change count it
+     * made. That text is the old session's Mac's, never sent to a new one. */
+    long     orphan_count;
 
     pthread_t  thread;
     atomic_int worker_done;
@@ -83,16 +90,28 @@ static void *cb_worker(void *arg) {
             char text[TB_CLIPBOARD_MAX_TEXT];
             memcpy(text, c->write_text, sizeof(text));
             c->write_pending = 0;
-            const unsigned session = c->session;
+            /* PWE (1.1.1, R1): the session it was queued in, not the one now. */
+            const unsigned session = c->write_session;
+            const long base_seen = c->write_base_seen;
+            if (session != c->session) continue;   /* its session ended: dropped */
             pthread_mutex_unlock(&c->lock);
 
             long count = -1;
+            @autoreleasepool {
+                /* PWE (1.1.1, R1): the iMac's clipboard changed after the
+                 * worker last looked when this was queued: that copy is newer
+                 * than what the worker knew, so it is kept and goes to the Mac
+                 * on the next poll. A change count is cheap: no data fetched. */
+                if (base_seen >= 0 && (long)[pb changeCount] != base_seen) {
+                    text[0] = '\0';
+                }
+            }
             @autoreleasepool {
                 /* Text cut at 4095 bytes may end inside a character: drop
                  * that tail. Text that still is not UTF-8 is not written. */
                 const size_t n = strlen(text);
                 NSString *s = nil;
-                for (size_t cut = 0; !s && cut < 4 && cut <= n; cut++) {
+                for (size_t cut = 0; n > 0 && !s && cut < 4 && cut <= n; cut++) {
                     s = [[NSString alloc] initWithBytes:text length:n - cut encoding:NSUTF8StringEncoding];
                 }
                 if (s) {
@@ -110,11 +129,15 @@ static void *cb_worker(void *arg) {
             /* Our own change: never sent back. The iMac's clipboard is now the
              * Mac's text, so older iMac text not yet sent is stale. Polling
              * turned off meanwhile does not matter; a new session does (its
-             * Mac does not have this text). */
+             * Mac does not have this text). PWE (1.1.1, R1): the session ended
+             * while the write was inside the pasteboard call: it stays written,
+             * but it is no copy of the iMac's for the next session's Mac. */
             if (session == c->session) {
                 c->last_seen = count;
                 memcpy(c->last_sent, text, sizeof(c->last_sent));
                 c->slot_full = 0;
+            } else {
+                c->orphan_count = count;
             }
             continue;
         }
@@ -156,7 +179,9 @@ static void *cb_worker(void *arg) {
              * the result belongs to nobody. last_seen stays as reset. */
             if (have_text && session == c->session && epoch == c->polling_epoch) {
                 c->last_seen = count;
-                if (strcmp(text, c->last_sent) != 0) {
+                if (count == c->orphan_count) {
+                    c->slot_full = 0;   /* PWE (1.1.1, R1): an ended session's Mac text */
+                } else if (strcmp(text, c->last_sent) != 0) {
                     memcpy(c->slot, text, sizeof(c->slot));
                     c->slot_full = 1;
                 } else {
@@ -187,6 +212,8 @@ struct tb_clipboard *tb_clipboard_create(const char *name) {
     struct tb_clipboard *c = (struct tb_clipboard *)calloc(1, sizeof(*c));
     if (!c) return NULL;
     c->last_seen = -1;
+    c->write_base_seen = -1;
+    c->orphan_count = -1;
     if (!name) {
         c->kind = TB_CLIPBOARD_GENERAL;
     } else if (!*name) {
@@ -235,6 +262,10 @@ void tb_clipboard_new_session(struct tb_clipboard *c) {
     c->last_seen = -1;
     c->last_sent[0] = '\0';
     c->slot_full = 0;
+    /* PWE (1.1.1, R1): the Mac's text not yet written belongs to the session
+     * that ended: dropped, so it can neither overwrite what is copied on the
+     * iMac later nor pass for the next session's Mac's copy. */
+    c->write_pending = 0;
     pthread_mutex_unlock(&c->lock);
 }
 
@@ -243,6 +274,8 @@ void tb_clipboard_write(struct tb_clipboard *c, const char *text) {
     pthread_mutex_lock(&c->lock);
     cb_copy_text(c->write_text, sizeof(c->write_text), text);
     c->write_pending = 1;
+    c->write_session = c->session;          /* PWE (1.1.1, R1) */
+    c->write_base_seen = c->last_seen;
     pthread_cond_signal(&c->wake);
     pthread_mutex_unlock(&c->lock);
 }

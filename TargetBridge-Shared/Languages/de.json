@@ -219,6 +219,8 @@
   "sender.input_bindings.record": "Tasten drücken...",
   "receiver.pairing.code": "Kopplungscode %{code}",
   "receiver.pairing.enter_on_mac": "Gib diese 6 Ziffern auf der Tastatur des Mac ein und drücke dann den Zeilenschalter",
+  "receiver.pairing.no_one_typed": "Niemand hat den Code eingegeben.",
+  "receiver.pairing.no_one_typed_hint": "Zieh das Kabel ab und steck es wieder ein, um es erneut zu versuchen.",
   "receiver.pairing.not_you": "Nicht du? Zieh einfach das Kabel ab.",
   "receiver.pairing.paired": "Gekoppelt mit „%{name}“",
   "receiver.pairing.locked": "Zu viele Versuche. Versuch es in einer Minute erneut.",

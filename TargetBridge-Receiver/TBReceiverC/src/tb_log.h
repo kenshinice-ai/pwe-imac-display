@@ -55,6 +55,23 @@ int  tb_log_read_last_line(const char *dir, char *out, size_t size);
  * ("[main] bye", with or without a reason after it). */
 int  tb_log_line_is_clean_exit(const char *line);
 
+/* PWE (1.1.1, R2): receivers before 1.1.1 logged sampled key events (kind
+ * keyDown/keyUp, the first 20 of a session and every 100th, with millisecond
+ * stamps; 1.1.0 wrote whether a key code came, never which). On a Mac with no
+ * other screen those are often a password typed on the iMac. Delete
+ * <dir>/receiver.log and <dir>/receiver.old.log when one holds key-event lines
+ * and was written (in part) by a receiver older than `before` ("1.1.1"); call
+ * before tb_log_start. Logs of this version or later, and development builds
+ * (version 3.x), are kept. Returns how many files were removed. */
+int  tb_log_forget_old_key_lines(const char *dir, const char *before);
+
+/* For the unit test: whether log text holds key-event lines and a start line
+ * ("[log] receiver X.Y.Z") of a version older than `before`. */
+int  tb_log_text_has_old_key_lines(const char *text, size_t len, const char *before);
+
+/* For the unit test: 1 when version `v` ("1.1.0") is older than `than`. */
+int  tb_log_version_older(const char *v, const char *than);
+
 /* For the unit test: stamp `in` (any bytes) into lines as the file gets them.
  * `at_line_start` carries over between calls. Returns the bytes written to `out`. */
 size_t tb_log_stamp(const char *in, size_t len, const char *stamp, int *at_line_start,

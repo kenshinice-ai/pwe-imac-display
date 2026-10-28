@@ -219,6 +219,8 @@
   "sender.input_bindings.record": "Press keys...",
   "receiver.pairing.code": "Pairing code %{code}",
   "receiver.pairing.enter_on_mac": "Type these 6 digits on the Mac’s keyboard, then press Return",
+  "receiver.pairing.no_one_typed": "No one typed the code.",
+  "receiver.pairing.no_one_typed_hint": "Unplug the cable and plug it back in to try again.",
   "receiver.pairing.not_you": "Not you? Just unplug the cable.",
   "receiver.pairing.paired": "Paired with “%{name}”",
   "receiver.pairing.locked": "Too many attempts. Try again in a minute.",

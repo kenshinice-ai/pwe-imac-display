@@ -181,6 +181,8 @@ PWE_RENDER_TEST_BINS += test_decthreads
 PWE_RENDER_TEST_BINS += test_brightness
 # PWE (1.1.1): permissions re-checked off the main loop.
 PWE_RENDER_TEST_BINS += test_permwatch
+# PWE (1.1.1): the idle screen's hint after an unanswered pairing code.
+PWE_RENDER_TEST_BINS += test_pairing_hint
 
 
 # ---- PWE: secure layer tests (need libsodium; AddressSanitizer on) -----------
@@ -268,6 +270,9 @@ test_brightness: tests/test_brightness.c src/tb_brightness.c src/tb_brightness.h
 
 test_permwatch: tests/test_permwatch.c src/tb_permwatch.c src/tb_permwatch.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_permwatch.c src/tb_permwatch.c -o $@
+
+test_pairing_hint: tests/test_pairing_hint.c src/tb_pairing_hint.h
+	$(CC) $(TEST_CFLAGS) -Isrc tests/test_pairing_hint.c -o $@
 
 test_cursor_image: tests/test_cursor_image.c src/tb_cursor_image.c src/tb_cursor_image.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_cursor_image.c src/tb_cursor_image.c -o $@

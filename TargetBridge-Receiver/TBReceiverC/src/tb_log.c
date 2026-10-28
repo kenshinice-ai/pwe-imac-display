@@ -196,6 +196,72 @@ int tb_log_line_is_clean_exit(const char *line) {
     return line && strlen(line) >= 24 + sizeof(bye) - 1 && strncmp(line + 24, bye, sizeof(bye) - 1) == 0;
 }
 
+int tb_log_version_older(const char *v, const char *than) {
+    unsigned a[3] = { 0, 0, 0 }, b[3] = { 0, 0, 0 };
+    if (!v || !than || sscanf(v, "%u.%u.%u", &a[0], &a[1], &a[2]) < 2 ||
+        sscanf(than, "%u.%u.%u", &b[0], &b[1], &b[2]) < 2) return 0;
+    for (int i = 0; i < 3; i++) {
+        if (a[i] != b[i]) return a[i] < b[i];
+    }
+    return 0;
+}
+
+/* `needle` in the first `len` bytes of `text` (which need not end in NUL). */
+static const char *tb_log_find(const char *text, size_t len, const char *needle) {
+    const size_t n = strlen(needle);
+    for (size_t i = 0; n <= len && i <= len - n; i++) {
+        if (text[i] == needle[0] && memcmp(text + i, needle, n) == 0) return text + i;
+    }
+    return NULL;
+}
+
+int tb_log_text_has_old_key_lines(const char *text, size_t len, const char *before) {
+    if (!text || !before) return 0;
+    if (!tb_log_find(text, len, "kind=keyDown") && !tb_log_find(text, len, "kind=keyUp")) return 0;
+    static const char start[] = "[log] receiver ";
+    const char *at = text;
+    size_t left = len;
+    const char *hit;
+    while ((hit = tb_log_find(at, left, start)) != NULL) {
+        const char *v = hit + sizeof(start) - 1;
+        char version[24] = "";
+        size_t i = 0;
+        while (v + i < text + len && i + 1 < sizeof(version) && (v[i] == '.' || (v[i] >= '0' && v[i] <= '9'))) {
+            version[i] = v[i];
+            i++;
+        }
+        version[i] = '\0';
+        if (tb_log_version_older(version, before)) return 1;
+        left -= (size_t)(v - at);
+        at = v;
+    }
+    return 0;
+}
+
+int tb_log_forget_old_key_lines(const char *dir, const char *before) {
+    if (!dir || !*dir) return 0;
+    static const char *const names[2] = { "receiver.log", "receiver.old.log" };
+    int removed = 0;
+    for (int f = 0; f < 2; f++) {
+        char path[PATH_MAX];
+        snprintf(path, sizeof(path), "%s/%s", dir, names[f]);
+        const int fd = open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) continue;
+        struct stat st;
+        char *text = NULL;
+        ssize_t n = 0;
+        if (fstat(fd, &st) == 0 && st.st_size > 0 && st.st_size < 64 * 1024 * 1024) {
+            text = (char *)malloc((size_t)st.st_size);
+            if (text) n = pread(fd, text, (size_t)st.st_size, 0);
+        }
+        close(fd);
+        const int old = text && n > 0 && tb_log_text_has_old_key_lines(text, (size_t)n, before);
+        free(text);
+        if (old && unlink(path) == 0) removed++;
+    }
+    return removed;
+}
+
 int tb_log_start(const char *dir, size_t max_bytes) {
     if (g_log.running || !dir || !*dir) return -1;
     if (mkdir(dir, 0755) != 0 && errno != EEXIST) return -1;

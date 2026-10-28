@@ -4,6 +4,7 @@
 #include "tb_log.h"
 
 #include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -178,7 +179,65 @@ static void test_default_dir(void) {
     CHECK(tb_log_default_dir("App", out, sizeof(out)) == 0, "TB_RECEIVER_LOG=0 turns the file off");
 }
 
+/* PWE (1.1.1, R2): logs from older receivers that hold sampled key events. */
+static void test_old_key_lines(void) {
+    CHECK(tb_log_version_older("1.1.0", "1.1.1"), "%s", "tb_log_version_older(\"1.1.0\", \"1.1.1\")");
+    CHECK(tb_log_version_older("1.0.1", "1.1.1"), "%s", "tb_log_version_older(\"1.0.1\", \"1.1.1\")");
+    CHECK(!tb_log_version_older("1.1.1", "1.1.1"), "%s", "!tb_log_version_older(\"1.1.1\", \"1.1.1\")");
+    CHECK(!tb_log_version_older("1.2.0", "1.1.1"), "%s", "!tb_log_version_older(\"1.2.0\", \"1.1.1\")");
+    CHECK(!tb_log_version_older("3.6.0", "1.1.1"), "%s", "!tb_log_version_older(\"3.6.0\", \"1.1.1\")");   /* development builds */
+    CHECK(!tb_log_version_older("", "1.1.1"), "%s", "!tb_log_version_older(\"\", \"1.1.1\")");
+
+    const char *old_keys =
+        "2026-10-22 18:50:44.821 [log] receiver 1.1.0 (20261022173038) started, pid 75269\n"
+        "2026-10-22 18:56:50.501 [input][receiver->sender] send #1 kind=keyDown dx=0 dy=0 sx=0 sy=0 key=yes mode=receiverMaster\n";
+    CHECK(tb_log_text_has_old_key_lines(old_keys, strlen(old_keys), "1.1.1"), "%s", "tb_log_text_has_old_key_lines(old_keys, strlen(old_keys), \"1.1.1\")");
+    /* A 1.1.0 log without key lines is kept. */
+    const char *old_moves =
+        "2026-10-22 18:50:44.821 [log] receiver 1.1.0 (20261022173038) started, pid 75269\n"
+        "2026-10-22 18:56:50.501 [input][receiver->sender] send #1 kind=move dx=1 dy=0 sx=0 sy=0 key=no mode=receiverMaster\n";
+    CHECK(!tb_log_text_has_old_key_lines(old_moves, strlen(old_moves), "1.1.1"), "%s", "!tb_log_text_has_old_key_lines(old_moves, strlen(old_moves), \"1.1.1\")");
+    /* Key lines written only by 1.1.1 or a development build (debug switch) are kept. */
+    const char *new_keys =
+        "2026-11-04 10:00:00.000 [log] receiver 1.1.1 (20261104) started, pid 1\n"
+        "2026-11-04 10:00:01.000 [input][receiver->sender] send #1 kind=keyDown dx=0 dy=0 sx=0 sy=0 key=yes mode=receiverMaster\n"
+        "2026-11-04 11:00:00.000 [log] receiver 3.6.0 (dev) started, pid 2\n";
+    CHECK(!tb_log_text_has_old_key_lines(new_keys, strlen(new_keys), "1.1.1"), "%s", "!tb_log_text_has_old_key_lines(new_keys, strlen(new_keys), \"1.1.1\")");
+    /* A file 1.1.1 went on appending to after 1.1.0: removed. */
+    const char *mixed =
+        "2026-10-22 18:50:44.821 [log] receiver 1.1.0 (20261022173038) started, pid 75269\n"
+        "2026-10-22 18:56:50.501 [input][sender->receiver] received #3 kind=keyUp len=31\n"
+        "2026-11-04 10:00:00.000 [log] receiver 1.1.1 (20261104) started, pid 1\n";
+    CHECK(tb_log_text_has_old_key_lines(mixed, strlen(mixed), "1.1.1"), "%s", "tb_log_text_has_old_key_lines(mixed, strlen(mixed), \"1.1.1\")");
+    /* The rotation header names the version too. */
+    const char *rotated =
+        "2026-10-22 19:00:00.000 [log] receiver 1.1.0 (20261022173038), pid 75269; iMac18,3 (continued)\n"
+        "2026-10-22 19:00:01.000 [input][receiver->sender] send #100 kind=keyUp mode=receiverMaster\n";
+    CHECK(tb_log_text_has_old_key_lines(rotated, strlen(rotated), "1.1.1"), "%s", "tb_log_text_has_old_key_lines(rotated, strlen(rotated), \"1.1.1\")");
+    /* Not NUL-terminated within len: only the first len bytes count. */
+    CHECK(!tb_log_text_has_old_key_lines(old_keys, 40, "1.1.1"), "%s", "!tb_log_text_has_old_key_lines(old_keys, 40, \"1.1.1\")");
+
+    /* The files. */
+    char dir[] = "/tmp/test_log_keys.XXXXXX";
+    CHECK(mkdtemp(dir) != NULL, "%s", "mkdtemp(dir) != NULL");
+    char path[PATH_MAX], old_path[PATH_MAX];
+    snprintf(path, sizeof(path), "%s/receiver.log", dir);
+    snprintf(old_path, sizeof(old_path), "%s/receiver.old.log", dir);
+    FILE *f = fopen(path, "w");
+    if (f) { fputs(new_keys, f); fclose(f); }
+    f = fopen(old_path, "w");
+    if (f) { fputs(old_keys, f); fclose(f); }
+    CHECK(tb_log_forget_old_key_lines(dir, "1.1.1") == 1, "%s", "tb_log_forget_old_key_lines(dir, \"1.1.1\") == 1");
+    CHECK(access(path, F_OK) == 0, "%s", "access(path, F_OK) == 0");       /* kept */
+    CHECK(access(old_path, F_OK) != 0, "%s", "access(old_path, F_OK) != 0");   /* removed */
+    CHECK(tb_log_forget_old_key_lines(dir, "1.1.1") == 0, "%s", "tb_log_forget_old_key_lines(dir, \"1.1.1\") == 0");
+    CHECK(tb_log_forget_old_key_lines(NULL, "1.1.1") == 0, "%s", "tb_log_forget_old_key_lines(NULL, \"1.1.1\") == 0");
+    unlink(path);
+    rmdir(dir);
+}
+
 int main(void) {
+    test_old_key_lines();
     test_stamp();
     test_file_and_rotation();
     test_rotation_header();

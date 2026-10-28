@@ -180,6 +180,59 @@ static void test_main_loop_never_waits(void) {
     release_pasteboard(name);
 }
 
+/* PWE (1.1.1, R1; AUDIT-RELEASE-2026-10-22 R1): the Mac's text queued while
+ * the worker was inside a slow read, then the session ends (disconnect,
+ * forget, re-pair) and someone copies on the iMac. 1.1.0 wrote the stale text
+ * over the newer copy once the read ended, and took it as the new session's
+ * Mac copy. Now the queued write belongs to its session and is dropped. */
+static void test_stale_write_after_session_change(void) {
+    setenv("TB_RECEIVER_TEST_CLIPBOARD_READ_DELAY_MS", "1500", 1);
+    NSString *name = fresh_name("stale");
+    struct tb_clipboard *c = tb_clipboard_create(name.UTF8String);
+    unsetenv("TB_RECEIVER_TEST_CLIPBOARD_READ_DELAY_MS");
+    char text[TB_CLIPBOARD_MAX_TEXT];
+
+    tb_clipboard_set_polling(c, 1);
+    other_app_copies(name, @"before");
+    usleep(300000);                                   /* the worker is in the 1.5 s read */
+    tb_clipboard_write(c, "the old session's Mac text");   /* queued behind the read */
+    tb_clipboard_set_polling(c, 0);                   /* the session ends */
+    tb_clipboard_new_session(c);
+    other_app_copies(name, @"copied on the iMac after the session");
+    usleep(2500000);                                  /* the read is long over */
+    CHECK([pasteboard_text(name) isEqualToString:@"copied on the iMac after the session"],
+          "a write queued in an ended session never overwrites newer iMac text");
+
+    /* The next session: the iMac's current text goes to its Mac, never the old text. */
+    tb_clipboard_set_polling(c, 1);
+    CHECK(take_within(c, 4000, text, sizeof(text)) && strcmp(text, "copied on the iMac after the session") == 0,
+          "the new session is sent the iMac's text, not the old session's");
+    CHECK(tb_clipboard_destroy(c, 3000) == 1, "worker stops");
+    release_pasteboard(name);
+}
+
+/* PWE (1.1.1, R1): a write already inside the pasteboard call when the
+ * session ends finishes, but its text is not the next session's to have. */
+static void test_write_in_flight_at_session_change(void) {
+    NSString *name = fresh_name("inflight");
+    struct tb_clipboard *c = tb_clipboard_create(name.UTF8String);
+    char text[TB_CLIPBOARD_MAX_TEXT];
+    tb_clipboard_set_polling(c, 1);
+    usleep(200000);
+    tb_clipboard_write(c, "written as the session ends");
+    tb_clipboard_set_polling(c, 0);
+    tb_clipboard_new_session(c);
+    usleep(300000);
+    tb_clipboard_set_polling(c, 1);
+    /* Either it was dropped before the call, or it was written and is then
+     * not sent to the new session as the iMac's copy. */
+    const int took = take_within(c, 600, text, sizeof(text));
+    CHECK(!took || strcmp(text, "written as the session ends") != 0,
+          "the old session's Mac text is never sent to the new session");
+    CHECK(tb_clipboard_destroy(c, 1000) == 1, "worker stops");
+    release_pasteboard(name);
+}
+
 int main(void) {
     @autoreleasepool {
         NSPasteboard *probe = [NSPasteboard pasteboardWithUniqueName];
@@ -192,6 +245,8 @@ int main(void) {
     test_change_detection_and_echo();
     test_polling_and_sessions();
     test_size_bound();
+    test_stale_write_after_session_change();
+    test_write_in_flight_at_session_change();
     test_main_loop_never_waits();
     if (g_failures) {
         fprintf(stderr, "test_clipboard: %d of %d checks FAILED\n", g_failures, g_checks);
