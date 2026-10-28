@@ -4921,7 +4921,9 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                         return
                     }
                     PWELog.note("[pwe] capture: no first frame while the displays sleep; ending this connection until they wake")
-                    self.stop(resetStatusTo: nil, persistArrangement: false)
+                    // Review 2026-10-28: "stopped", not the last "waiting for the
+                    // picture", which a connection made once would show for good.
+                    self.stop(resetStatusTo: .stopped, persistArrangement: false)
                     return
                 }
                 // PWE (T53): just after a wake, one more try on the direct path.
