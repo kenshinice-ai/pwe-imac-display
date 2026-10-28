@@ -257,7 +257,7 @@ struct PWEMainView: View {
                 .toggleStyle(.checkbox)
                 .disabled(!model.launchAtLoginDisplay.isEnabled)
             if model.launchAtLoginNeedsApproval {
-                Button(strings.launchAtLoginApproval) { model.openLoginItemsSettings() }
+                Button(strings.launchAtLoginApproval()) { model.openLoginItemsSettings() }
                     .buttonStyle(.link)
                     .font(.callout)
             }

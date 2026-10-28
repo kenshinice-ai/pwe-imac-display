@@ -106,7 +106,7 @@ final class PWEOnlyIMacTests: XCTestCase {
         let en = PWEStrings(language: .english), zh = PWEStrings(language: .chinese)
         XCTAssertEqual(en.onlyIMacTitle, "Use only the iMac")
         XCTAssertEqual(zh.onlyIMacTitle, "以后只用 iMac")
-        XCTAssertEqual(zh.onlyIMacBody, "趁现在看得见这台 Mac 时做一次。之后只用 iMac 就行；只有重启后要在这台 Mac 的键盘上输入密码。")
+        XCTAssertEqual(zh.onlyIMacBody, "趁现在还看得见这台 Mac，先做一次。之后只用 iMac 就行；只有重启后，要在这台 Mac 的键盘上输入密码。")
         for row in Rules.Row.allCases { XCTAssertFalse(en.onlyIMacRow(row).isEmpty) }
     }
 }

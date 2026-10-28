@@ -11,20 +11,20 @@ PWE Screen Encore（用于 iMac）— 读我
    第一次打开时，按提示在「隐私与安全性」里允许录屏。
 2. 在 iMac 上：把「PWE Screen Encore Receiver」拷进 iMac 的「应用程序」并打开。
    最简单的办法：在 iMac 上也下载并打开这个磁盘映像，把 Receiver 拖进「应用程序」。
-   屏幕中间显示「等待 Mac 连接」。iMac 需要 macOS 11 或更新。
+   屏幕中间显示「等待 Mac 连接」。iMac 需要 macOS 11 或更高版本。
    如果 iMac 问是否允许它查找本地网络上的设备，点「允许」。
 3. 用雷雳线连接两台电脑。
-   2014、2015 款 iMac 是雷雳 2 接口，需要 Apple 的雷雳 3（USB-C）转雷雳 2 转换器。
+   2014、2015 款 iMac 是雷雳 2 接口，需要 Apple 雷雳 3 (USB-C) 至雷雳 2 转换器。
    普通的 USB-C 转 Mini DisplayPort 转换器不行。
 4. iMac 会自己出现在新 Mac 的 PWE Screen Encore 里，点「用作显示器」。
    以后接上线就会自动连接。
 
-几秒后 iMac 就是新 Mac 的一块屏，在「系统设置 > 显示器」里可以排列位置。
+几秒后 iMac 就是新 Mac 的一块屏，在「系统设置 › 显示器」里可以排列位置。
 
 遇到问题：https://github.com/kenshinice-ai/pwe-imac-display/issues
 或写信到 support@pwestudio.site（写明两台电脑的型号和 macOS 版本）。
-PWE Screen Encore 基于开源项目 TargetBridge（MIT），由 PWE 构建并签名，
-不是 TargetBridge 的官方版本。许可信息在 Licenses 文件夹里。
+基于开源项目 TargetBridge（Marco Caciotti 与社区，MIT）。由 PWE 构建并签名，不是 TargetBridge 的官方版本。
+许可信息在 Licenses 文件夹里。
 
 
 PWE Screen Encore for iMac — Read Me First
@@ -55,12 +55,11 @@ these. Settings and pairing are kept.
    Use as Display. From then on it connects whenever the cable goes in.
 
 A few seconds later the iMac is a display for your Mac; arrange it in
-System Settings > Displays.
+System Settings › Displays.
 
 Problems: https://github.com/kenshinice-ai/pwe-imac-display/issues
 or email support@pwestudio.site (say which two computers and macOS versions).
-PWE Screen Encore is based on the open-source project TargetBridge (MIT). PWE
-builds and signs it; it is not an official TargetBridge release. Licences are
-in the Licenses folder.
+Based on TargetBridge by Marco Caciotti and its community (MIT). Built and signed
+by PWE; not an official TargetBridge release. Licenses are in the Licenses folder.
 
 PWE · 天域出品 · PWE Group Pty Ltd

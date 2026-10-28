@@ -40,7 +40,7 @@ final class PWEScreenSharingTests: XCTestCase {
 
     func testTheNoticeInBothLanguages() {
         XCTAssertEqual(PWEStrings(language: .english).screenSharingNotice,
-                       "You're viewing this iMac with Screen Sharing, so the picture repeats itself. To use the iMac directly, disconnect Screen Sharing.")
+                       "You’re viewing this iMac with Screen Sharing, so the picture repeats itself. To use the iMac directly, disconnect Screen Sharing.")
         XCTAssertEqual(PWEStrings(language: .chinese).screenSharingNotice,
                        "你在用屏幕共享看这台 iMac，画面会无限重复。要直接用 iMac，先断开屏幕共享。")
     }

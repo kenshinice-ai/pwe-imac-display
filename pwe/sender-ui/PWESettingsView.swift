@@ -127,7 +127,7 @@ struct PWEGeneralSettings: View {
                 }
                 .disabled(!model.launchAtLoginDisplay.isEnabled)
                 if model.launchAtLoginNeedsApproval {
-                    Button(strings.launchAtLoginApproval) { model.openLoginItemsSettings() }
+                    Button(strings.launchAtLoginApproval()) { model.openLoginItemsSettings() }
                         .buttonStyle(.link)
                 }
                 Toggle(strings.autoConnect, isOn: $model.autoConnect)
