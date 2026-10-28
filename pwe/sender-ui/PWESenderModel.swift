@@ -922,9 +922,9 @@ final class PWESenderModel: ObservableObject {
     }
 
     /// `byPerson`: Disconnect, Cancel, Forget or turning off unencrypted
-    /// connections: no automatic pairing for the rest of the run, so an iMac
-    /// just forgotten is not paired again by itself. The app's own disconnect
-    /// after codes ran out unanswered does not stop it (C5).
+    /// connections: no automatic pairing until the cable is replugged, so an
+    /// iMac just forgotten is not paired again by itself. The app's own
+    /// disconnect after codes ran out unanswered does not stop it (C5).
     func disconnect(byPerson: Bool = true) {
         if byPerson { disconnectedThisRun = true }
         pausedUntilReplug = true
@@ -996,6 +996,9 @@ final class PWESenderModel: ObservableObject {
         case .replugged:
             bridgeLostAt = nil
             pausedUntilReplug = false
+            // A replug is the person asking again: on a Mac with no other
+            // screen it is the only way back to a picture without a relaunch.
+            disconnectedThisRun = false
             armHeadlessPairing(clearingStarted: true)
             resumeIfDue(reason: "the iMac's Thunderbolt Bridge address came back (\(bridgeIP))")
         }
