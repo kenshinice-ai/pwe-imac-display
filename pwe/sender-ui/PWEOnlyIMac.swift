@@ -77,7 +77,7 @@ enum PWEOnlyIMacRules {
 ///   other than loopback (127.x, ::1, lo0) can be reached from elsewhere.
 ///
 /// "On" needs both: the service enabled and listening beyond this Mac.
-/// Disabled, or not listening at all, is "off". Anything else (enabled but
+/// Not listening beyond this Mac and not enabled is "off". Anything else (enabled but
 /// not listening, a listener with the service not on the list, a reading that
 /// failed) is nil: the row says "Check in System Settings…".
 struct PWESharingState: Equatable {
@@ -103,7 +103,9 @@ struct PWESharingState: Equatable {
     /// `enabled`: launchd's entry; nil when the service is not on its list
     /// or the list could not be read.
     static func serviceState(enabled: Bool?, listensBeyondThisMac: Bool) -> Bool? {
-        if enabled == false { return false }
+        // Disabled, yet something listens on its port beyond this Mac: the
+        // readings disagree, so neither on nor off (review 2026-10-28).
+        if enabled == false { return listensBeyondThisMac ? nil : false }
         if enabled == true { return listensBeyondThisMac ? true : nil }
         // Not on the list: nothing reachable is off; a listener alone proves nothing.
         return listensBeyondThisMac ? nil : false

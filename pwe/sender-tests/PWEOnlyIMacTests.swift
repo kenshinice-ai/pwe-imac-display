@@ -78,6 +78,12 @@ final class PWEOnlyIMacTests: XCTestCase {
                        ["com.apple.screensharing": true, "com.openssh.sshd": false])
         XCTAssertEqual(PWESharingState.from(netstat: netstat, printDisabled: enabled),
                        PWESharingState(screenSharing: true, remoteLogin: false))
+        // Disabled, yet something listens beyond this Mac on its port: check by hand.
+        let disabledButListening = #""com.apple.screensharing" => disabled"#
+        XCTAssertEqual(PWESharingState.from(netstat: netstat, printDisabled: disabledButListening),
+                       PWESharingState(screenSharing: nil, remoteLogin: false))
+        XCTAssertNil(PWESharingState.serviceState(enabled: false, listensBeyondThisMac: true))
+        XCTAssertEqual(PWESharingState.serviceState(enabled: false, listensBeyondThisMac: false), false)
         // Older systems: true means disabled.
         XCTAssertEqual(PWESharingState.launchdOverrides(#""com.openssh.sshd" => true"#), ["com.openssh.sshd": false])
     }
