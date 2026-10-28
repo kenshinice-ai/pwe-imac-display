@@ -508,6 +508,16 @@ enum TBRelayedPointer {
         return ours ? cached : real
     }
 
+    /// PWE (T57, 1.1.1): the displays a relayed move may reach. The person is at
+    /// the iMac and sees only the display it shows, so the pointer stays there.
+    /// Across all of this Mac's displays it slid onto a MacBook's own screen,
+    /// vanished from the iMac, and came back only after some shaking.
+    /// `shown` is nil before the picture starts; then any active display.
+    static func displays(shown: CGRect?, active: [CGRect]) -> [CGRect] {
+        guard let shown, !shown.isEmpty else { return active }
+        return [shown]
+    }
+
     /// `current` moved by (dx, dy), kept on a display. A target on a display is
     /// taken as is. One in the gap beside a display keeps the axis that still
     /// lands on a display and pins the other inside it, so a diagonal move near
@@ -2824,7 +2834,10 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     private func postLocalMouseMove(dx: Int, dy: Int, type: CGEventType = .mouseMoved, button: CGMouseButton = .left) {
         logLocalInputInjectionStateIfNeeded(context: "mouseMove")
         guard let current = relayedMouseLocation() else { return }
-        let target = TBRelayedPointer.target(from: current, dx: dx, dy: dy, displays: activeDisplayBounds())
+        let shown = cursorDisplayID != kCGNullDirectDisplay && CGDisplayIsActive(cursorDisplayID) != 0
+            ? CGDisplayBounds(cursorDisplayID) : nil
+        let target = TBRelayedPointer.target(from: current, dx: dx, dy: dy,
+                                             displays: TBRelayedPointer.displays(shown: shown, active: activeDisplayBounds()))
         if let previous = injectedRemoteMouseLocation, previous == current {
             recentInjectedMouseLocations = Array((recentInjectedMouseLocations + [previous]).suffix(8))
         } else {
