@@ -508,6 +508,15 @@ enum TBRelayedPointer {
         return ours ? cached : real
     }
 
+    /// PWE (T57, 1.1.1): the display a relayed move landed on, for the log line
+    /// written each time it changes. "The pointer vanished", said at the iMac,
+    /// is either the pointer on another of this Mac's displays (normal when the
+    /// iMac extends the desktop) or something else; the line tells which.
+    static func displayName(_ id: CGDirectDisplayID, iMac: CGDirectDisplayID, builtIn: Bool) -> String {
+        if id == iMac { return "the iMac" }
+        return builtIn ? "this Mac's built-in display" : "display \(id)"
+    }
+
     /// `current` moved by (dx, dy), kept on a display. A target on a display is
     /// taken as is. One in the gap beside a display keeps the axis that still
     /// lands on a display and pins the other inside it, so a diagonal move near
@@ -1737,6 +1746,8 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
     private var pointerImageID: UInt32 = 0
     private var lastPointerPicture: TBMonitorCursorImage?
     private var injectedRemoteMouseLocation: CGPoint?
+    /// The display the last relayed move landed on (TBRelayedPointer.displayName).
+    private var relayedPointerDisplayID: CGDirectDisplayID = kCGNullDirectDisplay
     /// The points injected just before the last one (TBRelayedPointer.start).
     private var recentInjectedMouseLocations: [CGPoint] = []
     private var cachedLocalInputEventSource: CGEventSource?
@@ -2833,6 +2844,15 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
         logLocalInputInjectionStateIfNeeded(context: "mouseMove")
         guard let current = relayedMouseLocation() else { return }
         let target = TBRelayedPointer.target(from: current, dx: dx, dy: dy, displays: activeDisplayBounds())
+        var landed: CGDirectDisplayID = kCGNullDirectDisplay
+        var landedCount: UInt32 = 0
+        if CGGetDisplaysWithPoint(target, 1, &landed, &landedCount) == .success, landedCount == 1,
+           landed != relayedPointerDisplayID {
+            relayedPointerDisplayID = landed
+            let name = TBRelayedPointer.displayName(landed, iMac: cursorDisplayID, builtIn: CGDisplayIsBuiltin(landed) != 0)
+            PWELog.note(String(format: "[pwe] input: the iMac's mouse moved the pointer onto %@ at (%.0f, %.0f)",
+                               name, target.x, target.y))
+        }
         if let previous = injectedRemoteMouseLocation, previous == current {
             recentInjectedMouseLocations = Array((recentInjectedMouseLocations + [previous]).suffix(8))
         } else {
