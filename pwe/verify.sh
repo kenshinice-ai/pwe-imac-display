@@ -26,7 +26,7 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.."
 REPO="$PWD"
-DEPS="${PWE_DEPS:-${TMPDIR:-/tmp}/pwe-imacdisplay-deps}"
+DEPS="${PWE_DEPS:-$HOME/Library/Caches/pwe-screen-encore-deps}"
 DMG=""
 SMOKE=1
 while (( $# )); do
