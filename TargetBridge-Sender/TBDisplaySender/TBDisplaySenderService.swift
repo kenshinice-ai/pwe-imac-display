@@ -738,7 +738,10 @@ private final class TBDirectDisplayStreamCapture {
         let properties: NSDictionary = [
             CGDisplayStream.showCursor: showCursor,
             CGDisplayStream.queueDepth: preset.queueDepth,
-            CGDisplayStream.minimumFrameTime: 1.0 / Double(preset.expectedFrameRate)
+            // Same headroom as the ScreenCaptureKit route: a limit of exactly one
+            // refresh drops any refresh that lands a little early (measured 56–57
+            // fps at 60). The pipeline's frame-rate pacer still caps the output.
+            CGDisplayStream.minimumFrameTime: 1.0 / Double(preset.captureRequestFrameRate)
         ]
 
         let displayStream = CGDisplayStream(
