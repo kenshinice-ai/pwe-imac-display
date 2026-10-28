@@ -434,8 +434,14 @@ final class PWESenderModel: ObservableObject {
     private var urlPicture: TBDisplayCapturePreset?
     /// A1: a Disconnect (or Cancel) happened in this run; no automatic pairing after it.
     private var disconnectedThisRun = false
-    /// A1: iMacs automatic pairing has been started for in this run.
+    /// A1: iMacs automatic pairing has been started for in this run; cleared by a replug (C5).
     private var headlessPairingStarted = Set<String>()
+    /// C3: since when no physical display has been online, and until when the
+    /// launch or the last cable event lets automatic pairing start.
+    private var noPhysicalDisplaySince: TimeInterval?
+    private var headlessArmedUntil = ProcessInfo.processInfo.systemUptime + PWEHeadlessPairingRules.armedFor
+    private var iMacsOnCableBefore = 0
+    private var headlessRecheck: Task<Void, Never>?
     /// The input role has been applied to the current connection.
     private var inputRoleApplied = false
     private var noticeTask: Task<Void, Never>?
@@ -656,13 +662,23 @@ final class PWESenderModel: ObservableObject {
     /// The code step then brings the window up as key (PWEStatusMenu), so the
     /// code box takes the keys. The cheap conditions are read first.
     private func startHeadlessPairingIfDue(_ service: TBDisplaySenderService) {
-        guard case .ready(let receiver) = phase, autoConnect, !disconnectedThisRun,
-              !headlessPairingStarted.contains(receiver.id) else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        // C4: on the cable means seen through this Mac's own bridge.
+        let localBridgeIPv4 = TBConnectionDiagnostics.currentIPv4Interfaces()
+            .filter { $0.name.hasPrefix("bridge") }.map(\.ip)
+        let onCable = service.discoveredReceivers.filter {
+            PWEHeadlessPairingRules.isOnCable(scopedBridgeIPv6: $0.thunderboltIPv6, bridgeIPv4: $0.thunderboltIP,
+                                              resolvedIPv4: $0.resolvedIPv4Addresses, localBridgeIPv4: localBridgeIPv4)
+        }
+        // C3: an iMac newly on the cable is a cable event.
+        if onCable.count > iMacsOnCableBefore { armHeadlessPairing(because: "an iMac is on the cable") }
+        iMacsOnCableBefore = onCable.count
         let noPhysicalDisplay = TBDisplaySenderSession.pweNoPhysicalDisplay(
             onlineDisplayIDs: TBDisplaySenderSession.pweOnlineDisplays(),
             ownVirtualDisplayIDs: service.sessions.map(\.virtualDisplayID))
-        guard noPhysicalDisplay else { return }
-        let onCable = service.discoveredReceivers.filter { !$0.ip(for: .thunderboltBridge).isEmpty }
+        if !noPhysicalDisplay { noPhysicalDisplaySince = nil } else if noPhysicalDisplaySince == nil { noPhysicalDisplaySince = now }
+        guard case .ready(let receiver) = phase, autoConnect, !disconnectedThisRun,
+              !headlessPairingStarted.contains(receiver.id), noPhysicalDisplay else { return }
         let inputs = PWEHeadlessPairingRules.Inputs(
             noPhysicalDisplay: noPhysicalDisplay,
             iMacsOnCable: onCable.count,
@@ -670,8 +686,26 @@ final class PWESenderModel: ObservableObject {
             offeredIMacIsPaired: PWEPairingStore.shared.expectedReceiverID(forHint: receiver.id) != nil,
             disconnectedThisRun: disconnectedThisRun,
             alreadyStarted: false,
-            autoConnect: autoConnect)
-        guard PWEHeadlessPairingRules.startsPairing(inputs) else { return }
+            autoConnect: autoConnect,
+            noPhysicalDisplayFor: now - (noPhysicalDisplaySince ?? now),
+            armed: now <= headlessArmedUntil,
+            settling: asleep || Date().timeIntervalSince(awokeAt) < Self.wakeSettleTime)
+        guard PWEHeadlessPairingRules.startsPairing(inputs) else {
+            // Events drive refreshes: look again once the display state has held long enough.
+            var steady = inputs
+            steady.noPhysicalDisplayFor = .infinity
+            steady.settling = false
+            if PWEHeadlessPairingRules.startsPairing(steady), headlessRecheck == nil {
+                let wait = max(PWEHeadlessPairingRules.steadyFor - inputs.noPhysicalDisplayFor,
+                               Self.wakeSettleTime - Date().timeIntervalSince(awokeAt), 0.5)
+                headlessRecheck = Task { @MainActor [weak self] in
+                    try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+                    self?.headlessRecheck = nil
+                    self?.refreshSoon()
+                }
+            }
+            return
+        }
         headlessPairingStarted.insert(receiver.id)
         PWELog.note("[pwe] no physical display: starting pairing with \(receiver.name) automatically")
         // Not from inside this refresh: connecting refreshes again.
@@ -874,8 +908,18 @@ final class PWESenderModel: ObservableObject {
         }
     }
 
-    func disconnect() {
-        disconnectedThisRun = true
+    /// C3, C5: a replug or a newly seen iMac lets automatic pairing start
+    /// again for a while, also for an iMac it already started for.
+    private func armHeadlessPairing(because reason: String) {
+        headlessArmedUntil = ProcessInfo.processInfo.systemUptime + PWEHeadlessPairingRules.armedFor
+        headlessPairingStarted.removeAll()
+    }
+
+    /// `byPerson`: Disconnect or Cancel. The app's own disconnects (codes that
+    /// ran out unanswered, a forgotten iMac, unencrypted connections turned
+    /// off) do not stop automatic pairing for the rest of the run (C5).
+    func disconnect(byPerson: Bool = true) {
+        if byPerson { disconnectedThisRun = true }
         pausedUntilReplug = true
         heldFailure = nil
         // The engine's Stop also ends its retrying. While it asks a pairing
@@ -945,6 +989,7 @@ final class PWESenderModel: ObservableObject {
         case .replugged:
             bridgeLostAt = nil
             pausedUntilReplug = false
+            armHeadlessPairing(because: "replug")
             resumeIfDue(reason: "the iMac's Thunderbolt Bridge address came back (\(bridgeIP))")
         }
     }
@@ -1353,7 +1398,7 @@ final class PWESenderModel: ObservableObject {
             } else {
                 PWELog.note("[pwe] \(expiredInARow) pairing codes ran out unanswered; stopped asking")
                 expiredInARow = 0
-                DispatchQueue.main.async { [weak self] in self?.disconnect() }
+                DispatchQueue.main.async { [weak self] in self?.disconnect(byPerson: false) }
             }
         case .locked(let seconds):
             let end = PWEPairingRules.lockEnd(seconds: seconds, lockedAt: Date())
@@ -1432,7 +1477,7 @@ final class PWESenderModel: ObservableObject {
             PWEPairingStore.allowUnencrypted = newValue
             objectWillChange.send()
             PWELog.note("[pwe] unencrypted connections \(newValue ? "allowed" : "turned off")")
-            if !newValue, session?.pweSecurity == .unencrypted { disconnect() }
+            if !newValue, session?.pweSecurity == .unencrypted { disconnect(byPerson: false) }
         }
     }
 
@@ -1460,7 +1505,7 @@ final class PWESenderModel: ObservableObject {
             PWELog.note("[pwe] forgot the paired iMac \(receiver.name) (\(receiver.id))")
             if endsSession {
                 PWELog.note("[pwe] ending the encrypted session with the iMac just forgotten")
-                disconnect()
+                disconnect(byPerson: false)
             }
         } else {
             forgetFailure = receiver.name

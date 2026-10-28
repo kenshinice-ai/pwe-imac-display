@@ -114,11 +114,39 @@ enum PWEHeadlessPairingRules {
         var alreadyStarted: Bool
         /// "Connect automatically when the cable goes in" is on.
         var autoConnect: Bool
+        /// C3: how long no physical display has been online without a break.
+        var noPhysicalDisplayFor: TimeInterval = .infinity
+        /// C3: within `armedFor` of the launch or of a cable event (an iMac
+        /// newly on the cable, or its bridge address back after a replug).
+        var armed = true
+        /// C3: this Mac is asleep or has woken within the settle time; a
+        /// display can drop out for a second or two then.
+        var settling = false
     }
 
+    /// C3: no display for this long without a break, so a monitor dropping
+    /// out for a moment (a wake, an input switch) starts nothing.
+    static let steadyFor: TimeInterval = 10
+    /// C3: how long after the launch or a cable event it may start.
+    static let armedFor: TimeInterval = 60
+
     static func startsPairing(_ inputs: Inputs) -> Bool {
-        inputs.noPhysicalDisplay && inputs.iMacsOnCable == 1 && inputs.offeredIMacIsOnCable
+        inputs.noPhysicalDisplay && inputs.noPhysicalDisplayFor >= steadyFor && inputs.armed && !inputs.settling
+            && inputs.iMacsOnCable == 1 && inputs.offeredIMacIsOnCable
             && !inputs.offeredIMacIsPaired && !inputs.disconnectedThisRun && !inputs.alreadyStarted
             && inputs.autoConnect
+    }
+
+    /// C4: an iMac is on this Mac's cable when it was seen through this Mac's
+    /// own bridge: its IPv6 link-local address resolved on one of this Mac's
+    /// cable bridges (`thunderboltIPv6` is scoped only then), or its bridge
+    /// IPv4 address resolved while this Mac has a link-local address on a
+    /// bridge. What the iMac announces about its own bridge does not count:
+    /// an iMac on the LAN announces its bridge address too.
+    static func isOnCable(scopedBridgeIPv6: String, bridgeIPv4: String, resolvedIPv4: [String],
+                          localBridgeIPv4: [String]) -> Bool {
+        if !scopedBridgeIPv6.isEmpty { return true }
+        guard bridgeIPv4.hasPrefix("169.254."), resolvedIPv4.contains(bridgeIPv4) else { return false }
+        return localBridgeIPv4.contains { $0.hasPrefix("169.254.") }
     }
 }

@@ -38,4 +38,33 @@ final class PWEHeadlessPairingTests: XCTestCase {
         XCTAssertFalse(Session.pweNoPhysicalDisplay(onlineDisplayIDs: [1], ownVirtualDisplayIDs: []))
         XCTAssertFalse(Session.pweNoPhysicalDisplay(onlineDisplayIDs: [1, 7], ownVirtualDisplayIDs: [7]))
     }
+
+    // MARK: - Review 2026-10-28 (C3, C4)
+
+    func testANoDisplayMomentStartsNothing() {
+        var input = all
+        input.noPhysicalDisplayFor = 2
+        XCTAssertFalse(PWEHeadlessPairingRules.startsPairing(input), "a display dropped out for a moment")
+        input.noPhysicalDisplayFor = 10
+        XCTAssertTrue(PWEHeadlessPairingRules.startsPairing(input))
+        input.settling = true
+        XCTAssertFalse(PWEHeadlessPairingRules.startsPairing(input), "just woke")
+        input.settling = false
+        input.armed = false
+        XCTAssertFalse(PWEHeadlessPairingRules.startsPairing(input), "no launch or cable event lately")
+    }
+
+    func testOnlyAnIMacSeenThroughThisMacsBridgeIsOnTheCable() {
+        typealias Rules = PWEHeadlessPairingRules
+        XCTAssertTrue(Rules.isOnCable(scopedBridgeIPv6: "fe80::1%bridge0", bridgeIPv4: "", resolvedIPv4: [],
+                                      localBridgeIPv4: []))
+        XCTAssertTrue(Rules.isOnCable(scopedBridgeIPv6: "", bridgeIPv4: "169.254.6.224",
+                                      resolvedIPv4: ["169.254.6.224"], localBridgeIPv4: ["169.254.171.182"]))
+        // On the LAN: it announces its bridge address, but was resolved on Wi-Fi.
+        XCTAssertFalse(Rules.isOnCable(scopedBridgeIPv6: "", bridgeIPv4: "169.254.6.224",
+                                       resolvedIPv4: ["192.168.1.20"], localBridgeIPv4: ["169.254.171.182"]))
+        // This Mac has no bridge address.
+        XCTAssertFalse(Rules.isOnCable(scopedBridgeIPv6: "", bridgeIPv4: "169.254.6.224",
+                                       resolvedIPv4: ["169.254.6.224"], localBridgeIPv4: []))
+    }
 }
