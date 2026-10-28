@@ -3171,6 +3171,11 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             }
             #endif
 
+            // PWE (C1): this connection's capture count, taken before its first
+            // wait; a stop or another start during any wait below makes it stale.
+            self.pweCaptureEpoch &+= 1
+            let epoch = self.pweCaptureEpoch
+
             // A headless Sender may still expose a sleeping physical display.
             // Wake and hold the graphical session before virtual display setup.
             self.beginCaptureActivity()
@@ -3179,6 +3184,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             self.baselineDisplayIDs = self.captureSource == .extendedDesktop
                 ? await self.fetchShareableDisplayIDs()
                 : []
+            guard self.pweIsCurrent(epoch) else { return }
             let receiverKey = self.extendedDisplayIdentityKey(for: profile)
             // A native-scale profile targets a panel with exactly this many pixels, so
             // render the desktop 1x at the stream size: capture is 1:1 and the panel
@@ -3213,6 +3219,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             }
             if self.captureSource == .desktopMirror {
                 let displayReady = await self.waitForOnlineDisplay(self.session.displayID)
+                guard self.pweIsCurrent(epoch) else { return }
                 self.headlessMirrorUsesVirtualDisplay = displayReady && Self.shouldUseHeadlessVirtualDisplay(
                     virtualDisplayID: self.session.displayID,
                     mainDisplayID: CGMainDisplayID(),
@@ -3250,7 +3257,7 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             self.pweSoftwareDecodeLogged = false
             self.captureBlockedByScreenRecordingPermission = false
             self.setStatus(.startingCapture(self.capturePreset.description, self.captureSource))
-            let outcome = await self.startCapture(for: profile)
+            let outcome = await self.startCapture(for: profile, epoch: epoch)
             // PWE (C1): a stop or a newer start came during it; that one owns the session now.
             if outcome == .superseded { return }
             guard outcome == .started else {
@@ -3303,9 +3310,12 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
 
     private func pweIsCurrent(_ epoch: UInt64) -> Bool { epoch == pweCaptureEpoch }
 
-    private func startCapture(for profile: TBMonitorDisplayProfile) async -> PWECaptureStart {
-        pweCaptureEpoch &+= 1
-        let epoch = pweCaptureEpoch
+    /// `epoch`: the connection's own count, taken before its first wait; nil
+    /// (a soft restart) takes a new one here.
+    private func startCapture(for profile: TBMonitorDisplayProfile, epoch given: UInt64? = nil) async -> PWECaptureStart {
+        if given == nil { pweCaptureEpoch &+= 1 }
+        let epoch = given ?? pweCaptureEpoch
+        guard pweIsCurrent(epoch) else { return .superseded }
         let started = await pweStartCaptureBody(for: profile, epoch: epoch)
         return Self.pweCaptureOutcome(started: started, stillCurrent: pweIsCurrent(epoch))
     }
@@ -3372,6 +3382,8 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
                 }
             )
             guard pipeline.start() else { return false }
+            // PWE (C1): a pipeline left from an overtaken start is stopped, not dropped.
+            if let previous = self.pipeline, previous !== pipeline { previous.stop() }
             self.pipeline = pipeline
             pweCaptureStartedAt = ProcessInfo.processInfo.systemUptime
             TBLog.connection.info("capture: pipeline started preset=\(preset.rawValue, privacy: .public) source=\(String(describing: self.captureSource), privacy: .public) codec=\(codecName, privacy: .public) rawNV12=\(usesRawNV12, privacy: .public)")
@@ -3533,6 +3545,8 @@ final class TBDisplaySenderSession: NSObject, ObservableObject, Identifiable, @u
             startCaptureWatchdog()
             return true
         } catch {
+            // PWE (C1): an overtaken start leaves the status to the current one.
+            guard pweIsCurrent(epoch) else { return false }
             if error.localizedDescription.hasPrefix("no virtual SCDisplay available") {
                 setStatus(.noShareableDisplay(error.localizedDescription))
             } else {
