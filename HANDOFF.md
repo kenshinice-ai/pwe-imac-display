@@ -40,7 +40,7 @@
 
 ## 宣发
 
-- **[排队] 小红书 · 发布图文 1 篇（T+1，10-29 12:00 墨尔本）** — 已设定时（小红书显示北京时间 09:00）；截图换成正式版（05 用去掉帧率行的那版）；A$2,599 起 10-28 复核；正文写「Mac（Apple 芯片）」；不放网址；话题 8 个 · 等 Lee 在主页简介写上 pwestudio.site/screenencore（10-29 12:00 前）
+- **[已发] 小红书 · 2026-10-28 · 家里那台5K iMac｜别卖，接上当5K屏** — Lee 提前了发帖时间，10-28 已发；截图是正式版 · 数据：未抄
 - **[排队] 朋友圈 · 测评邀请 1 条** — 正文 A 定稿、P3 文字卡在 `docs/pwe/launch-kit-2026-10-22/moments-beta-invite.md` 和 `moments-beta/` · 等 Blender（P1）和 ChatGPT（P2）出图，Claude 加「效果图」后 Lee 发
 - **[已发] GitHub · 2026-10-28 · PWE Screen Encore 1.1.0** — https://github.com/kenshinice-ai/pwe-imac-display/releases/tag/pwe-1.1.0 · 数据：未抄
 - **[已发] 官网 · 2026-10-28 · /screenencore/ 1.1.0 下载按钮** — 部署 84465b89、4a7187ee；下载 200、9,503,562 字节、sha256 与 release 一致；更新接口对 1.0.0 返回 1.1.0；Install 一行先 `brew trust` · 数据：未抄
@@ -97,6 +97,7 @@
 | 发布后 | 使用说明和官网加「只接 iMac 的台式 Mac」一节（Lee 2026-10-23 定，不动 1.1.0）。2026-10-23 在 Mac Studio 上实测：锁屏、睡醒 1–2 秒都在 iMac 上出密码界面，用 iMac 的键盘能解锁 | Claude 写，工具站会话上网站 | — |
 | 10-28～11-04 | 第一周：看 issue 和 support 邮件，填 COMPATIBILITY.md；先攒 bug，不逐个发版 | Claude | 每个 issue 48 小时内有回复 |
 | 约 11-11（T+14） | 宣传可以提配对和加密；上游 PR 一周一个，先提不涉及安全的 | Claude，Lee 定 | — |
+| 2026-10-28 晚 | **1.1.1 新一轮修复开工**：cloud 审计 7 条加已知 3 条，发送端、接收端两个子代理在修。审计详情只在私有 artifact 和本地未入库文档里，不写进这个公开文件。整理：旧测试包和 RC 包移到废纸篓 `pwe-encore-tidy-20261028`，删了已发布的 `pwe-1.1` worktree | 本仓库会话 | 修完、评审、verify 全过 |
 | 2026-10-28 | **1.1.0 已发布（Claude 按步骤做，Lee 当天「开始发布」）。** 1 合并 `pwe-1.1` 进 main（5405751，HANDOFF 取 main 的，README 取 1.1 的下载说明）；1b 文档扫过（63 个待推提交里没有安全细节、测试者名单或私下链接；`LAUNCH-PLAN-2026-10-20.md` 加了「60 Hz 已撤回」的注，ec2861e）；2 未入库文档今天不入库；4 推了 main（41795e7..ec2861e）和唯一标签 `pwe-1.1.0`；5 release https://github.com/kenshinice-ai/pwe-imac-display/releases/tag/pwe-1.1.0（latest；下载回来校验值对、Gatekeeper Notarized Developer ID、9,503,562 字节）；6 cask `kenshinice-ai/tap/pwe-screen-encore`（tap 3749f5a；brew style 改了两处写法）——`brew fetch` 没做成：**Homebrew 7 拒绝加载非官方 tap 的 cask，要先 `brew trust kenshinice-ai/tap`**（改信任设置要 Lee 自己做；用户安装也会碰到）；7 README 已是下载说明；8 已回信 Marco（10-14 那封的线程）；9 删了本地分支 `security-1.0.1`（已全部在 main，162a064）。**还没做：** 7a 官网（工具站会话不在线；要 Lee 打开它并说「部署」，分支 site-encore-110 9fd567a）、7c 小红书、YouTube 确认、7b 产品片插拔秒数（正式版 X3：3.2–4.9 s）——这几个会话都不在线 | Lee 打开会话 | 官网显示 1.1.0 下载按钮 |
 | 2026-10-27 | **私有审计仓库**（Lee 定）：`kenshinice-ai/pwe-screen-encore-audit`（PRIVATE），只推了分支 `pwe-1.1.1`（45b7a60），没有标签、没有 main、没有未入库文档；worktree `~/Developer/pwe-encore-111` 里 remote 名 `audit`。给 cloud 做 1.1.1 发布前审计；1.1.0 不动。审完 Lee 可删这个仓库 | Lee 安排 cloud | 审计报告 |
 | 2026-10-26 21:17 | **1.1.0 正式版发布前测试 X0–X4 全部通过**（MacBook + iMac，两端都是 20261022232403）：MacBook 打开不弹窗（macOS 27.2 对已公证 App 不再提示）；iMac 只弹 Apple 的「已检查、未发现恶意软件」确认框；插拔 5 次 3.2–4.9 s；换画面 1.6–1.8 s；三种声音对；睡眠唤醒 3.8 s；键鼠和 ⌃⌥⌘K 正常。两端留在正式版。BASELINE「1.1.0 正式版（发布前）」 | — | **可以发布** |
