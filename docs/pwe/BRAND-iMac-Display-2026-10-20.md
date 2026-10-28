@@ -54,7 +54,10 @@
 - 旧名 PWE iMac Display 只出现在历史记录和「装过旧版」的提示里。为了已装的用户，这些标识不改：bundle id `com.pwegroup.pweimacdisplay(.receiver)`、URL scheme `pweimacdisplay://`、Application Support 下的设置目录、Bonjour 服务类型、握手协议常量。
 - **不起中文名。** 08 §2、§8：产品名不译，像 iPhone 一样。中文文案第一次出现时带一个说明语，不是名字：「PWE Screen Encore，把 2014–2017 年的 5K iMac 变回一块外接屏」。不写「天域 iMac 屏」之类——「天域」是房子的名字，不进产品名。
 - 署名行：`PWE · 天域出品`，两种语言都印整行（与 Lumen Bar 一致）。版权行写法律主体：`© 2026 PWE Group Pty Ltd`。
-- 致谢（固定说法，所有对外物料同一句）：「基于开源项目 TargetBridge（Marco Caciotti 与社区，MIT）。由 PWE 构建并签名，不是 TargetBridge 的官方版本。」英文："Based on TargetBridge by Marco Caciotti and its community (MIT). Built and signed by PWE; not an official TargetBridge release."
+- 署名和致谢（固定说法，所有对外物料一样；Lee 2026-10-29 定 PWE Group 为主）：
+  - 主行：「由 PWE Group 构建并签名。」英文："Built and signed by PWE Group."
+  - 小字：「基于开源项目 TargetBridge（Marco Caciotti 与社区，MIT），不是 TargetBridge 的官方版本。」英文："Based on TargetBridge by Marco Caciotti and its community (MIT); not an official TargetBridge release."
+  - 界面里小字用更小一号、次要颜色；纯文本里主行在前、小字另起一行。
 - 不放上游的 Sponsors 链接。支持入口只有「关于」里的「支持 PWE…」（07 TOOLS HANDOFF §0.9）。
 
 ### 2.2 颜色（全部来自 `armature.json`）

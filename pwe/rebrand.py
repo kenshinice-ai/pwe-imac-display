@@ -56,34 +56,38 @@ SCHEME = "pweimacdisplay"
 REPO = "https://github.com/kenshinice-ai/pwe-imac-display"
 UPSTREAM = "github.com/swellweb/targetBridge"
 
-# Credits replace upstream's "Created by swellweb …" line in each language: the
-# fixed credit sentence (PWEStrings, read-me-first) and, on a second line, the
-# upstream contributors. `⟪TB⟫` survives the generic rename and becomes
-# "TargetBridge" at the end; `\\n` is a newline inside the Swift literal.
+# The About page's credits card: PWE Group's line leads (CREDITS_LEAD, added
+# above the card's text), then upstream's "Created by swellweb …" line, which
+# CREDITS replaces in each language with the small-print credit and, on a second
+# line, the upstream contributors (docs/pwe/BRAND-iMac-Display-2026-10-20.md §2.1).
+# `⟪TB⟫` survives the generic rename and becomes "TargetBridge" at the end;
+# `\\n` is a newline inside the Swift literal.
+CREDITS_LEAD = {
+    "italian": "Compilato e firmato da PWE Group.",
+    "english": "Built and signed by PWE Group.",
+    "german": "Von PWE Group erstellt und signiert.",
+    "french": "Compilé et signé par PWE Group.",
+    "chinese": "由 PWE Group 构建并签名。",
+}
 CREDITS = {
     "Created by swellweb": (
-        f"Based on ⟪TB⟫ by Marco Caciotti and its community (MIT). "
-        f"Built and signed by PWE; not an official ⟪TB⟫ release.\\n"
+        f"Based on ⟪TB⟫ by Marco Caciotti and its community (MIT); not an official ⟪TB⟫ release.\\n"
         f"Key contributors include ThomasWaldmann, DrDavidL and potar712 — {UPSTREAM}."
     ),
     "由 swellweb": (
-        f"基于开源项目 ⟪TB⟫（Marco Caciotti 与社区，MIT）。"
-        f"由 PWE 构建并签名，不是 ⟪TB⟫ 的官方版本。\\n"
+        f"基于开源项目 ⟪TB⟫（Marco Caciotti 与社区，MIT），不是 ⟪TB⟫ 的官方版本。\\n"
         f"重要贡献者包括 ThomasWaldmann、DrDavidL、potar712 —— {UPSTREAM}。"
     ),
     "Creato da swellweb": (
-        f"Basato su ⟪TB⟫ di Marco Caciotti e della sua community (MIT). "
-        f"Compilato e firmato da PWE; non è una versione ufficiale di ⟪TB⟫.\\n"
+        f"Basato su ⟪TB⟫ di Marco Caciotti e della sua community (MIT); non è una versione ufficiale di ⟪TB⟫.\\n"
         f"Tra i contributori principali: ThomasWaldmann, DrDavidL e potar712 — {UPSTREAM}."
     ),
     "Erstellt von swellweb": (
-        f"Basiert auf ⟪TB⟫ von Marco Caciotti und der Community (MIT). "
-        f"Von PWE erstellt und signiert; keine offizielle ⟪TB⟫-Version.\\n"
+        f"Basiert auf ⟪TB⟫ von Marco Caciotti und der Community (MIT); keine offizielle ⟪TB⟫-Version.\\n"
         f"Wichtige Beiträge von ThomasWaldmann, DrDavidL und potar712 — {UPSTREAM}."
     ),
     "Créé par swellweb": (
-        f"Basé sur ⟪TB⟫ de Marco Caciotti et sa communauté (MIT). "
-        f"Compilé et signé par PWE ; ce n’est pas une version officielle de ⟪TB⟫.\\n"
+        f"Basé sur ⟪TB⟫ de Marco Caciotti et sa communauté (MIT) ; ce n’est pas une version officielle de ⟪TB⟫.\\n"
         f"Principaux contributeurs : ThomasWaldmann, DrDavidL et potar712 — {UPSTREAM}."
     ),
 }
@@ -273,6 +277,17 @@ def rebrand_sender(root: Path, version: str, build: str) -> None:
         if n != 1:
             raise RebrandError(f"{about}: credit line {prefix!r} found {n}×")
     about.write_text(text, encoding="utf-8")
+    edit(about,
+         "                    Text(creditsBody)\n",
+         "                    Text(creditsLead)\n"
+         "                        .font(.body.weight(.semibold))\n"
+         "                        .fixedSize(horizontal: false, vertical: true)\n"
+         "                    Text(creditsBody)\n")
+    edit(about, "    private var creditsBody: String {\n",
+         "    private var creditsLead: String {\n"
+         "        switch service.language {\n"
+         + "".join(f'        case .{language}: return "{line}"\n' for language, line in CREDITS_LEAD.items())
+         + "        }\n    }\n\n    private var creditsBody: String {\n")
 
     edit(swift / "TBDisplaySenderLocalization.swift",
          "              let language = TBDisplaySenderLanguage(rawValue: raw) else {\n            return .italian\n",

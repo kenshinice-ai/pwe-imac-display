@@ -23,7 +23,8 @@ PWE Screen Encore（用于 iMac）— 读我
 
 遇到问题：https://github.com/kenshinice-ai/pwe-imac-display/issues
 或写信到 support@pwestudio.site（写明两台电脑的型号和 macOS 版本）。
-基于开源项目 TargetBridge（Marco Caciotti 与社区，MIT）。由 PWE 构建并签名，不是 TargetBridge 的官方版本。
+由 PWE Group 构建并签名。
+基于开源项目 TargetBridge（Marco Caciotti 与社区，MIT），不是 TargetBridge 的官方版本。
 许可信息在 Licenses 文件夹里。
 
 
@@ -59,7 +60,8 @@ System Settings › Displays.
 
 Problems: https://github.com/kenshinice-ai/pwe-imac-display/issues
 or email support@pwestudio.site (say which two computers and macOS versions).
-Based on TargetBridge by Marco Caciotti and its community (MIT). Built and signed
-by PWE; not an official TargetBridge release. Licenses are in the Licenses folder.
+Built and signed by PWE Group.
+Based on TargetBridge by Marco Caciotti and its community (MIT); not an official
+TargetBridge release. Licenses are in the Licenses folder.
 
 PWE · 天域出品 · PWE Group Pty Ltd

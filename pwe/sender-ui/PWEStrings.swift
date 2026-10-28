@@ -460,12 +460,14 @@ struct PWEStrings {
     var version: String { t("Version", "版本") }
     /// Under the name in About: what the app is for. "for iMac" is a reference, not part of the name.
     var forIMac: String { t("For iMac", "用于 iMac") }
-    /// The fixed credit, word for word the same on every PWE surface
-    /// (docs/pwe/BRAND-iMac-Display-2026-10-20.md §2.1). The one place the UI names TargetBridge
-    /// apart from the receivers a person installed from it.
+    /// The credit, word for word the same on every PWE surface
+    /// (docs/pwe/BRAND-iMac-Display-2026-10-20.md §2.1): PWE Group's line leads,
+    /// and the upstream credit follows in smaller type.
+    var builtBy: String { t("Built and signed by PWE Group.", "由 PWE Group 构建并签名。") }
+    /// The one place the UI names TargetBridge apart from the receivers a person installed from it.
     var credits: String {
-        t("Based on TargetBridge by Marco Caciotti and its community (MIT). Built and signed by PWE; not an official TargetBridge release.",
-          "基于开源项目 TargetBridge（Marco Caciotti 与社区，MIT）。由 PWE 构建并签名，不是 TargetBridge 的官方版本。")
+        t("Based on TargetBridge by Marco Caciotti and its community (MIT); not an official TargetBridge release.",
+          "基于开源项目 TargetBridge（Marco Caciotti 与社区，MIT），不是 TargetBridge 的官方版本。")
     }
     var source: String { t("Source Code", "源代码") }
     var support: String { t("Support PWE…", "支持 PWE…") }

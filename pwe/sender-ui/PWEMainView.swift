@@ -452,10 +452,14 @@ struct PWEAboutView: View {
                         .font(.callout).foregroundStyle(.secondary)
                 }
             }
-            Text(strings.credits)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(strings.builtBy)
+                    .font(.callout)
+                Text(strings.credits)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack(spacing: 14) {
                 Link(strings.source, destination: URL(string: "https://github.com/kenshinice-ai/pwe-imac-display")!)
                 Link(strings.support, destination: URL(string: "https://pwestudio.site/support")!)
