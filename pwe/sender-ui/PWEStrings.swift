@@ -91,6 +91,14 @@ struct PWEStrings {
         default: return "\(preset.title) · \(preset.description)"
         }
     }
+    /// Plan A (1.1.1): the line under 5K · 60 Hz once this Mac's encoder fell
+    /// behind at it (PWEStreamStats.fiveK60Verdict). Advice, never a block; no
+    /// frame counts, which would read as a claim. The tooltip says why.
+    var fiveK60Advice: String { t("On this Mac, Smooth · 4K 60 is smoother", "这台 Mac 上「流畅 · 4K 60」更顺") }
+    var fiveK60AdviceDetail: String {
+        t("This Mac can't encode every 5K frame in time, so motion stutters a little. 5K is sharper; Smooth · 4K 60 moves more smoothly. Choose what suits you.",
+          "这台 Mac 来不及编码每一帧 5K 画面，画面动起来会有点顿。5K 更清晰，「流畅 · 4K 60」更顺，按你的需要选。")
+    }
 
     // Connecting
     func connectingTitle(_ name: String?) -> String {

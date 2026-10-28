@@ -90,4 +90,14 @@ final class PWEStringsTests: XCTestCase {
         XCTAssertEqual(zh.screenRecording(macOS: 15), "录屏与系统录音")
         XCTAssertEqual(zh.screenRecording(macOS: 26), "录屏与系统录音")
     }
+
+    // Plan A: advice under 5K · 60 Hz, in both languages, with no frame counts.
+    func testTheFiveK60Advice() {
+        let en = PWEStrings(language: .english), zh = PWEStrings(language: .chinese)
+        XCTAssertEqual(en.fiveK60Advice, "On this Mac, Smooth · 4K 60 is smoother")
+        XCTAssertEqual(zh.fiveK60Advice, "这台 Mac 上「流畅 · 4K 60」更顺")
+        for line in [en.fiveK60Advice, en.fiveK60AdviceDetail, zh.fiveK60Advice, zh.fiveK60AdviceDetail] {
+            XCTAssertFalse(line.contains("fps") || line.contains("帧/秒") || line.contains("Hz"), line)
+        }
+    }
 }

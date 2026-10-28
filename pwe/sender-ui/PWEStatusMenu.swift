@@ -309,6 +309,12 @@ final class PWEStatusMenu: NSObject {
             choice.state = knowsIMac && preset == model.picture ? .on : .off
             choice.isEnabled = knowsIMac
             submenu.addItem(choice)
+            if preset == .native5k60Experimental, model.fiveK60FallsBehind {
+                let advice = disabled(strings.fiveK60Advice)
+                advice.indentationLevel = 1
+                advice.toolTip = strings.fiveK60AdviceDetail
+                submenu.addItem(advice)
+            }
         }
         submenu.addItem(.separator())
         for mode in PWEDisplayMode.allCases {

@@ -936,6 +936,14 @@ private final class TBVideoPipeline: @unchecked Sendable {
         timer.setEventHandler { [weak self] in
             guard let self, self.running else { return }
             let now = ProcessInfo.processInfo.systemUptime
+            if self.preset == .native5k60Experimental,
+               let fallsBehind = self.streamStats.fiveK60Verdict(elapsed: now - self.streamStatsSince),
+               UserDefaults.standard.object(forKey: PWEStreamStats.fiveK60FallsBehindKey) as? Bool != fallsBehind {
+                UserDefaults.standard.set(fallsBehind, forKey: PWEStreamStats.fiveK60FallsBehindKey)
+                PWELog.note(fallsBehind
+                    ? "[pwe] 5K 60: this Mac's encoder falls behind; the Picture menu suggests Smooth · 4K 60"
+                    : "[pwe] 5K 60: this Mac's encoder keeps up; no suggestion in the Picture menu")
+            }
             let line = self.streamStats.summary(label: self.preset.rawValue, elapsed: now - self.streamStatsSince)
             self.streamStatsSince = now
             PWELog.note("[pwe] " + line)

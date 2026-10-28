@@ -55,4 +55,30 @@ final class PWEStreamStatsTests: XCTestCase {
         XCTAssertNil(PWEStreamStats.milliseconds(since: nil))
         XCTAssertNil(PWEStreamStats.milliseconds(since: token, now: 999))
     }
+
+    // Plan A (1.1.1): the 1.1.1e windows on an M1 MacBook, and a Mac that keeps up.
+    func testWhetherTheEncoderKeepsUpAt5K60() {
+        XCTAssertEqual(PWEStreamStats.keepsUp(capturedPerSecond: 54.5, sentPerSecond: 46.6), false)   // E2, direct
+        XCTAssertEqual(PWEStreamStats.keepsUp(capturedPerSecond: 50.0, sentPerSecond: 45.1), false)   // E3, default route
+        XCTAssertEqual(PWEStreamStats.keepsUp(capturedPerSecond: 60.0, sentPerSecond: 59.6), true)
+        XCTAssertNil(PWEStreamStats.keepsUp(capturedPerSecond: 12, sentPerSecond: 10))     // a still screen
+        XCTAssertNil(PWEStreamStats.keepsUp(capturedPerSecond: 31, sentPerSecond: 31))     // a 30 fps video
+        XCTAssertNil(PWEStreamStats.keepsUp(capturedPerSecond: 50, sentPerSecond: 49))     // content at 50: nothing missing
+    }
+
+    func testTwoBehindWindowsInARowMakeTheVerdict() {
+        func window(_ stats: inout PWEStreamStats, captured: Int, sent: Int) -> Bool? {
+            for _ in 0..<captured { stats.recordCaptured() }
+            for _ in 0..<sent { stats.recordSent() }
+            let verdict = stats.fiveK60Verdict(elapsed: 10)
+            _ = stats.summary(label: "native5k60Experimental", elapsed: 10)
+            return verdict
+        }
+        var stats = PWEStreamStats()
+        XCTAssertNil(window(&stats, captured: 545, sent: 466))
+        XCTAssertNil(window(&stats, captured: 100, sent: 90))      // still: no evidence, streak kept
+        XCTAssertEqual(window(&stats, captured: 545, sent: 466), true)
+        XCTAssertEqual(window(&stats, captured: 600, sent: 598), false)
+        XCTAssertNil(window(&stats, captured: 545, sent: 466))     // the streak starts over
+    }
 }

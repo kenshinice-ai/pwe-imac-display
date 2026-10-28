@@ -598,6 +598,10 @@ final class PWESenderModel: ObservableObject {
         session?.liveMetrics.$senderFPS.removeDuplicates().eraseToAnyPublisher()
     }
 
+    /// Plan A (1.1.1): this Mac's encoder fell behind at 5K 60, so the Picture
+    /// menu suggests Smooth · 4K 60 (PWEStreamStats.fiveK60Verdict).
+    var fiveK60FallsBehind: Bool { UserDefaults.standard.bool(forKey: PWEStreamStats.fiveK60FallsBehindKey) }
+
     /// Whether the session dials over Network Link rather than the cable.
     var connectsOverNetwork: Bool { session?.transportKind == .networkLink }
 

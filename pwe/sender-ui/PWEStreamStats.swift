@@ -71,6 +71,42 @@ struct PWEStreamStats {
         return sorted[min(max(rank, 1), sorted.count) - 1]
     }
 
+    // MARK: - Can this Mac keep up with 5K 60 (plan A, 1.1.1)
+
+    /// Remembered per Mac: its encoder fell behind at 5K 60. The Picture menu
+    /// then suggests Smooth · 4K 60 under it; the choice stays the person's.
+    /// Why: an M1 MacBook encodes about 47 5K frames a second, an M4 Max over
+    /// 100 (docs/pwe/PLAN-5k60-2026-10-28.md), so one answer cannot fit every Mac.
+    static let fiveK60FallsBehindKey = "pwe.fiveK60FallsBehind"
+
+    private var behindStreak = 0
+
+    /// What one window says about the encoder at 5K 60: true when it kept up,
+    /// false when it fell behind, nil when the screen was too still to tell.
+    static func keepsUp(capturedPerSecond captured: Double, sentPerSecond sent: Double) -> Bool? {
+        guard captured >= 45 else { return nil }
+        if sent >= 57 { return true }
+        if sent < 55 && captured - sent >= 3 { return false }
+        return nil
+    }
+
+    /// Call before `summary`, while the window's counts are still there. Returns
+    /// whether this Mac falls behind at 5K 60 once a window has shown it: true
+    /// after two behind windows in a row, false after one that kept up.
+    mutating func fiveK60Verdict(elapsed: TimeInterval) -> Bool? {
+        let seconds = max(elapsed, 0.001)
+        switch Self.keepsUp(capturedPerSecond: Double(captured) / seconds, sentPerSecond: Double(sent) / seconds) {
+        case true?:
+            behindStreak = 0
+            return false
+        case false?:
+            behindStreak += 1
+            return behindStreak >= 2 ? true : nil
+        case nil:
+            return nil
+        }
+    }
+
     // MARK: - Encode timing
 
     /// The encode's start, carried to the encoder's callback in its frame
