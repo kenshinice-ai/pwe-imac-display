@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>让 5K iMac 返场。</b><br>
-  用于 iMac：把 2014–2020 年的 27 吋 5K iMac 变成新 Mac 的外接显示器。不刷机，不拆机，一根雷雳线。<br>
+  用于 iMac：把 2014–2020 年的 27 英寸 5K iMac 变成新 Mac 的外接显示器。不刷机，不拆机，一根雷雳线。<br>
   <sub>1.1 起改名，原名 PWE iMac Display。</sub><br>
   <a href="../docs/pwe/README.en.md">English</a>
 </p>
@@ -14,7 +14,7 @@
 ---
 
 > **下载最新版本**：[下载 DMG](https://github.com/kenshinice-ai/pwe-imac-display/releases/latest)，或 `brew install --cask kenshinice-ai/tap/pwe-screen-encore`。
-> 安装和连接步骤见 [安装指南](../docs/pwe/安装指南.md)。适用 2014–2020 年的 27 吋 5K iMac；我们在 2017 款上完整测过，其他年份按设计应当可用，欢迎用「机型回报」issue 告诉我们你的结果。
+> 安装和连接步骤见 [安装指南](../docs/pwe/安装指南.md)。适用 2014–2020 年的 27 英寸 5K iMac；我们在 2017 款上完整测过，其他年份按设计应当可用，欢迎用「机型回报」issue 告诉我们你的结果。
 
 ## 这是什么
 
@@ -46,7 +46,7 @@ PWE 在它之上做了这些：
 ## 需要什么
 
 - 一台 Apple 芯片的 Mac，macOS 14 或更新，装发送端。Intel Mac 没有测过，上游 TargetBridge 说不支持。
-- 一台 2014–2020 年的 27 吋 5K iMac，macOS 11 或更新，装接收端。我们在 2017 款（iMac18,3）上完整测过；其他年份按设计应当可用，还在收集更多机型的测试结果。2014 年和 2015 年年中的机型没有 HEVC 硬件解码，可能需要用较低的画面档位。
+- 一台 2014–2020 年的 27 英寸 5K iMac，macOS 11 或更新，装接收端。我们在 2017 款（iMac18,3）上完整测过；其他年份按设计应当可用，还在收集更多机型的测试结果。2014 年和 2015 年年中的机型没有 HEVC 硬件解码，可能需要用较低的画面档位。
 - 一根雷雳线。2014、2015 款 iMac 是雷雳 2 接口，需要 Apple 的雷雳 3（USB-C）转雷雳 2 转换器。
 
 线材和转接头的细节见 [docs/Hardware.md](../docs/Hardware.md)（TargetBridge 的硬件说明）。
