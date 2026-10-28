@@ -16,6 +16,8 @@
 > **下载最新版本**：[下载 DMG](https://github.com/kenshinice-ai/pwe-imac-display/releases/latest)，或用 Homebrew：先 `brew trust kenshinice-ai/tap`（只需一次），再 `brew install --cask kenshinice-ai/tap/pwe-screen-encore`。
 > 安装和连接步骤见 [安装指南](../docs/pwe/安装指南.md)。适用 2014–2020 年的 27 吋 5K iMac；我们在 2017 款上完整测过，其他年份按设计应当可用，欢迎用「机型回报」issue 告诉我们你的结果。
 
+> **1.1.1 在路上**：一批修复正在收尾，重点是 5K 画面更流畅、连接更稳定。敬请期待。
+
 ## 这是什么
 
 Apple 从 2014 年的 5K iMac 开始取消了「目标显示器模式」，Apple 芯片的 Mac 也完全用不了它。
