@@ -35,6 +35,8 @@ struct PWEApp: App {
             Darwin.exit(EXIT_SUCCESS)
         }
 
+        // C2: an input log from before 1.1.1 could hold key codes; it goes now.
+        TBInputDebugLog.removeOldLogAtLaunch()
         let shared = TBDisplaySenderService.shared
         // The language is the one macOS gives this app, every launch. Upstream
         // remembers a choice made in its settings; 1.1 has none to make, and a

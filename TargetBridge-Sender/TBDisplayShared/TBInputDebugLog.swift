@@ -12,33 +12,50 @@ private final class TBAsyncInputDebugLogWriter: @unchecked Sendable {
         }
     }
 
-    private func write(_ message: String) {
+    /// PWE (C2): at launch, before anything is written. A file written before
+    /// 1.1.1 can hold the iMac's key codes; any part that does not start with
+    /// this version's marker is removed, and the new file says so.
+    func removeOldFormat() {
+        writeQueue.async { [self] in
+            if removeOldFormatOnce() {
+                write("removed an input log from an earlier version (it could hold key codes)")
+            }
+        }
+    }
+
+    private var url: URL {
         let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support", isDirectory: true)
-        let url = base
+        return base
             .appendingPathComponent("TargetBridge", isDirectory: true)
             .appendingPathComponent("Logs", isDirectory: true)
             .appendingPathComponent("input-debug.log", isDirectory: false)
+    }
+
+    /// True when it removed something. Runs once per launch, on `writeQueue`.
+    private func removeOldFormatOnce() -> Bool {
+        guard !checkedOldFormat else { return false }
+        checkedOldFormat = true
+        var removed = false
+        for part in [url, url.appendingPathExtension("old")] where fileManager.fileExists(atPath: part.path) {
+            if !TBInputDebugLog.startsWithMarker(firstLine(of: part)) {
+                try? fileManager.removeItem(at: part)
+                removed = true
+            }
+        }
+        return removed
+    }
+
+    private func write(_ message: String) {
+        let url = self.url
         let timestamp = ISO8601DateFormatter().string(from: Date())
         var line = "\(timestamp) \(message)\n"
         let directory = url.deletingLastPathComponent()
         try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
 
-        // PWE (1.1.1): a file written before 1.1.1 can hold the iMac's key codes.
-        // Once per launch, remove any part that does not start with this
-        // version's marker, and say so in the new file.
-        if !checkedOldFormat {
-            checkedOldFormat = true
-            var removed = false
-            for part in [url, url.appendingPathExtension("old")] where fileManager.fileExists(atPath: part.path) {
-                if !TBInputDebugLog.startsWithMarker(firstLine(of: part)) {
-                    try? fileManager.removeItem(at: part)
-                    removed = true
-                }
-            }
-            if removed {
-                line = "\(timestamp) removed an input log from an earlier version (it could hold key codes)\n" + line
-            }
+        // A write before the launch's clean-up (removeOldFormat) still does it first.
+        if removeOldFormatOnce() {
+            line = "\(timestamp) removed an input log from an earlier version (it could hold key codes)\n" + line
         }
 
         // PWE: at most TBInputDebugLog.maxBytes, then one older part, and the
@@ -100,6 +117,12 @@ enum TBInputDebugLog {
 
     static func log(_ message: String) {
         writer.enqueue(message)
+    }
+
+    /// PWE (C2): removes an input log from before 1.1.1 at launch (it could
+    /// hold key codes), instead of waiting for the first line to be written.
+    static func removeOldLogAtLaunch() {
+        writer.removeOldFormat()
     }
 
     /// PWE (1.1.1): an event from the iMac. With PWE_INPUT_DEBUG=1, the first
