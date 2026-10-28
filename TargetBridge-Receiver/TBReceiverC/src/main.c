@@ -2884,6 +2884,36 @@ static void tb_receiver_fatal(const char *reason_key, const char *detail) {
     fprintf(stderr, "[main] bye (could not start)\n");
 }
 
+/* PWE (1.1.1, R2): receivers 1.0.0 and 1.0.1 appended sampled input events,
+ * key codes included, to an input-debug.log in their Application Support
+ * folder, without limit; 1.1 stopped writing it but nothing removed it. The
+ * path is PWE's own folder only: empty here, pwe/rebrand.py fills it in for
+ * PWE's builds, so a build with upstream's names never touches upstream's
+ * folders. Test builds use TB_RECEIVER_TEST_OLD_INPUT_LOG (a full path) and
+ * never the real one. 1 when a file was removed. */
+#define TB_RECEIVER_OLD_INPUT_LOG ""
+
+static int tb_receiver_forget_old_input_log(void) {
+    char path[PATH_MAX] = "";
+#if TB_RECEIVER_TEST_HOOKS
+    const char *test_path = getenv("TB_RECEIVER_TEST_OLD_INPUT_LOG");
+    if (!test_path || !*test_path) return 0;
+    snprintf(path, sizeof(path), "%s", test_path);
+#else
+    const char *home = getenv("HOME");
+    if (!TB_RECEIVER_OLD_INPUT_LOG[0] || !home || !*home) return 0;
+    snprintf(path, sizeof(path), "%s/%s", home, TB_RECEIVER_OLD_INPUT_LOG);
+#endif
+    if (unlink(path) != 0) return 0;
+    /* Its Logs folder held nothing else; rmdir leaves it if it does. */
+    char *slash = strrchr(path, '/');
+    if (slash) {
+        *slash = '\0';
+        (void)rmdir(path);
+    }
+    return 1;
+}
+
 int main(int argc, char **argv) {
     int fullscreen = 1;
     for (int i = 1; i < argc; i++) {
@@ -2920,9 +2950,19 @@ int main(int argc, char **argv) {
             !tb_log_line_is_clean_exit(previous_last_line)) {
             previous_run_unclean = 1;
         }
+        /* PWE (1.1.1, R2): logs from before 1.1.1 that hold sampled key events. */
+        const int forgot_logs = log_dir[0] ? tb_log_forget_old_key_lines(log_dir, "1.1.1") : 0;
+        const int forgot_input_log = tb_receiver_forget_old_input_log();
         if (log_dir[0] && tb_log_start(log_dir, TB_LOG_MAX_BYTES) == 0) {
             fprintf(stderr, "[log] receiver %s (%s) started, pid %d\n",
                     TB_RECEIVER_VERSION, TB_RECEIVER_BUILD, (int)getpid());
+        }
+        if (forgot_logs > 0) {
+            fprintf(stderr, "[log] removed %d log file%s written before 1.1.1: they held sampled key events\n",
+                    forgot_logs, forgot_logs == 1 ? "" : "s");
+        }
+        if (forgot_input_log) {
+            fprintf(stderr, "[log] removed input-debug.log left by receiver 1.0: it held sampled key events\n");
         }
         fprintf(stderr, "[sys] %s\n", sys);
     }

@@ -409,6 +409,10 @@ def rebrand_receiver(root: Path) -> None:
          f'"%s/Library/Application Support/{RECEIVER_DATA_NAME}/settings.json"')
     edit(src / "main.c", '"%s/Library/Application Support/TargetBridge Receiver"',
          f'"%s/Library/Application Support/{RECEIVER_DATA_NAME}"')
+    # The input-debug.log receivers 1.0.x left in their folder (1.1.1, R2): only
+    # PWE's builds delete it, and only in PWE's own folder.
+    edit(src / "main.c", '#define TB_RECEIVER_OLD_INPUT_LOG ""',
+         f'#define TB_RECEIVER_OLD_INPUT_LOG "Library/Application Support/{RECEIVER_DATA_NAME}/Logs/input-debug.log"')
     for path in sorted(src.glob("*.c")) + sorted(src.glob("*.m")):
         rename_in_literals(path)
     assets = root / "TargetBridge-Receiver/TargetBridgeAssets/Assets.xcassets/AppIcon.appiconset"
