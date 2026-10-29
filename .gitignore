@@ -40,4 +40,14 @@ test_clipboard
 test_sysinfo
 smoke_peer
 pboard_tool
+# PWE (1.1.1)
+test_ratelimit
+test_catchup
+test_runloop_thread
+test_input_rate
+post_moves
+test_decthreads
+test_brightness
+test_permwatch
+test_pairing_hint
 *.dSYM/

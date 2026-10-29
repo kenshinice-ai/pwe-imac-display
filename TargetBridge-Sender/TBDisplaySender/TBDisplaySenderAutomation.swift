@@ -104,6 +104,22 @@ enum TBSenderAutomation {
 
     /// Handle a `targetbridge://` URL (from `.onOpenURL`).
     static func handle(url: URL) {
+        pweHandle(url: url, own: false)
+    }
+
+    /// PWE (T54): a connect URL from outside (a script, `open`) goes to PWE's
+    /// model first, which applies it like its own Picture and display-mode
+    /// choices and keeps its own reconnect rules. Upstream's handling cancelled
+    /// the running retry loop and, without `retry=1`, connected once without
+    /// one, so automatic reconnect stayed off. Returns true when handled.
+    static var pweConnectURLHandler: (@MainActor ([String: String]) -> Bool)?
+
+    /// PWE: the model's own connections, which must not come back to it.
+    static func pweHandleOwn(url: URL) {
+        pweHandle(url: url, own: true)
+    }
+
+    private static func pweHandle(url: URL, own: Bool) {
         guard url.scheme?.lowercased() == "targetbridge" else { return }
         let action = (url.host ?? "").lowercased()
         var params: [String: String] = [:]
@@ -112,6 +128,7 @@ enum TBSenderAutomation {
                 params[item.name.lowercased()] = item.value
             }
         }
+        if !own, action == "connect", let handler = pweConnectURLHandler, handler(params) { return }
         run(action: action, params: params)
     }
 
@@ -234,12 +251,17 @@ enum TBSenderAutomation {
     /// iMac has been absent a minute), but cut short when a bridge redial falls
     /// due or the remembered receiver appears in Bonjour. Sleeping through
     /// either cost up to 2.6 s after Bonjour's `Add` (T10, 2026-10-20).
+    /// Both follow an event (PWEWakeSignal): the pause looks again when one
+    /// arrives, not every 250 ms as before 1.1.1 (B2).
     private static func pauseBeforeRetry(_ params: [String: String], upTo cap: TimeInterval) async {
         let service = TBDisplaySenderService.shared
         let session = resolveSession(service, params["session"])
         let wasListed = session.map { isListedWithAddress(service, $0) } ?? false
-        for _ in 0..<Int((cap / 0.25).rounded()) {
-            try? await Task.sleep(nanoseconds: 250_000_000)
+        let deadline = ProcessInfo.processInfo.systemUptime + cap
+        while !Task.isCancelled {
+            let left = deadline - ProcessInfo.processInfo.systemUptime
+            guard left > 0 else { return }
+            _ = await PWEWakeSignal.automation.wait(upTo: TBBridgeRedial.waitCap(left))
             guard !Task.isCancelled, let session else { continue }
             if TBBridgeRedial.isDue(for: session, service: service) { return }
             if !wasListed, isListedWithAddress(service, session) { return }
@@ -519,6 +541,27 @@ enum TBSenderAutomation {
         transportKind: TBTransportKind,
         session: TBDisplaySenderSession? = nil
     ) async -> [TBDiscoveredReceiver] {
+        // PWE (B2): with a remembered receiver, wait for Bonjour's list to change
+        // or a redial to fall due (PWEWakeSignal) rather than looking every
+        // 250 ms. Same 6 s budget; the list as it stands is returned when it runs
+        // out, and the caller then finds the remembered receiver missing. A name
+        // or address typed in a URL keeps upstream's polling below.
+        if isPersistedReceiverReference(preferredIdentity) {
+            let deadline = ProcessInfo.processInfo.systemUptime + 24 * 0.25
+            while true {
+                let receivers = service.discoveredReceivers
+                if let session, TBBridgeRedial.isDue(for: session, service: service) { return receivers }
+                if receivers.contains(where: {
+                    $0.matchesPersistedIdentity(preferredIdentity) && !$0.ip(for: transportKind).isEmpty
+                }) {
+                    return receivers
+                }
+                let left = deadline - ProcessInfo.processInfo.systemUptime
+                guard left > 0, !Task.isCancelled else { return receivers }
+                _ = await PWEWakeSignal.automation.wait(upTo: TBBridgeRedial.waitCap(left))
+            }
+        }
+
         var lastSignature: [String] = []
         var unchangedIterations = 0
         var firstNonEmptyIteration: Int?
@@ -897,6 +940,8 @@ enum TBBridgeRedial {
         triggeredAt = ProcessInfo.processInfo.systemUptime
         triggerReason = reason
         lastDialAt = nil
+        // PWE (B2): a redial may be due now; the retry loop's wait looks again.
+        PWEWakeSignal.automation.poke()
     }
 
     /// The session's receiver answered on the bridge at this address.
@@ -922,8 +967,8 @@ enum TBBridgeRedial {
         let localIP = interfaces.first { $0.ip == session.localInterfaceIP }?.ip ?? interfaces.first?.ip ?? ""
         let remembered = rememberedAddress(for: id)
         let sinceTrigger = triggeredAt.map { now - $0 }
-        // The retry loop asks every 250 ms and reading the settings-listed bridges
-        // is not free: only inside a trigger window, for an IPv6 address.
+        // The retry loop asks on every Bonjour change and reading the settings-listed
+        // bridges is not free: only inside a trigger window, for an IPv6 address.
         let mayDialIPv6 = TBConnectionDiagnostics.isIPv6LinkLocal(remembered)
             && sinceTrigger.map { $0 >= 0 && $0 < window } == true
         return decide(Inputs(
@@ -942,6 +987,25 @@ enum TBBridgeRedial {
 
     static func isDue(for session: TBDisplaySenderSession, service: TBDisplaySenderService) -> Bool {
         decision(for: session, service: service) != .wait
+    }
+
+    /// PWE (B2): inside a trigger window the next redial falls due by time
+    /// alone, an `interval` after the last one; no event announces it. How
+    /// long until then, or nil when time is not what it waits for
+    /// (PWEBridgeRedialTests).
+    nonisolated static func nextDialIn(sinceTrigger: TimeInterval?, sinceLastDial: TimeInterval?) -> TimeInterval? {
+        guard let sinceTrigger, sinceTrigger >= 0, sinceTrigger < window,
+              let sinceLastDial, sinceLastDial >= 0, sinceLastDial < interval else { return nil }
+        let wait = interval - sinceLastDial
+        return sinceTrigger + wait < window ? wait : nil
+    }
+
+    /// A wait of `left` seconds, cut to end just after the next redial falls due.
+    static func waitCap(_ left: TimeInterval) -> TimeInterval {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard let next = nextDialIn(sinceTrigger: triggeredAt.map { now - $0 },
+                                    sinceLastDial: lastDialAt.map { now - $0 }) else { return left }
+        return min(left, next + 0.01)
     }
 
     // MARK: - Watching the links

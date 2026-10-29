@@ -78,4 +78,11 @@ final class TBRelayedPointerTests: XCTestCase {
         XCTAssertEqual(TBRelayedPointer.start(cached: nil, recentTargets: [], real: real), real)
         XCTAssertEqual(TBRelayedPointer.start(cached: real, recentTargets: [], real: nil), real)
     }
+
+    // T57: the log names where the pointer went, so "it vanished" can be told apart.
+    func testTheLandingDisplayIsNamed() {
+        XCTAssertEqual(TBRelayedPointer.displayName(44, iMac: 44, builtIn: false), "the iMac")
+        XCTAssertEqual(TBRelayedPointer.displayName(1, iMac: 44, builtIn: true), "this Mac's built-in display")
+        XCTAssertEqual(TBRelayedPointer.displayName(3, iMac: 44, builtIn: false), "display 3")
+    }
 }

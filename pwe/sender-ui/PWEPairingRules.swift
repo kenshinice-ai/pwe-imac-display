@@ -91,3 +91,63 @@ enum PWEPairingRules {
         }
     }
 }
+
+/// A1 (1.1.1): a Mac with no screen of its own pairs with its iMac without
+/// one. When every condition holds, the app starts the connection as if
+/// "Use as Display" had been clicked; the pairing that follows is the usual
+/// one, unchanged (docs: DESIGN-headless-pairing-2026-10-24, not in the repo).
+/// It only saves the click nobody can make without a screen: the code is
+/// still shown on the iMac and typed on this Mac, and first pairing still
+/// needs the cable. Nothing new is sent to the iMac (PWEHeadlessPairingTests).
+enum PWEHeadlessPairingRules {
+    struct Inputs: Equatable {
+        /// Every online display is one of this app's own virtual displays.
+        var noPhysicalDisplay: Bool
+        /// iMacs found with a Thunderbolt Bridge address.
+        var iMacsOnCable: Int
+        /// The iMac the window offers (Ready) is that one.
+        var offeredIMacIsOnCable: Bool
+        var offeredIMacIsPaired: Bool
+        /// The person (or the app for them) disconnected in this run.
+        var disconnectedThisRun: Bool
+        /// Already started once for this iMac in this run.
+        var alreadyStarted: Bool
+        /// "Connect automatically when the cable goes in" is on.
+        var autoConnect: Bool
+        /// C3: how long no physical display has been online without a break.
+        var noPhysicalDisplayFor: TimeInterval = .infinity
+        /// C3: within `armedFor` of the launch or of a cable event (an iMac
+        /// newly on the cable, or its bridge address back after a replug).
+        var armed = true
+        /// C3: this Mac is asleep or has woken within the settle time; a
+        /// display can drop out for a second or two then.
+        var settling = false
+    }
+
+    /// C3: no display for this long without a break, so a monitor dropping
+    /// out for a moment (a wake, an input switch) starts nothing.
+    static let steadyFor: TimeInterval = 10
+    /// C3: how long after the launch or a cable event it may start.
+    static let armedFor: TimeInterval = 60
+
+    static func startsPairing(_ inputs: Inputs) -> Bool {
+        inputs.noPhysicalDisplay && inputs.noPhysicalDisplayFor >= steadyFor && inputs.armed && !inputs.settling
+            && inputs.iMacsOnCable == 1 && inputs.offeredIMacIsOnCable
+            && !inputs.offeredIMacIsPaired && !inputs.disconnectedThisRun && !inputs.alreadyStarted
+            && inputs.autoConnect
+    }
+
+    /// C4: an iMac is on this Mac's cable when it was seen through this Mac's
+    /// own bridge: its IPv6 link-local address resolved on one of this Mac's
+    /// cable bridges (TBDiscoveredReceiver.seenOnCableBridge, never the
+    /// lone-bridge guess `thunderboltIPv6` makes for dialing), or its bridge
+    /// IPv4 address resolved while this Mac has a link-local address on a
+    /// bridge. What the iMac announces about its own bridge does not count:
+    /// an iMac on the LAN announces its bridge address too.
+    static func isOnCable(seenOnCableBridge: Bool, bridgeIPv4: String, resolvedIPv4: [String],
+                          localBridgeIPv4: [String]) -> Bool {
+        if seenOnCableBridge { return true }
+        guard bridgeIPv4.hasPrefix("169.254."), resolvedIPv4.contains(bridgeIPv4) else { return false }
+        return localBridgeIPv4.contains { $0.hasPrefix("169.254.") }
+    }
+}

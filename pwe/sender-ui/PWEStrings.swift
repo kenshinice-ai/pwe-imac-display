@@ -47,7 +47,7 @@ struct PWEStrings {
     }
     var permissionTitle: String { t("Allow \(screenRecording())", "允许\(screenRecording())") }
     var permissionBody: String {
-        t("To show this Mac's screen on your iMac, PWE Screen Encore needs your permission. It records only the screen it shows on your iMac, and sends it nowhere else.",
+        t("To show this Mac’s screen on your iMac, PWE Screen Encore needs your permission. It records only the screen it shows on your iMac, and sends it nowhere else.",
           "要把这台 Mac 的画面显示到 iMac 上，PWE Screen Encore 需要你的允许。它只录制要显示在 iMac 上的画面，不发往其他任何地方。")
     }
     var permissionOpen: String { t("Open System Settings", "打开系统设置") }
@@ -62,8 +62,8 @@ struct PWEStrings {
     var searchingStep1: String { t("On the iMac, open PWE Screen Encore Receiver.", "在 iMac 上打开「PWE Screen Encore Receiver」。") }
     var searchingStep2: String { t("Connect the two Macs with a Thunderbolt cable.", "用雷雳线连接两台电脑。") }
     var searchingHint: String {
-        t("Your iMac appears here by itself. A 2014 or 2015 iMac needs Apple's Thunderbolt 3 to Thunderbolt 2 Adapter.",
-          "iMac 会自己出现在这里。2014、2015 款 iMac 需要 Apple 的雷雳 3 转雷雳 2 转换器。")
+        t("Your iMac appears here by itself. A 2014 or 2015 iMac needs Apple’s Thunderbolt 3 (USB-C) to Thunderbolt 2 Adapter.",
+          "iMac 会自己出现在这里。2014、2015 款 iMac 需要 Apple 雷雳 3 (USB-C) 至雷雳 2 转换器。")
     }
 
     // Choose / ready
@@ -79,12 +79,25 @@ struct PWEStrings {
     var picture: String { t("Picture", "画面") }
     func pictureName(_ preset: TBDisplayCapturePreset) -> String {
         switch preset {
-        case .standard1440p: return t("Standard · 1440p", "标准 · 1440p")
+        // 1440p at 60 frames is PWE's Standard (PWEPictureRules.offered). The
+        // 30-frame preset shows only when the Full Console chose it.
+        case .smooth1440p60: return t("Standard · 1440p", "标准 · 1440p")
+        case .standard1440p: return "1440p · 30 Hz"
+        // The 5K desktop, encoded at 4K (PWEPictureRules.choices).
+        case .crisp2160p60: return t("Smooth · 4K 60", "流畅 · 4K 60")
         case .native5k: return t("5K · 48 Hz", "5K · 48 Hz")
         case .native5k60Experimental: return t("5K · 60 Hz", "5K · 60 Hz")
         case .retina4k60: return t("4K · 60 Hz", "4K · 60 Hz")
         default: return "\(preset.title) · \(preset.description)"
         }
+    }
+    /// Plan A (1.1.1): the line under 5K · 60 Hz once this Mac's encoder fell
+    /// behind at it (PWEStreamStats.fiveK60Verdict). Advice, never a block; no
+    /// frame counts, which would read as a claim. The tooltip says why.
+    var fiveK60Advice: String { t("On this Mac, Smooth · 4K 60 is smoother", "这台 Mac 上「流畅 · 4K 60」更顺") }
+    var fiveK60AdviceDetail: String {
+        t("This Mac can’t encode every 5K frame in time, so motion stutters a little. 5K is sharper; Smooth · 4K 60 moves more smoothly. Choose what suits you.",
+          "这台 Mac 来不及编码每一帧 5K 画面，动起来会有点卡。5K 更清晰，「流畅 · 4K 60」更顺，按你的需要选。")
     }
 
     // Connecting
@@ -94,7 +107,7 @@ struct PWEStrings {
     }
     func stage(_ stage: PWEStage) -> String {
         switch stage {
-        case .reaching: return t("Reaching the iMac", "正在连接 iMac")
+        case .reaching: return t("Reaching the iMac", "正在联系 iMac")
         case .preparing: return t("Preparing the display", "正在准备显示器")
         case .waitingForPicture: return t("Waiting for the picture", "正在等待画面")
         }
@@ -116,11 +129,21 @@ struct PWEStrings {
         }
     }
     var arrange: String { t("Arrange Displays…", "排列显示器…") }
+    /// A14 (T50): Screen Sharing on this Mac shows the iMac that is its display.
+    var screenSharingNotice: String {
+        t("You’re viewing this iMac with Screen Sharing, so the picture repeats itself. To use the iMac directly, disconnect Screen Sharing.",
+          "你在用屏幕共享看这台 iMac，画面会无限重复。要直接用 iMac，先断开屏幕共享。")
+    }
+    /// The menu's short form of it; the item's tooltip carries the whole notice.
+    var screenSharingMenu: String { t("Viewing this iMac with Screen Sharing", "正在用屏幕共享看这台 iMac") }
     var disconnect: String { t("Disconnect", "断开") }
     /// The menu's line under the status while the picture is up: the picture's
     /// size and the frames this Mac sent in the last second (the engine's
     /// `senderFPS`). A still screen sends no frames; then only the size shows,
     /// never "0 fps" (PWEStringsTests).
+    ///
+    /// It says "sent" (A3, 1.1.1): it counts what leaves this Mac, not what the
+    /// iMac shows. RC8 W6 had the menu at 60 while the iMac showed about 21.
     func liveLine(_ preset: TBDisplayCapturePreset, fps rawFPS: Int) -> String {
         // The engine's counter catches up after a pause (a menu held open), so a
         // reading above the panel's refresh is that, not the picture.
@@ -128,12 +151,12 @@ struct PWEStrings {
         let size: String
         switch preset {
         case .native5k, .native5k60Experimental: size = "5K"
-        case .retina4k60: size = "4K"
-        case .standard1440p: size = "1440p"
+        case .retina4k60, .crisp2160p60: size = "4K"
+        case .standard1440p, .smooth1440p60: size = "1440p"
         default: size = preset.title
         }
         guard fps > 0 else { return size }
-        return "\(size) · " + t("\(fps) fps", "\(fps) 帧/秒")
+        return "\(size) · " + t("\(fps) fps sent", "已发送 \(fps) 帧/秒")
     }
 
     // Interrupted
@@ -175,6 +198,15 @@ struct PWEStrings {
         zh ? ("以后在菜单栏的 ", " 里调亮度、画面和声音。")
            : ("From now on, brightness, picture and sound are under ", " in the menu bar.")
     }
+    /// T19: the same tip when the menu bar item is not on screen (hidden in
+    /// System Settings › Menu Bar on macOS 26 and later, or by another app).
+    func menuBarHiddenTip(macOS major: Int = ProcessInfo.processInfo.operatingSystemVersion.majorVersion) -> String {
+        major >= 26
+            ? t("Brightness, picture and sound are under the PWE Screen Encore icon, which is hidden from the menu bar. Show it in System Settings › Menu Bar.",
+                "亮度、画面和声音在 PWE Screen Encore 的菜单栏图标里，这个图标现在隐藏着。可以在系统设置 › 菜单栏里让它显示。")
+            : t("Brightness, picture and sound are under the PWE Screen Encore icon, which is hidden from the menu bar.",
+                "亮度、画面和声音在 PWE Screen Encore 的菜单栏图标里，这个图标现在隐藏着。")
+    }
     var menuBarTipSpoken: String {
         t("From now on, brightness, picture and sound are under the PWE Screen Encore icon in the menu bar.",
           "以后在菜单栏的 PWE Screen Encore 图标里调亮度、画面和声音。")
@@ -183,9 +215,14 @@ struct PWEStrings {
     // Preferences
     var autoConnect: String { t("Connect automatically when the cable goes in", "接上线就自动连接") }
     var launchAtLogin: String { t("Open at login", "登录时打开") }
-    var launchAtLoginApproval: String { t("Allow in Login Items…", "在「登录项」里允许…") }
+    /// macOS 15 renamed the pane; read on macOS 27.2 (2026-10-29) from System
+    /// Settings' LoginItems extension: "Login Items & Extensions" / 「登录项与扩展」.
+    func launchAtLoginApproval(macOS major: Int = ProcessInfo.processInfo.operatingSystemVersion.majorVersion) -> String {
+        major >= 15 ? t("Allow in Login Items & Extensions…", "在「登录项与扩展」里允许…")
+                    : t("Allow in Login Items…", "在「登录项」里允许…")
+    }
     /// The copy runs from a disk image or a download folder (PWELoginItemRules).
-    var launchAtLoginMove: String { t("Move the app to Applications to open it at login.", "移到「应用程序」后可登录时打开。") }
+    var launchAtLoginMove: String { t("Move the app to Applications to open it at login.", "移到「应用程序」文件夹后，才能登录时打开。") }
 
     // Menu bar
     func menuConnectTo(_ name: String) -> String { t("Use \(name) as Display", "把 \(name) 用作显示器") }
@@ -193,7 +230,7 @@ struct PWEStrings {
     var quit: String { t("Quit PWE Screen Encore", "退出 PWE Screen Encore") }
     func status(_ phase: PWEPhase) -> String {
         switch phase {
-        case .needsPermission: return t("Needs \(screenRecording()) permission", "需要\(screenRecording())权限")
+        case .needsPermission: return t("Needs \(screenRecording()) permission", "需要「\(screenRecording())」权限")
         case .searching: return t("Looking for your iMac…", "正在找你的 iMac…")
         // The menu lists each iMac under this line, as the window does.
         case .choose: return t("Choose an iMac", "请选择 iMac")
@@ -217,7 +254,7 @@ struct PWEStrings {
     var codeTitle: String { t("Enter the code shown on your iMac", "输入 iMac 上的配对码") }
     var codeBody: String {
         t("Your iMac is showing a 6-digit code. Enter it once, and this Mac will connect automatically from now on.",
-          "iMac 屏幕上显示了 6 位数字。输入一次，以后插线就会自动连接。")
+          "iMac 屏幕上显示着 6 位配对码。输入一次，以后这台 Mac 就会自动连接。")
     }
     var codeIdentityChanged: String {
         t("This iMac’s identity has changed — it may have been reinstalled. Enter its pairing code again.",
@@ -246,7 +283,7 @@ struct PWEStrings {
     var codeChecking: String { t("Checking the code…", "正在核对配对码…") }
     var codePlaceholder: String { t("6 digits", "6 位数字") }
     var pair: String { t("Pair", "配对") }
-    var legacyTitle: String { t("Connect without encryption?", "不加密连接？") }   // DRAFT (title only)
+    var legacyTitle: String { t("Connect without encryption?", "要不加密连接吗？") }   // DRAFT (title only)
     var legacyOriginal: String {
         // The title asks the question and the buttons answer it; the body only explains.
         t("The receiver on this iMac can’t encrypt, so the connection won’t be encrypted or verified. Installing PWE Screen Encore Receiver on the iMac fixes this.",
@@ -276,7 +313,7 @@ struct PWEStrings {
             return t("This Mac can’t read its keychain, so the connection can’t be encrypted.", "这台 Mac 读不到钥匙串，无法加密连接。")
         case .version:
             return t("The receiver on your iMac is a different version. Update both to the same version.",
-                     "iMac 上的接收端版本不同。请把两台都更新到同一版本。")
+                     "iMac 上的接收端和这台 Mac 的版本不一致。请把两台都更新到同一版本。")
         case .protocolError:
             return t("The connection to your iMac failed a security check. Try again.", "与 iMac 的连接没通过安全检查。请重试。")
         case .cancelled:
@@ -289,7 +326,7 @@ struct PWEStrings {
     /// DRAFT
     var unencryptedBanner: String {
         t("Not encrypted: picture and sound only. Keyboard, mouse and clipboard are off.",
-          "未加密：只传画面和声音，键鼠和剪贴板已关闭。")
+          "未加密：只传画面和声音，键盘、鼠标和剪贴板已关闭。")
     }
     /// DRAFT
     var turnOffUnencrypted: String { t("Turn Off Unencrypted Connections", "关闭不加密连接") }
@@ -297,7 +334,7 @@ struct PWEStrings {
     var waitingForCode: String { t("Waiting for the pairing code", "等待输入配对码") }   // DRAFT (menu status)
     var needsAnswer: String { t("Waiting for your answer in the window", "请在窗口里回答") }   // DRAFT (menu status)
     // Settings › Advanced
-    var allowUnencrypted: String { t("Allow unencrypted connections", "允许不加密的连接") }   // DRAFT
+    var allowUnencrypted: String { t("Allow unencrypted connections", "允许不加密连接") }   // DRAFT
     var allowUnencryptedHint: String {
         t("For iMacs that still run an older receiver: picture and sound only, always with a warning.",
           "用于还在运行旧版接收端的 iMac：只传画面和声音，并始终提示未加密。")
@@ -310,7 +347,7 @@ struct PWEStrings {
         let region = Locale.current.region?.identifier ?? "CN"
         let locale = zh ? Locale(identifier: "zh_Hans_\(region)") : Locale.current
         let formatted = date.formatted(Date.FormatStyle(date: .abbreviated, time: .omitted).locale(locale))
-        return t("Paired \(formatted)", "\(formatted) 配对")
+        return t("Paired \(formatted)", "\(formatted)配对")
     }   // DRAFT
     var forget: String { t("Forget", "忘记") }
     /// DRAFT
@@ -327,20 +364,40 @@ struct PWEStrings {
         t("Works only on an encrypted connection.", "只在加密连接中可用。")
     }
 
+    // Settings › General › Use only the iMac (A2)
+    var onlyIMacTitle: String { t("Use only the iMac", "以后只用 iMac") }
+    var onlyIMacBody: String {
+        t("Do this once while you can see this Mac. Afterwards the iMac is all you need, except after a restart (type your password on this Mac’s keyboard).",
+          "趁现在还看得见这台 Mac，先做一次。之后只用 iMac 就行；只有重启后，要在这台 Mac 的键盘上输入密码。")
+    }
+    func onlyIMacRow(_ row: PWEOnlyIMacRules.Row) -> String {
+        switch row {
+        case .screenRecording: return t("\(screenRecording()) allowed", "已允许「\(screenRecording())」")
+        case .openAtLogin: return launchAtLogin
+        case .autoConnect: return autoConnect
+        case .keyboardMouse: return t("Keyboard & Mouse: \(inputRoleName(.iMacControlsMac))", "键盘与鼠标：\(inputRoleName(.iMacControlsMac))")
+        case .screenSharing: return t("Screen Sharing is on", "已打开「屏幕共享」")
+        case .remoteLogin: return t("Remote Login is on", "已打开「远程登录」")
+        }
+    }
+    /// A row's button for PWE's own setting: it acts at once, so no ellipsis.
+    var turnOn: String { t("Turn On", "打开") }
+    var checkInSystemSettings: String { t("Check in System Settings…", "在系统设置里查看…") }
+
     // Settings
     var general: String { t("General", "通用") }
     var keyboardMouse: String { t("Keyboard & Mouse", "键盘与鼠标") }
     var advancedTab: String { t("Advanced", "高级") }
     var reconnectNotice: String { t("Reconnecting to apply the change…", "正在重新连接以应用更改…") }
     var largeCursor: String { t("Larger pointer on the iMac", "iMac 上使用大指针") }
-    var changesReconnect: String { t("Changes reconnect for a moment.", "更改后会重新连接一下。") }
+    var changesReconnect: String { t("Changing this reconnects briefly.", "更改后会短暂重新连接。") }
     var iMacRendering: String { t("iMac rendering", "iMac 上的渲染方式") }
     func renderingName(_ rendering: PWERendering) -> String {
         switch rendering {
-        case .openGL: return t("Lowest latency (OpenGL)", "低延迟（OpenGL）")
+        case .openGL: return t("Lowest latency (OpenGL)", "延迟最低（OpenGL）")
         // Measured: 25–40 % less of the iMac's CPU (PWERendering). Power was
         // never measured, so the name does not promise it (audit P2-02).
-        case .metal: return t("Less CPU (Metal)", "占用更少（Metal）")
+        case .metal: return t("Less CPU (Metal)", "CPU 占用更少（Metal）")
         }
     }
     var iMacVolume: String { t("iMac volume", "iMac 音量") }
@@ -386,10 +443,10 @@ struct PWEStrings {
     var reportLabel: String { t("Report for support", "求助报告") }
     var passed: String { t("Passed", "通过") }
     var needsAttention: String { t("Needs attention", "需要处理") }
-    var afterConnecting: String { t("Checked after connecting", "连接后检查") }
+    var afterConnecting: String { t("Checked after connecting", "连接后才会检查") }
     var exportReport: String { t("Save Report…", "保存报告…") }
     var exportReportHint: String {
-        t("A text file with versions, settings and the last 30 minutes of this app's log, for support.",
+        t("A text file with versions, settings and the last 30 minutes of this app’s log, for support.",
           "一个文本文件，含版本、设置和本 App 最近 30 分钟的日志，用于求助。")
     }
     /// Says why the console looks different without naming the engine: the UI names
@@ -403,12 +460,14 @@ struct PWEStrings {
     var version: String { t("Version", "版本") }
     /// Under the name in About: what the app is for. "for iMac" is a reference, not part of the name.
     var forIMac: String { t("For iMac", "用于 iMac") }
-    /// The fixed credit, word for word the same on every PWE surface
-    /// (docs/pwe/BRAND-iMac-Display-2026-10-20.md §2.1). The one place the UI names TargetBridge
-    /// apart from the receivers a person installed from it.
+    /// The credit, word for word the same on every PWE surface
+    /// (docs/pwe/BRAND-iMac-Display-2026-10-20.md §2.1): PWE Group's line leads,
+    /// and the upstream credit follows in smaller type.
+    var builtBy: String { t("Built and signed by PWE Group.", "由 PWE Group 构建并签名。") }
+    /// The one place the UI names TargetBridge apart from the receivers a person installed from it.
     var credits: String {
-        t("Based on TargetBridge by Marco Caciotti and its community (MIT). Built and signed by PWE; not an official TargetBridge release.",
-          "基于开源项目 TargetBridge（Marco Caciotti 与社区，MIT）。由 PWE 构建并签名，不是 TargetBridge 的官方版本。")
+        t("Based on TargetBridge by Marco Caciotti and its community (MIT); not an official TargetBridge release.",
+          "基于开源项目 TargetBridge（Marco Caciotti 与社区，MIT），不是 TargetBridge 的官方版本。")
     }
     var source: String { t("Source Code", "源代码") }
     var support: String { t("Support PWE…", "支持 PWE…") }

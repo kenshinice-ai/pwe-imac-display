@@ -471,8 +471,16 @@ final class PWESecureOneShot: @unchecked Sendable {
     private let queue = DispatchQueue(label: "pwe.secure.oneshot")
     private var buffer = Data()
     private var finished = false
+    /// Called once, with whether the packet was handed to the connection.
+    private let completion: (Bool) -> Void
+    private let timeout: TimeInterval
 
-    private init(packet: Data, host: String, expectedID: Data, store: PWEPairingStore) {
+    /// Seconds one address gets. A cable answers in milliseconds; a dead
+    /// address before others must not hold them up for long.
+    static func timeout(remaining hosts: Int) -> TimeInterval { hosts > 1 ? 1 : 3 }
+
+    private init(packet: Data, host: String, expectedID: Data, store: PWEPairingStore,
+                 timeout: TimeInterval, completion: @escaping (Bool) -> Void) {
         connection = NWConnection(
             host: NWEndpoint.Host(host),
             port: NWEndpoint.Port(rawValue: TBMonitorProtocol.port)!,
@@ -481,11 +489,23 @@ final class PWESecureOneShot: @unchecked Sendable {
         link = PWESecureLink(connection: connection, plaintext: false, store: store)
         self.packet = packet
         self.expectedID = expectedID
+        self.completion = completion
+        self.timeout = timeout
     }
 
-    static func send(_ packet: Data, to host: String, expectedID: Data, store: PWEPairingStore = .shared) {
-        let shot = PWESecureOneShot(packet: packet, host: host, expectedID: expectedID, store: store)
+    /// Tries `hosts` in order and stops at the first that takes the packet:
+    /// one connection when the first address answers.
+    /// Returns whether a connection was started (false with no address).
+    @discardableResult
+    static func send(_ packet: Data, toFirstOf hosts: [String], expectedID: Data, store: PWEPairingStore = .shared) -> Bool {
+        guard let host = hosts.first else { return false }
+        let shot = PWESecureOneShot(packet: packet, host: host, expectedID: expectedID, store: store,
+                                    timeout: timeout(remaining: hosts.count)) { delivered in
+            guard !delivered else { return }
+            send(packet, toFirstOf: Array(hosts.dropFirst()), expectedID: expectedID, store: store)
+        }
         shot.run()
+        return true
     }
 
     private func run() {
@@ -503,7 +523,7 @@ final class PWESecureOneShot: @unchecked Sendable {
             }
         }
         connection.start(queue: queue)
-        queue.asyncAfter(deadline: .now() + 3) { [self] in finish() }
+        queue.asyncAfter(deadline: .now() + timeout) { [self] in finish() }
     }
 
     private func receive() {
@@ -514,7 +534,9 @@ final class PWESecureOneShot: @unchecked Sendable {
                     guard (0x50...0x5E).contains(type.rawValue) else { return finish() }
                     let step = link.handle(type: type.rawValue, payload: payload)
                     if step.has(PWE_SEC_EV_SECURE) {
-                        link.send(content: packet, completion: .contentProcessed({ [self] _ in finish() }))
+                        link.send(content: packet, completion: .contentProcessed({ [self] error in
+                            finish(delivered: error == nil)
+                        }))
                         return
                     }
                     if step.closes || step.has(PWE_SEC_EV_NEED_CODE) { return finish() }
@@ -527,11 +549,12 @@ final class PWESecureOneShot: @unchecked Sendable {
         }
     }
 
-    private func finish() {
+    private func finish(delivered: Bool = false) {
         guard !finished else { return }
         finished = true
         link.close()
         connection.cancel()
+        completion(delivered)
     }
 }
 

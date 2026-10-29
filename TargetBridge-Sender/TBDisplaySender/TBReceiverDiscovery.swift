@@ -24,6 +24,10 @@ struct TBDiscoveredReceiver: Identifiable, Equatable {
     /// For the diagnostic report only.
     let receiverModel: String
     let receiverOS: String
+    /// PWE (C4): Bonjour resolved the receiver's bridge IPv6 address on one
+    /// of this Mac's cable bridges. Unlike `thunderboltIPv6`, never true from
+    /// the receiver's own announcement alone.
+    let seenOnCableBridge: Bool
 
     init(
         serviceName: String,
@@ -42,7 +46,8 @@ struct TBDiscoveredReceiver: Identifiable, Equatable {
         supportsHEVCDecode: Bool,
         hostName: String?,
         receiverModel: String = "",
-        receiverOS: String = ""
+        receiverOS: String = "",
+        seenOnCableBridge: Bool = false
     ) {
         self.serviceName = serviceName
         self.receiverName = receiverName
@@ -61,6 +66,7 @@ struct TBDiscoveredReceiver: Identifiable, Equatable {
         self.hostName = hostName
         self.receiverModel = receiverModel
         self.receiverOS = receiverOS
+        self.seenOnCableBridge = seenOnCableBridge
     }
 
     /// SwiftUI selection and persisted sessions both use this stable identity.
@@ -235,11 +241,15 @@ final class TBReceiverDiscovery: NSObject, ObservableObject {
         let resolvedIPv4Addresses = resolvedIPv4Addresses(from: service)
         // PWE (T34): `tbIP6`, scoped to the bridge it is reached on.
         let advertisedIPv6 = stringValue("tbIP6")
+        let resolvedIPv6 = advertisedIPv6.isEmpty ? [] : resolvedIPv6Addresses(from: service)
+        let cableBridges = advertisedIPv6.isEmpty ? [] : TBConnectionDiagnostics.currentCableBridgeIPv6Interfaces()
         let thunderboltIPv6 = advertisedIPv6.isEmpty ? "" : TBConnectionDiagnostics.scopedBridgeIPv6(
             advertised: advertisedIPv6,
-            resolved: resolvedIPv6Addresses(from: service),
-            cableBridges: TBConnectionDiagnostics.currentCableBridgeIPv6Interfaces()
+            resolved: resolvedIPv6,
+            cableBridges: cableBridges
         )
+        let seenOnCableBridge = !advertisedIPv6.isEmpty && TBConnectionDiagnostics.seenOnCableBridge(
+            advertised: advertisedIPv6, resolved: resolvedIPv6, cableBridges: cableBridges)
         let preferredIP = !receiverIP.isEmpty
             ? receiverIP
             : (!thunderboltIP.isEmpty
@@ -284,7 +294,8 @@ final class TBReceiverDiscovery: NSObject, ObservableObject {
             supportsHEVCDecode: supportsHEVCDecode,
             hostName: service.hostName,
             receiverModel: stringValue("model"),
-            receiverOS: stringValue("os")
+            receiverOS: stringValue("os"),
+            seenOnCableBridge: seenOnCableBridge
         )
 
         if let index = receivers.firstIndex(where: {

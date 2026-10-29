@@ -41,7 +41,7 @@ targets:
         # PWE: pairing and encrypted sessions. TargetBridge-Shared/secure is C on
         # libsodium, built universal by pwe/receiver-deps.sh (pwe/package.sh passes
         # PWE_SODIUM_DIR; the default is that script's cache).
-        PWE_SODIUM_DIR: "$(TMPDIR)/pwe-imacdisplay-deps/universal"
+        PWE_SODIUM_DIR: "$(HOME)/Library/Caches/pwe-screen-encore-deps/universal"
         HEADER_SEARCH_PATHS: ["$(PWE_SODIUM_DIR)/include", "$(SRCROOT)/../TargetBridge-Shared/secure"]
         OTHER_LDFLAGS: ["$(PWE_SODIUM_DIR)/lib/libsodium.a", "-framework", "Security"]
     preBuildScripts:
@@ -75,7 +75,7 @@ targets:
         BUNDLE_LOADER: "$(TEST_HOST)"
         # PWE: tests call the shared C layer directly (test vectors).
         SWIFT_OBJC_BRIDGING_HEADER: TargetBridgeSupport/TargetBridge-Bridging-Header.h
-        PWE_SODIUM_DIR: "$(TMPDIR)/pwe-imacdisplay-deps/universal"
+        PWE_SODIUM_DIR: "$(HOME)/Library/Caches/pwe-screen-encore-deps/universal"
         HEADER_SEARCH_PATHS: ["$(PWE_SODIUM_DIR)/include", "$(SRCROOT)/../TargetBridge-Shared/secure"]
 
 schemes:

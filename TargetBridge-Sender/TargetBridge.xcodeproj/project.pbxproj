@@ -504,7 +504,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.targetbridge.sender;
 				PRODUCT_NAME = TargetBridge;
-				PWE_SODIUM_DIR = "$(TMPDIR)/pwe-imacdisplay-deps/universal";
+				PWE_SODIUM_DIR = "$(HOME)/Library/Caches/pwe-screen-encore-deps/universal";
 				SDKROOT = macosx;
 				SWIFT_OBJC_BRIDGING_HEADER = "TargetBridgeSupport/TargetBridge-Bridging-Header.h";
 				SWIFT_STRICT_CONCURRENCY = minimal;
@@ -538,7 +538,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.targetbridge.sender;
 				PRODUCT_NAME = TargetBridge;
-				PWE_SODIUM_DIR = "$(TMPDIR)/pwe-imacdisplay-deps/universal";
+				PWE_SODIUM_DIR = "$(HOME)/Library/Caches/pwe-screen-encore-deps/universal";
 				SDKROOT = macosx;
 				SWIFT_OBJC_BRIDGING_HEADER = "TargetBridgeSupport/TargetBridge-Bridging-Header.h";
 				SWIFT_STRICT_CONCURRENCY = minimal;
@@ -563,7 +563,7 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.targetbridge.sender.tests;
-				PWE_SODIUM_DIR = "$(TMPDIR)/pwe-imacdisplay-deps/universal";
+				PWE_SODIUM_DIR = "$(HOME)/Library/Caches/pwe-screen-encore-deps/universal";
 				SDKROOT = macosx;
 				SWIFT_OBJC_BRIDGING_HEADER = "TargetBridgeSupport/TargetBridge-Bridging-Header.h";
 				SWIFT_STRICT_CONCURRENCY = minimal;
@@ -645,7 +645,7 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.targetbridge.sender.tests;
-				PWE_SODIUM_DIR = "$(TMPDIR)/pwe-imacdisplay-deps/universal";
+				PWE_SODIUM_DIR = "$(HOME)/Library/Caches/pwe-screen-encore-deps/universal";
 				SDKROOT = macosx;
 				SWIFT_OBJC_BRIDGING_HEADER = "TargetBridgeSupport/TargetBridge-Bridging-Header.h";
 				SWIFT_STRICT_CONCURRENCY = minimal;

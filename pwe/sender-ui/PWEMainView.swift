@@ -221,6 +221,8 @@ struct PWEMainView: View {
         } actions: {
             VStack(alignment: .leading, spacing: 16) {
                 if model.isUnencrypted { unencryptedWarning }
+                // A14: the picture loop Screen Sharing makes, and how to end it.
+                if model.viewedWithScreenSharing { PWENote(strings.screenSharingNotice) }
                 HStack(spacing: 10) {
                     Button(strings.arrange) { model.openDisplaySettings() }
                     Button(strings.disconnect) { model.disconnect() }
@@ -236,23 +238,30 @@ struct PWEMainView: View {
     private var firstConnectionTips: some View {
         VStack(alignment: .leading, spacing: 10) {
             Divider()
-            let tip = strings.menuBarTip
-            // The glyph the menu bar shows (PWEStatusMenu.updateButton).
-            Text("\(tip.before)\(Image("PWEMenuBarReady"))\(tip.after)")
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityLabel(strings.menuBarTipSpoken)
+            if model.menuBarIconHidden {
+                // T19: the icon the tip points at is not there to see.
+                Text(strings.menuBarHiddenTip())
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                let tip = strings.menuBarTip
+                // The glyph the menu bar shows (PWEStatusMenu.updateButton).
+                Text("\(tip.before)\(Image("PWEMenuBarReady"))\(tip.after)")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(strings.menuBarTipSpoken)
+            }
             Toggle(strings.launchAtLogin, isOn: Binding(
                 get: { model.launchAtLogin },
                 set: { model.setLaunchAtLogin($0) }))
                 .toggleStyle(.checkbox)
-                .disabled(model.launchAtLoginUnavailable && !model.launchAtLogin)
+                .disabled(!model.launchAtLoginDisplay.isEnabled)
             if model.launchAtLoginNeedsApproval {
-                Button(strings.launchAtLoginApproval) { model.openLoginItemsSettings() }
+                Button(strings.launchAtLoginApproval()) { model.openLoginItemsSettings() }
                     .buttonStyle(.link)
                     .font(.callout)
             }
-            if model.launchAtLoginUnavailable {
+            if model.launchAtLoginDisplay.showsMoveHint {
                 Text(strings.launchAtLoginMove)
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -443,10 +452,14 @@ struct PWEAboutView: View {
                         .font(.callout).foregroundStyle(.secondary)
                 }
             }
-            Text(strings.credits)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(strings.builtBy)
+                    .font(.callout)
+                Text(strings.credits)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack(spacing: 14) {
                 Link(strings.source, destination: URL(string: "https://github.com/kenshinice-ai/pwe-imac-display")!)
                 Link(strings.support, destination: URL(string: "https://pwestudio.site/support")!)

@@ -14,4 +14,20 @@ enum PWELoginItemRules {
         let homeApplications = (home as NSString).appendingPathComponent("Applications")
         return bundlePath.hasPrefix("/Applications/") || bundlePath.hasPrefix(homeApplications + "/")
     }
+
+    /// What the Open at login switch shows (A7, 1.1.1). macOS keeps one login
+    /// item per bundle ID, so a copy run from a disk image sees the status the
+    /// installed copy registered: the switch shows that real status. The hint
+    /// to move the app shows only while the switch is off, so "on" and "move
+    /// the app to Applications" never stand together (RC8 W11.4). Turning it on
+    /// needs a copy that can register; turning it off always works.
+    struct Display: Equatable {
+        var isOn: Bool
+        var isEnabled: Bool
+        var showsMoveHint: Bool
+    }
+
+    static func display(registered: Bool, canRegister: Bool) -> Display {
+        Display(isOn: registered, isEnabled: registered || canRegister, showsMoveHint: !registered && !canRegister)
+    }
 }

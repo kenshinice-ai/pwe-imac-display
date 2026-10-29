@@ -64,6 +64,8 @@ ifeq ($(UNAME_S),Darwin)
 LDFLAGS  += -framework ApplicationServices -framework AppKit -framework CoreFoundation -framework CoreGraphics -framework CoreText -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework IOSurface -framework CoreServices -framework CoreAudio -framework SystemConfiguration -framework ServiceManagement
 # PWE (1.1.1): IOPMAssertionDeclareUserActivity wakes the screen when a session starts.
 LDFLAGS  += -framework IOKit
+# PWE (1.1.1): IsSecureEventInputEnabled (HIToolbox) for the permission probe.
+LDFLAGS  += -framework Carbon
 endif
 
 C_SRC = src/main.c src/net.c src/audio_ring.c src/decoder.c src/display.c src/input_queue.c src/idle_watchdog.c src/receiver_profile.c src/tb_i18n.c
@@ -76,6 +78,12 @@ C_SRC += src/tb_cursor_image.c
 C_SRC += src/tb_log.c
 # The main loop's watchdog: names a call that blocks the loop (PWE 1.1, T40).
 C_SRC += src/tb_loopwatch.c
+# The global event tap on its own run-loop thread, and its rate line (PWE 1.1.1, A15).
+C_SRC += src/tb_runloop_thread.c src/tb_input_rate.c
+# Brightness on the display the window is on (PWE 1.1.1, A6).
+C_SRC += src/tb_brightness.c
+# Input Monitoring and Accessibility re-checked off the main loop (PWE 1.1.1, A8).
+C_SRC += src/tb_permwatch.c
 # Sound output and volume on their own thread, off the main loop (PWE 1.1, T40).
 C_SRC += src/audio_out.c
 # Hardware decode as VideoToolbox reports it, and the [sys] start-up line (PWE 1.1).
@@ -108,7 +116,7 @@ src/pwe_%.o: $(SEC_DIR)/pwe_%.c $(SEC_DIR)/pwe_secure.h
 
 clean:
 	rm -f $(OBJ) $(BIN) $(TEST_BIN) $(TEST_INPUT_QUEUE_BIN) $(TEST_IDLE_WATCHDOG_BIN) $(TEST_RECEIVER_PROFILE_BIN) $(TEST_AUDIO_RING_BIN) $(TEST_AUDIO_OUT_BIN) $(TEST_CLIPBOARD_BIN) $(TEST_SYSINFO_BIN) test_monitor_shield
-	rm -f smoke_peer pboard_tool
+	rm -f smoke_peer pboard_tool post_moves
 	rm -f $(PWE_RENDER_TEST_BINS)
 	rm -f $(TEST_SECURE_BIN) bench_secure secure_receiver secure_peer
 	rm -rf *.dSYM
@@ -161,6 +169,20 @@ $(TEST_RECEIVER_PROFILE_BIN): tests/test_receiver_profile.c src/receiver_profile
 
 # Receiver rendering (PWE 1.1): tests for the pure-C parts.
 PWE_RENDER_TEST_BINS = test_trace test_metal_video test_cursor_image test_log test_loopwatch
+# PWE (1.1.1): log windows per kind of event.
+PWE_RENDER_TEST_BINS += test_ratelimit
+# PWE (1.1.1): only the newest picture of a backlog is shown.
+PWE_RENDER_TEST_BINS += test_catchup
+# PWE (1.1.1): the event tap on its own run-loop thread, and its rate line.
+PWE_RENDER_TEST_BINS += test_runloop_thread test_input_rate
+# PWE (1.1.1): threads for software decoding.
+PWE_RENDER_TEST_BINS += test_decthreads
+# PWE (1.1.1): brightness on the window's display only.
+PWE_RENDER_TEST_BINS += test_brightness
+# PWE (1.1.1): permissions re-checked off the main loop.
+PWE_RENDER_TEST_BINS += test_permwatch
+# PWE (1.1.1): the idle screen's hint after an unanswered pairing code.
+PWE_RENDER_TEST_BINS += test_pairing_hint
 
 
 # ---- PWE: secure layer tests (need libsodium; AddressSanitizer on) -----------
@@ -185,6 +207,10 @@ secure_peer: tests/secure_peer.c $(SEC_TEST_SRC) $(SEC_DIR)/pwe_keystore.h
 smoke_peer: tests/secure_peer.c $(SEC_TEST_SRC) $(SEC_DIR)/pwe_secure.h $(SEC_DIR)/pwe_keystore.h
 	$(CC) $(TEST_CFLAGS) -D_DARWIN_C_SOURCE -Isrc -I$(SEC_DIR) $(SODIUM_CFLAGS) \
 	  tests/secure_peer.c $(SEC_TEST_SRC) $(SEC_TEST_LIBS) -o $@
+
+# PWE (1.1.1): input for the smoke's event-tap phase (still mouse moves).
+post_moves: tests/post_moves.c
+	$(CC) -O2 -g -Wall -Wextra tests/post_moves.c -framework ApplicationServices -o $@
 
 pboard_tool: tests/pboard_tool.m
 	$(CC) -O2 -g -Wall -Wextra -fobjc-arc tests/pboard_tool.m -framework Foundation -framework AppKit -o $@
@@ -223,6 +249,30 @@ test_log: tests/test_log.c src/tb_log.c src/tb_log.h
 
 test_loopwatch: tests/test_loopwatch.c src/tb_loopwatch.c src/tb_loopwatch.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_loopwatch.c src/tb_loopwatch.c -o $@
+
+test_ratelimit: tests/test_ratelimit.c src/tb_ratelimit.h
+	$(CC) $(TEST_CFLAGS) -Isrc tests/test_ratelimit.c -o $@
+
+test_catchup: tests/test_catchup.c src/tb_catchup.h
+	$(CC) $(TEST_CFLAGS) -Isrc tests/test_catchup.c -o $@
+
+test_runloop_thread: tests/test_runloop_thread.c src/tb_runloop_thread.c src/tb_runloop_thread.h
+	$(CC) $(TEST_CFLAGS) -Isrc tests/test_runloop_thread.c src/tb_runloop_thread.c -framework CoreFoundation -o $@
+
+test_input_rate: tests/test_input_rate.c src/tb_input_rate.c src/tb_input_rate.h
+	$(CC) $(TEST_CFLAGS) -Isrc tests/test_input_rate.c src/tb_input_rate.c -o $@
+
+test_decthreads: tests/test_decthreads.c src/tb_decthreads.h
+	$(CC) $(TEST_CFLAGS) -Isrc tests/test_decthreads.c -o $@
+
+test_brightness: tests/test_brightness.c src/tb_brightness.c src/tb_brightness.h
+	$(CC) $(TEST_CFLAGS) -Isrc tests/test_brightness.c src/tb_brightness.c -framework CoreGraphics -o $@
+
+test_permwatch: tests/test_permwatch.c src/tb_permwatch.c src/tb_permwatch.h
+	$(CC) $(TEST_CFLAGS) -Isrc tests/test_permwatch.c src/tb_permwatch.c -o $@
+
+test_pairing_hint: tests/test_pairing_hint.c src/tb_pairing_hint.h
+	$(CC) $(TEST_CFLAGS) -Isrc tests/test_pairing_hint.c -o $@
 
 test_cursor_image: tests/test_cursor_image.c src/tb_cursor_image.c src/tb_cursor_image.h
 	$(CC) $(TEST_CFLAGS) -Isrc tests/test_cursor_image.c src/tb_cursor_image.c -o $@

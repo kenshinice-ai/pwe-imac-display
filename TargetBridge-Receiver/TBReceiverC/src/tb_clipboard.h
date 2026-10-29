@@ -42,11 +42,15 @@ void tb_clipboard_set_polling(struct tb_clipboard *c, int on);
 
 /* Main loop: a session started or ended. The Mac's copy of the clipboard is
  * unknown again, so the next poll sends the current text if it is not empty
- * (upstream behaviour). */
+ * (upstream behaviour). PWE (1.1.1, R1): the Mac's text queued and not yet
+ * written is dropped; one already being written finishes, but is never sent
+ * to the next session's Mac as the iMac's text. */
 void tb_clipboard_new_session(struct tb_clipboard *c);
 
 /* Main loop: put the Mac's text on the iMac's clipboard. Returns at once;
- * only the latest text waits if the worker is busy. */
+ * only the latest text waits if the worker is busy. PWE (1.1.1, R1): it
+ * belongs to the session it was queued in, and is not written over a copy
+ * made on the iMac after the worker last looked. */
 void tb_clipboard_write(struct tb_clipboard *c, const char *text);
 
 /* Main loop: 1 and the text when the iMac's clipboard has text the Mac does

@@ -26,7 +26,7 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.."
 REPO="$PWD"
-DEPS="${PWE_DEPS:-${TMPDIR:-/tmp}/pwe-imacdisplay-deps}"
+DEPS="${PWE_DEPS:-$HOME/Library/Caches/pwe-screen-encore-deps}"
 DMG=""
 SMOKE=1
 while (( $# )); do
@@ -211,7 +211,10 @@ else
     else
       record "built apps: stapled tickets" FAIL "see staple.log"
     fi
-    hdiutil detach "$MNT" >/dev/null 2>&1
+    # codesign and spctl can hold the volume for a moment; left mounted, the next
+    # package.sh overwrites the image under it and a later --dmg reads stale,
+    # unreadable apps (2026-10-29).
+    hdiutil detach "$MNT" >/dev/null 2>&1 || { sleep 2; hdiutil detach -force "$MNT" >/dev/null 2>&1; }
   fi
 fi
 

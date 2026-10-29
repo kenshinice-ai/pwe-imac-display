@@ -217,6 +217,53 @@ enum PWEReplugRules {
     }
 }
 
+/// How often the model may look at system state that costs a query (B11):
+/// at most once per `interval`. While connected, the Mac Studio showed about
+/// 2 TCC queries, 10 preference reads and 3 LaunchServices queries a second
+/// (2026-10-24), from refreshes the engine's fps counter set off every second.
+enum PWEPollRules {
+    static let interval: TimeInterval = 5
+
+    static func isDue(lastAt: TimeInterval?, now: TimeInterval, every interval: TimeInterval = interval) -> Bool {
+        guard let lastAt, now >= lastAt else { return true }
+        return now - lastAt >= interval
+    }
+}
+
+/// T54: what a connect URL from outside does (PWESenderModel.handleConnectURL).
+/// A plain automatic one (no named receiver, transport, path or session) for
+/// the iMac PWE already knows is PWE's to apply: like the Picture menu, a
+/// changed picture or display mode reconnects to apply it, an unchanged one
+/// does nothing, and with no connection it connects under PWE's own rules
+/// (retrying when "connect automatically" is on; a `retry` in the URL is not
+/// read). Anything else keeps upstream's handling (PWEConnectURLTests).
+enum PWEConnectURLRules {
+    enum Plan: Equatable { case notOurs, nothing, reconnect, connect }
+
+    static func isPlainAutomatic(_ params: [String: String]) -> Bool {
+        let receiver = params["receiver"] ?? ""
+        guard receiver.isEmpty || receiver.lowercased() == "auto" else { return false }
+        return ["transport", "path", "connection-path", "connection", "session", "localip", "local-ip"]
+            .allSatisfy { params[$0] == nil }
+    }
+
+    /// The picture a URL may ask for: one of the Picture menu's choices for
+    /// this iMac, under the menu's name for it (PWEPictureRules.offered).
+    static func acceptedPicture(_ asked: TBDisplayCapturePreset, choices: [TBDisplayCapturePreset]) -> TBDisplayCapturePreset? {
+        let offered = PWEPictureRules.offered(asked)
+        return choices.contains(offered) ? offered : nil
+    }
+
+    static func plan(plainAutomatic: Bool, knowsIMac: Bool, connected: Bool,
+                     picture: TBDisplayCapturePreset, wantedPicture: TBDisplayCapturePreset?,
+                     mode: PWEDisplayMode, wantedMode: PWEDisplayMode?) -> Plan {
+        guard plainAutomatic, knowsIMac else { return .notOurs }
+        guard connected else { return .connect }
+        let changes = (wantedPicture.map { $0 != picture } ?? false) || (wantedMode.map { $0 != mode } ?? false)
+        return changes ? .reconnect : .nothing
+    }
+}
+
 /// The first connection's two extra lines in the window: where the menu bar
 /// controls are, and Open at login (PWEPhaseRulesTests).
 enum PWEFirstConnectionRules {
@@ -241,10 +288,15 @@ enum PWESound: String, CaseIterable, Identifiable {
 /// When changing the sound choice must reconnect (PWESoundRulesTests). The
 /// engine captures system audio only when relay is on as the picture starts,
 /// so turning relay on reconnects unless this connection's capture already
-/// has audio (relay was on when it started, then turned off).
+/// has audio (relay was on when it started, then turned off). Relay on with
+/// no audio captured while the picture is up (the direct path's sound stream
+/// stopped, K2) reconnects too when an iMac choice is made again: that
+/// rebuilds the stream. Not while connecting, retrying or waiting for a
+/// pairing code: nothing is captured yet then, and a reconnect would only
+/// interrupt it.
 enum PWESoundRules {
-    static func needsReconnect(relayOn: Bool, relayWasOn: Bool, capturingAudio: Bool) -> Bool {
-        relayOn && !relayWasOn && !capturingAudio
+    static func needsReconnect(relayOn: Bool, relayWasOn: Bool, capturingAudio: Bool, streaming: Bool = true) -> Bool {
+        relayOn && !capturingAudio && (!relayWasOn || streaming)
     }
 }
 
@@ -279,11 +331,17 @@ enum PWEConnection: String, CaseIterable, Identifiable {
 /// "receiverRenderer". On iMac18,3 (2026-10-20, BASELINE "E 组") Metal used
 /// 25–40 % less of the iMac's CPU; OpenGL measured 11–13 ms lower and dropped
 /// no frames, but its trace stops at the hand-off to the window server while
-/// Metal's runs to the screen. Lee: keep both, OpenGL by default.
+/// Metal's runs to the screen. Lee then kept both, OpenGL by default.
+/// 2026-10-24 receiver trace on iMac18,3 with a Mac Studio: Metal paces frames
+/// to the refresh and hands off ~2.4 ms sooner; Lee chose Metal as the default.
+/// A choice made in Settings › Advanced (per iMac, or the last one) is kept.
 enum PWERendering: String, CaseIterable, Identifiable {
     case openGL = "opengl"
     case metal
     var id: String { rawValue }
+
+    /// For a Mac where nobody has chosen.
+    static let `default`: PWERendering = .metal
 }
 
 @MainActor
@@ -295,7 +353,9 @@ final class PWESenderModel: ObservableObject {
     @Published var displayMode: PWEDisplayMode {
         didSet {
             defaults.set(displayMode.rawValue, forKey: Keys.displayMode)
-            if displayMode != oldValue { reconnectIfShowing(because: "display mode changed to \(displayMode.rawValue)") }
+            if displayMode != oldValue, !applyingConnectURL {
+                reconnectIfShowing(because: "display mode changed to \(displayMode.rawValue)")
+            }
         }
     }
     /// An iMac has been a display on this Mac before: the first connection's
@@ -318,6 +378,14 @@ final class PWESenderModel: ObservableObject {
             }
         }
     }
+    /// The menu bar item is not on screen (PWEStatusMenu says so). The first
+    /// connection's tip then does not point at it (T19).
+    @Published var menuBarIconHidden = false
+    /// Screen Sharing and Remote Login, as last read (A2, PWESharingState).
+    @Published private(set) var sharingState = PWESharingState()
+    /// Screen Sharing on this Mac shows the iMac in use as its display (A14).
+    @Published private(set) var viewedWithScreenSharing = false
+    private var screenSharingWatch: PWEScreenSharingWatch?
     /// A one-line notice while a changed setting reconnects ("Reconnecting to apply…").
     @Published private(set) var reconnectNotice = false
     /// While the iMac plays this Mac's sound, keep the Mac's own speakers muted
@@ -362,6 +430,21 @@ final class PWESenderModel: ObservableObject {
     private var asleep = false
     private var awokeAt = Date.distantPast
     private static let wakeSettleTime: TimeInterval = 15
+    /// T54: a connect URL's picture and mode are being applied together; one reconnect follows.
+    private var applyingConnectURL = false
+    /// T54: a connect URL's picture for the next connection. It is remembered
+    /// only once it shows (rememberShowingPicture), like any picture that works.
+    private var urlPicture: TBDisplayCapturePreset?
+    /// A1: a Disconnect (or Cancel) happened in this run; no automatic pairing after it.
+    private var disconnectedThisRun = false
+    /// A1: iMacs automatic pairing has been started for in this run; cleared by a replug (C5).
+    private var headlessPairingStarted = Set<String>()
+    /// C3: since when no physical display has been online, and until when the
+    /// launch or the last cable event lets automatic pairing start.
+    private var noPhysicalDisplaySince: TimeInterval?
+    private var headlessArmedUntil = ProcessInfo.processInfo.systemUptime + PWEHeadlessPairingRules.armedFor
+    private var iMacsOnCableBefore = 0
+    private var headlessRecheck: Task<Void, Never>?
     /// The input role has been applied to the current connection.
     private var inputRoleApplied = false
     private var noticeTask: Task<Void, Never>?
@@ -391,6 +474,8 @@ final class PWESenderModel: ObservableObject {
         static let askedForScreenRecording = "pwe.askedForScreenRecording"
         /// [receiver identity: TBDisplayCapturePreset raw value]
         static let pictures = "pwe.pictures"
+        /// Set once 1.1.1 has moved remembered 30-frame 1440p pictures to 60 frames.
+        static let pictures1440p60 = "pwe.pictures.1440p60"
         static let soundOnlyOnIMac = "pwe.soundOnlyOnIMac"
         // "pwe.showsMenuBarIcon" (1.1 betas) is no longer read: the menu bar
         // item is the app's way in and always shows. The stored value stays.
@@ -408,7 +493,7 @@ final class PWESenderModel: ObservableObject {
 
     /// What the Picture menu offers, best first. A preset chosen in the Full
     /// Console shows up too.
-    static let pictureChoices: [TBDisplayCapturePreset] = [.native5k60Experimental, .native5k, .standard1440p]
+    static let pictureChoices: [TBDisplayCapturePreset] = PWEPictureRules.choices(panelWidth: nil)
 
     /// Where engine changes reach the model. The main queue, not RunLoop.main:
     /// Combine's RunLoop scheduler runs only in the default mode, so no change
@@ -430,18 +515,21 @@ final class PWESenderModel: ObservableObject {
         self.localMute = PWELocalAudioMute(defaults: defaults)
         refreshLaunchAtLogin()
         resetNetworkLinkOnce()
+        migratePicturesOnce()
+        screenSharingWatch = PWEScreenSharingWatch { [weak self] viewing in self?.viewedWithScreenSharing = viewing }
+        TBSenderAutomation.pweConnectURLHandler = { [weak self] params in self?.handleConnectURL(params) ?? false }
 
         service.objectWillChange
             .receive(on: Self.engineUpdates)
             .sink { [weak self] _ in
                 self?.observeSessions()
-                self?.refresh()
+                self?.refreshSoon()
             }
             .store(in: &cancellables)
         NotificationCenter.default
             .publisher(for: TBSenderAutomation.automaticConnectionDidChange)
             .receive(on: Self.engineUpdates)
-            .sink { [weak self] _ in self?.refresh() }
+            .sink { [weak self] _ in self?.refreshSoon() }
             .store(in: &cancellables)
         // Coming back from System Settings is when a permission or a login item
         // changes; check then, so nobody has to press "I have allowed it".
@@ -472,7 +560,9 @@ final class PWESenderModel: ObservableObject {
     /// A fixed phase for snapshots: no engine, nothing changes.
     init(preview phase: PWEPhase, firstConnection: Bool = false, inputRole: PWEInputRole = .off,
          security: PWESecurityState = .none, paired: [PWEPairedReceiver] = [],
-         codeNote: PWECodeNote? = nil, lockEnd: Date? = nil, forgetFailure: String? = nil) {
+         codeNote: PWECodeNote? = nil, lockEnd: Date? = nil, forgetFailure: String? = nil,
+         sharing: PWESharingState = PWESharingState(screenSharing: true, remoteLogin: true)) {
+        self.sharingState = sharing
         self.previewSecurity = security
         self.pairedIMacs = paired
         self.forgetFailure = forgetFailure
@@ -500,14 +590,50 @@ final class PWESenderModel: ObservableObject {
     var showingPreset: TBDisplayCapturePreset { session?.capturePreset ?? picture }
 
     /// Frames sent in the last second (the engine's `senderFPS`), and its
-    /// once-a-second updates. Snapshots have no engine and show a steady 60.
-    var framesPerSecond: Int { service == nil ? 60 : session?.liveMetrics.senderFPS ?? 0 }
+    /// once-a-second updates. Snapshots have no engine and show none: the menu's
+    /// line then gives the size alone. A sample "60" in release pictures read
+    /// as a measured claim (film team, 2026-10-24).
+    var framesPerSecond: Int { service == nil ? 0 : session?.liveMetrics.senderFPS ?? 0 }
     var framesPerSecondUpdates: AnyPublisher<Int, Never>? {
         session?.liveMetrics.$senderFPS.removeDuplicates().eraseToAnyPublisher()
     }
 
+    /// Plan A (1.1.1): this Mac's encoder fell behind at 5K 60, so the Picture
+    /// menu suggests Smooth · 4K 60 (PWEStreamStats.fiveK60Verdict).
+    var fiveK60FallsBehind: Bool { UserDefaults.standard.bool(forKey: PWEStreamStats.fiveK60FallsBehindKey) }
+
     /// Whether the session dials over Network Link rather than the cable.
     var connectsOverNetwork: Bool { session?.transportKind == .networkLink }
+
+    /// B11: one change in a session reaches the model twice, from the session
+    /// and again from the service it bubbles up to. Both ask for one refresh on
+    /// the next turn of the main queue (which also runs while a menu is open).
+    private var refreshPending = false
+    private func refreshSoon() {
+        guard !refreshPending else { return }
+        refreshPending = true
+        Self.engineUpdates.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.refreshPending = false
+                self.refresh()
+            }
+        }
+    }
+
+    /// B11: the Screen Recording permission (a TCC query), read at most every
+    /// `PWEPollRules.interval` seconds by refreshes, and at once when it may have
+    /// changed: coming back to the app, or the person asking to check.
+    private var screenRecordingAllowed = true
+    private var screenRecordingCheckedAt: TimeInterval?
+    private func hasScreenRecording(force: Bool = false) -> Bool {
+        let now = ProcessInfo.processInfo.systemUptime
+        if force || PWEPollRules.isDue(lastAt: screenRecordingCheckedAt, now: now) {
+            screenRecordingAllowed = CGPreflightScreenCaptureAccess()
+            screenRecordingCheckedAt = now
+        }
+        return screenRecordingAllowed
+    }
 
     private func refresh() {
         guard let service else { return }
@@ -534,6 +660,79 @@ final class PWESenderModel: ObservableObject {
         localMute?.update(mute: soundOnlyOnIMac && isRelayingSound)
         applyInputRole(force: false)
         watchForReplug(service)
+        screenSharingWatch?.update(names: screenSharingNames(service))
+        startHeadlessPairingIfDue(service)
+    }
+
+    /// A1: no screen on this Mac, one unpaired iMac on the cable: start the
+    /// connection, and with it the usual pairing (PWEHeadlessPairingRules).
+    /// The code step then brings the window up as key (PWEStatusMenu), so the
+    /// code box takes the keys. The cheap conditions are read first.
+    private func startHeadlessPairingIfDue(_ service: TBDisplaySenderService) {
+        let now = ProcessInfo.processInfo.systemUptime
+        // C4: on the cable means seen through this Mac's own bridge.
+        let localBridgeIPv4 = TBConnectionDiagnostics.currentIPv4Interfaces()
+            .filter { $0.name.hasPrefix("bridge") }.map(\.ip)
+        let onCable = service.discoveredReceivers.filter {
+            PWEHeadlessPairingRules.isOnCable(seenOnCableBridge: $0.seenOnCableBridge, bridgeIPv4: $0.thunderboltIP,
+                                              resolvedIPv4: $0.resolvedIPv4Addresses, localBridgeIPv4: localBridgeIPv4)
+        }
+        // C3: an iMac newly on the cable is a cable event.
+        // Bonjour can drop and list an iMac again without a replug: that opens
+        // the window but does not undo "already started" (review 2026-10-28).
+        if onCable.count > iMacsOnCableBefore { armHeadlessPairing(clearingStarted: false) }
+        iMacsOnCableBefore = onCable.count
+        let noPhysicalDisplay = TBDisplaySenderSession.pweNoPhysicalDisplay(
+            onlineDisplayIDs: TBDisplaySenderSession.pweOnlineDisplays(),
+            ownVirtualDisplayIDs: service.sessions.map(\.virtualDisplayID))
+        if !noPhysicalDisplay { noPhysicalDisplaySince = nil } else if noPhysicalDisplaySince == nil { noPhysicalDisplaySince = now }
+        guard case .ready(let receiver) = phase, autoConnect, !disconnectedThisRun,
+              !headlessPairingStarted.contains(receiver.id), noPhysicalDisplay else { return }
+        let inputs = PWEHeadlessPairingRules.Inputs(
+            noPhysicalDisplay: noPhysicalDisplay,
+            iMacsOnCable: onCable.count,
+            offeredIMacIsOnCable: onCable.contains { $0.stableIdentity == receiver.id },
+            offeredIMacIsPaired: PWEPairingStore.shared.expectedReceiverID(forHint: receiver.id) != nil,
+            disconnectedThisRun: disconnectedThisRun,
+            alreadyStarted: false,
+            autoConnect: autoConnect,
+            noPhysicalDisplayFor: now - (noPhysicalDisplaySince ?? now),
+            armed: now <= headlessArmedUntil,
+            settling: asleep || Date().timeIntervalSince(awokeAt) < Self.wakeSettleTime)
+        guard PWEHeadlessPairingRules.startsPairing(inputs) else {
+            // Events drive refreshes: look again once the display state has held long enough.
+            var steady = inputs
+            steady.noPhysicalDisplayFor = .infinity
+            steady.settling = false
+            if PWEHeadlessPairingRules.startsPairing(steady), headlessRecheck == nil {
+                let wait = max(PWEHeadlessPairingRules.steadyFor - inputs.noPhysicalDisplayFor,
+                               Self.wakeSettleTime - Date().timeIntervalSince(awokeAt), 0.5)
+                headlessRecheck = Task { @MainActor [weak self] in
+                    try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+                    self?.headlessRecheck = nil
+                    self?.refreshSoon()
+                }
+            }
+            return
+        }
+        headlessPairingStarted.insert(receiver.id)
+        PWELog.note("[pwe] no physical display: starting pairing with \(receiver.name) automatically")
+        // Not from inside this refresh: connecting refreshes again.
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, case .ready(let still) = self.phase, still.id == receiver.id else { return }
+                self.connect(to: still)
+            }
+        }
+    }
+
+    /// While the iMac is a display: the names Screen Sharing may call it (A14).
+    private func screenSharingNames(_ service: TBDisplaySenderService) -> [String]? {
+        guard case .connected(let receiver) = phase, let receiver,
+              let discovered = service.discoveredReceivers.first(where: { $0.stableIdentity == receiver.id }) else { return nil }
+        var paired: String?
+        if let security = session?.pweSecurity, case .encrypted(let name) = security { paired = name }
+        return PWEScreenSharingRules.names(for: discovered, friendlyName: receiver.name, pairedName: paired)
     }
 
     /// The first time an iMac becomes a display: show the extra lines, and turn
@@ -550,9 +749,17 @@ final class PWESenderModel: ObservableObject {
     }
 
     /// The picture is up with sound relayed: the iMac is playing this Mac's audio.
+    /// Only while a capture really records it: on the direct path the sound
+    /// comes from a separate audio stream, and if that does not start, muting
+    /// this Mac would leave sound nowhere.
     private var isRelayingSound: Bool {
         guard let session else { return false }
-        return session.isStreaming && session.audioEnabled && session.audioAddonAvailable
+        return Self.relaysSound(streaming: session.isStreaming, audioEnabled: session.audioEnabled,
+                                addonAvailable: session.audioAddonAvailable, capturingAudio: session.pweCapturingAudio)
+    }
+
+    nonisolated static func relaysSound(streaming: Bool, audioEnabled: Bool, addonAvailable: Bool, capturingAudio: Bool) -> Bool {
+        streaming && audioEnabled && addonAvailable && capturingAudio
     }
 
     private func observeSessions() {
@@ -560,7 +767,7 @@ final class PWESenderModel: ObservableObject {
         for session in service?.sessions ?? [] {
             session.objectWillChange
                 .receive(on: Self.engineUpdates)
-                .sink { [weak self] _ in self?.refresh() }
+                .sink { [weak self] _ in self?.refreshSoon() }
                 .store(in: &sessionCancellables)
         }
     }
@@ -570,7 +777,7 @@ final class PWESenderModel: ObservableObject {
         let fresh = PWEPhaseRules.freshStatus(session?.statusState, stale: staleFailure)
         if !fresh.stillStale { staleFailure = nil }
         var state = PWEEngineState(session: session)
-        state.hasPermission = CGPreflightScreenCaptureAccess()
+        state.hasPermission = hasScreenRecording()
         state.status = fresh.status
         state.retrying = retrying
         state.receivers = receivers(service)
@@ -657,18 +864,73 @@ final class PWESenderModel: ObservableObject {
         ]
         // The engine applies this after the receiver's saved display profile, on
         // every attempt of this connection: reconnects, replugs and wakes alike.
-        if let preset = rememberedPicture(for: receiverKey) ?? defaultPicture {
+        if let preset = urlPicture ?? rememberedPicture(for: receiverKey) ?? defaultPicture {
             components.queryItems?.append(URLQueryItem(name: "preset", value: preset.rawValue))
         }
+        urlPicture = nil
         syncRendering()
-        if let url = components.url { TBSenderAutomation.handle(url: url) }
+        if let session { Self.prepareForPWEConnection(session) }
+        if let url = components.url { TBSenderAutomation.pweHandleOwn(url: url) }
         // The engine has started (or, with retry=0, ended) its retrying already;
         // that change is ours, not one to read as a Disconnect.
         wasRetrying = TBSenderAutomation.isConnectingAutomatically
         refresh()
     }
 
-    func disconnect() {
+    /// T54: a `connect` URL from outside, applied like the menu's own choices
+    /// (PWEConnectURLRules). False leaves it to upstream's handling.
+    func handleConnectURL(_ params: [String: String]) -> Bool {
+        // Only what the Picture menu offers this iMac, as the menu names it
+        // (the 30-frame 1440p is the 60-frame one); anything else is ignored.
+        let asked = params["preset"].flatMap { TBSenderAutomation.parsePreset($0) }
+        let choices = PWEPictureRules.choices(panelWidth: service.flatMap { current($0) }?.panelWidth)
+        let wantedPicture = asked.flatMap { PWEConnectURLRules.acceptedPicture($0, choices: choices) }
+        if let asked, wantedPicture == nil {
+            PWELog.note("[pwe] connect URL: picture \(asked.rawValue) is not offered for this iMac; ignored")
+        }
+        let wantedMode = params["mode"].flatMap { TBSenderAutomation.parseMode($0) }
+            .map { $0 == .desktopMirror ? PWEDisplayMode.mirror : .extended }
+        let plan = PWEConnectURLRules.plan(
+            plainAutomatic: PWEConnectURLRules.isPlainAutomatic(params), knowsIMac: receiverKey != nil,
+            connected: session.map { $0.isConnected || $0.isStreaming } ?? false,
+            picture: picture, wantedPicture: wantedPicture, mode: displayMode, wantedMode: wantedMode)
+        switch plan {
+        case .notOurs:
+            return false
+        case .nothing:
+            PWELog.note("[pwe] connect URL: already showing \(picture.rawValue), \(displayMode.rawValue)")
+            return true
+        case .reconnect, .connect:
+            applyingConnectURL = true
+            if let wantedPicture, wantedPicture != picture { urlPicture = wantedPicture }
+            if let wantedMode, wantedMode != displayMode { displayMode = wantedMode }
+            applyingConnectURL = false
+            objectWillChange.send()
+            let what = "picture \((urlPicture ?? picture).rawValue), \(displayMode.rawValue)"
+            if plan == .reconnect {
+                reconnectIfShowing(because: "connect URL: \(what)")
+            } else {
+                PWELog.note("[pwe] connect URL: connecting with \(what)")
+                startConnecting()
+            }
+            return true
+        }
+    }
+
+    /// C3, C5: a replug or a newly seen iMac lets automatic pairing start
+    /// for a while. Only a replug (`clearingStarted`) lets it start again for
+    /// an iMac it already started for.
+    private func armHeadlessPairing(clearingStarted: Bool) {
+        headlessArmedUntil = ProcessInfo.processInfo.systemUptime + PWEHeadlessPairingRules.armedFor
+        if clearingStarted { headlessPairingStarted.removeAll() }
+    }
+
+    /// `byPerson`: Disconnect, Cancel, Forget or turning off unencrypted
+    /// connections: no automatic pairing until the cable is replugged, so an
+    /// iMac just forgotten is not paired again by itself. The app's own
+    /// disconnect after codes ran out unanswered does not stop it (C5).
+    func disconnect(byPerson: Bool = true) {
+        if byPerson { disconnectedThisRun = true }
         pausedUntilReplug = true
         heldFailure = nil
         // The engine's Stop also ends its retrying. While it asks a pairing
@@ -738,6 +1000,10 @@ final class PWESenderModel: ObservableObject {
         case .replugged:
             bridgeLostAt = nil
             pausedUntilReplug = false
+            // A replug is the person asking again: on a Mac with no other
+            // screen it is the only way back to a picture without a relaunch.
+            disconnectedThisRun = false
+            armHeadlessPairing(clearingStarted: true)
             resumeIfDue(reason: "the iMac's Thunderbolt Bridge address came back (\(bridgeIP))")
         }
     }
@@ -758,6 +1024,7 @@ final class PWESenderModel: ObservableObject {
 
     func recheckPermission() {
         service?.refreshPrivacyPermissions()
+        _ = hasScreenRecording(force: true)
         refresh()
     }
 
@@ -801,6 +1068,18 @@ final class PWESenderModel: ObservableObject {
         PWELog.note("[pwe] dropped the console's display profile for \(key)")
     }
 
+    /// 1.1's Standard · 1440p was upstream's 30-frame preset; 1.1.1 offers the
+    /// 60-frame one under that name (PWEPictureRules.offered). An iMac that
+    /// remembered the old one moves to the new one, once.
+    private func migratePicturesOnce() {
+        guard !defaults.bool(forKey: Keys.pictures1440p60) else { return }
+        defaults.set(true, forKey: Keys.pictures1440p60)
+        guard let pictures = defaults.dictionary(forKey: Keys.pictures) as? [String: String],
+              let migrated = PWEPictureRules.migrated1440p(pictures) else { return }
+        defaults.set(migrated, forKey: Keys.pictures)
+        PWELog.note("[pwe] remembered 1440p pictures now use 60 frames a second")
+    }
+
     /// The picture for an iMac with nothing remembered yet (PWEPictureRules).
     private var defaultPicture: TBDisplayCapturePreset? {
         guard let service, let target = current(service) else { return nil }
@@ -822,13 +1101,27 @@ final class PWESenderModel: ObservableObject {
 
     /// The stream preset for this iMac. Changing it while connected reconnects.
     var picture: TBDisplayCapturePreset {
-        get { rememberedPicture(for: receiverKey) ?? defaultPicture ?? session?.capturePreset ?? .native5k60Experimental }
+        get {
+            rememberedPicture(for: receiverKey) ?? defaultPicture
+                ?? session.map { PWEPictureRules.offered($0.capturePreset) } ?? .native5k60Experimental
+        }
         set {
             guard let key = receiverKey, newValue != picture else { return }
             remember(newValue, for: key)
             objectWillChange.send()
             reconnectIfShowing(because: "picture changed to \(newValue.rawValue)")
         }
+    }
+
+    /// Render matching sizes the virtual display to the stream: with Smooth ·
+    /// 4K 60 that is a 1920 × 1080 desktop instead of the iMac's 5K one. PWE
+    /// offers no switch for it, but the engine keeps it per session and the
+    /// Full Console (or its Work 5K profile) can leave it on; every connection
+    /// PWE starts turns it off (PWEPictureRules.choices).
+    static func prepareForPWEConnection(_ session: TBDisplaySenderSession) {
+        guard session.matchRenderToStream else { return }
+        session.matchRenderToStream = false
+        PWELog.note("[pwe] render matching was on; turned off so the iMac keeps its 5K desktop")
     }
 
     /// A choice the engine reads only when a connection starts: start it again.
@@ -892,7 +1185,7 @@ final class PWESenderModel: ObservableObject {
            let remembered = PWERendering(rawValue: raw) {
             return remembered
         }
-        return PWERendering(rawValue: defaults.string(forKey: Keys.rendering) ?? "") ?? .openGL
+        return PWERendering(rawValue: defaults.string(forKey: Keys.rendering) ?? "") ?? .default
     }
 
     /// The engine sends it in every hello, whichever path connects: here, the
@@ -917,14 +1210,18 @@ final class PWESenderModel: ObservableObject {
             return soundOnlyOnIMac ? .onlyIMac : .both
         }
         set {
-            guard newValue != sound else { return }
+            // K2: choosing an iMac option again rebuilds a relay whose sound stopped.
+            let relayLostItsSound = newValue != .onlyThisMac
+                && (session.map { $0.isStreaming && $0.audioEnabled && !$0.pweCapturingAudio } ?? false)
+            guard newValue != sound || relayLostItsSound else { return }
             guard let service else { previewSound = newValue; objectWillChange.send(); return }
             let relayWasOn = service.audioRelayAvailable && (session?.audioEnabled ?? service.audioEnabled)
             let relayOn = newValue != .onlyThisMac
             if relayOn { soundOnlyOnIMac = newValue == .onlyIMac }
             objectWillChange.send()
             if PWESoundRules.needsReconnect(relayOn: relayOn, relayWasOn: relayWasOn,
-                                            capturingAudio: session?.pweCapturingAudio ?? false) {
+                                            capturingAudio: session?.pweCapturingAudio ?? false,
+                                            streaming: session?.isStreaming ?? false) {
                 // The engine captures audio only if relay was on when the picture
                 // started, and records nothing it does not send.
                 reconnectIfShowing(because: "sound now relayed to the iMac") {
@@ -1001,6 +1298,11 @@ final class PWESenderModel: ObservableObject {
         launchAtLoginNeedsApproval = status == .requiresApproval
     }
 
+    /// The Open at login switch's state (PWELoginItemRules.display).
+    var launchAtLoginDisplay: PWELoginItemRules.Display {
+        PWELoginItemRules.display(registered: launchAtLogin, canRegister: !launchAtLoginUnavailable)
+    }
+
     func setLaunchAtLogin(_ on: Bool) {
         guard service != nil else { launchAtLogin = on; return }
         if on, launchAtLoginUnavailable {
@@ -1017,6 +1319,52 @@ final class PWESenderModel: ObservableObject {
     }
 
     func openLoginItemsSettings() { SMAppService.openSystemSettingsLoginItems() }
+
+    // MARK: - Use only the iMac (A2)
+
+    /// What the "Use only the iMac" rows read (PWEOnlyIMacRules).
+    var onlyIMacInputs: PWEOnlyIMacRules.Inputs {
+        PWEOnlyIMacRules.Inputs(
+            screenRecording: service == nil ? true : hasScreenRecording(),
+            launchAtLogin: launchAtLogin, launchAtLoginNeedsApproval: launchAtLoginNeedsApproval,
+            canRegisterLogin: !launchAtLoginUnavailable, autoConnect: autoConnect, inputRole: inputRole,
+            screenSharing: sharingState.screenSharing, remoteLogin: sharingState.remoteLogin)
+    }
+
+    /// Reads Screen Sharing and Remote Login again, off the main thread. Called
+    /// when the list shows and when the app comes back from System Settings.
+    func refreshSharingState() {
+        guard service != nil else { return }
+        _ = hasScreenRecording(force: true)
+        Task.detached(priority: .utility) { [weak self] in
+            let state = PWESharingState.read()
+            await MainActor.run {
+                guard let self, self.sharingState != state else { return }
+                self.sharingState = state
+            }
+        }
+    }
+
+    /// A row's button: PWE's own setting is turned on here; a system setting
+    /// only gets its pane opened. Screen Sharing and Remote Login are never
+    /// turned on by the app.
+    func fixOnlyIMac(_ row: PWEOnlyIMacRules.Row) {
+        switch row {
+        case .screenRecording:
+            requestScreenRecording()
+        case .openAtLogin:
+            if launchAtLoginNeedsApproval { openLoginItemsSettings() } else { setLaunchAtLogin(true) }
+        case .autoConnect:
+            autoConnect = true
+        case .keyboardMouse:
+            inputRole = .iMacControlsMac
+        case .screenSharing, .remoteLogin:
+            if let url = URL(string: "x-apple.systempreferences:com.apple.Sharing-Settings.extension") {
+                NSWorkspace.shared.open(url)
+            }
+        }
+        objectWillChange.send()
+    }
 
     // MARK: - Pairing and encryption (the engine's PWESecureLink)
 
@@ -1065,7 +1413,7 @@ final class PWESenderModel: ObservableObject {
             } else {
                 PWELog.note("[pwe] \(expiredInARow) pairing codes ran out unanswered; stopped asking")
                 expiredInARow = 0
-                DispatchQueue.main.async { [weak self] in self?.disconnect() }
+                DispatchQueue.main.async { [weak self] in self?.disconnect(byPerson: false) }
             }
         case .locked(let seconds):
             let end = PWEPairingRules.lockEnd(seconds: seconds, lockedAt: Date())
@@ -1144,7 +1492,7 @@ final class PWESenderModel: ObservableObject {
             PWEPairingStore.allowUnencrypted = newValue
             objectWillChange.send()
             PWELog.note("[pwe] unencrypted connections \(newValue ? "allowed" : "turned off")")
-            if !newValue, session?.pweSecurity == .unencrypted { disconnect() }
+            if !newValue, session?.pweSecurity == .unencrypted { disconnect(byPerson: true) }
         }
     }
 
@@ -1161,6 +1509,8 @@ final class PWESenderModel: ObservableObject {
     /// A failure stays on screen (forgetFailure) instead of passing silently (T37).
     func forget(_ receiver: PWEPairedReceiver) {
         guard service != nil else { return }
+        // C5: the person forgot an iMac: nothing pairs by itself in this run.
+        disconnectedThisRun = true
         let store = PWEPairingStore.shared
         // Decided before the hints go: they are how a session names its iMac's key.
         let endsSession = session.map {
@@ -1172,7 +1522,7 @@ final class PWESenderModel: ObservableObject {
             PWELog.note("[pwe] forgot the paired iMac \(receiver.name) (\(receiver.id))")
             if endsSession {
                 PWELog.note("[pwe] ending the encrypted session with the iMac just forgotten")
-                disconnect()
+                disconnect(byPerson: true)
             }
         } else {
             forgetFailure = receiver.name
@@ -1311,13 +1661,10 @@ final class PWESenderModel: ObservableObject {
         }
     }
 
-    /// A plain-text report for support: versions, the iMacs, the settings and the
-    /// last half hour of this app's own log. Nothing leaves the Mac unless the
-    /// person sends the file.
-    func diagnosticReport() -> String {
-        diagnosticReportHeader() + "\n" + PWELogExport.recentLines(minutes: 30).joined(separator: "\n")
-    }
-
+    /// The report for support is this header and the last half hour of this
+    /// app's log (PWELogExport.save). Nothing leaves the Mac unless the person
+    /// sends the file.
+    ///
     /// Everything in the report except the log: cheap, read on the main actor.
     func diagnosticReportHeader() -> String {
         var lines: [String] = []

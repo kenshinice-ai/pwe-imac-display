@@ -68,14 +68,43 @@ enum PWEPictureRules {
     /// picks HEVC or H.264 for it as for any preset. Not measured on such an iMac.
     static func defaultPicture(supportsHEVC: Bool, panelWidth: Int?, engineDefault: TBDisplayCapturePreset) -> TBDisplayCapturePreset {
         if isRetina4K(panelWidth) { return .retina4k60 }
-        guard supportsHEVC, let panelWidth, panelWidth >= 5120 else { return engineDefault }
+        guard supportsHEVC, let panelWidth, panelWidth >= 5120 else { return offered(engineDefault) }
         return .native5k60Experimental
     }
 
     /// What the Picture menu offers for this iMac, best first. 5K choices on a
     /// 4K panel only cost encoding work the iMac then throws away.
+    ///
+    /// Smooth · 4K 60 (upstream's `crisp2160p60`) keeps the 5K desktop: the
+    /// virtual display is still built from the iMac's 5K panel (it looks like
+    /// 2560 × 1440), and only the capture is scaled to 3840 × 2160 before it is
+    /// encoded; the iMac scales it back up. Text is a little softer than at 5K.
+    /// It is there because the Mac's encoder, not the iMac, caps 5K: a Mac
+    /// Studio M1 Ultra encodes 5K HEVC at about 50 frames a second and 4K at
+    /// about 82 (FPS-TRACE 2026-10-24). That holds while render matching is off,
+    /// which PWE never turns on (TBDisplaySenderSession.virtualDisplayModeOverride).
     static func choices(panelWidth: Int?) -> [TBDisplayCapturePreset] {
-        isRetina4K(panelWidth) ? [.retina4k60, .standard1440p] : [.native5k60Experimental, .native5k, .standard1440p]
+        isRetina4K(panelWidth)
+            ? [.retina4k60, .smooth1440p60]
+            : [.native5k60Experimental, .native5k, .crisp2160p60, .smooth1440p60]
+    }
+
+    /// The 1440p PWE offers is upstream's `smooth1440p60`. Its `standard1440p`
+    /// is 30 frames a second by design (`expectedFrameRate`), which the menu
+    /// called Standard until 1.1.1; the engine's own default stays that preset,
+    /// so an iMac with nothing remembered gets the 60 one instead. The Full
+    /// Console can still choose `standard1440p`, and the menu then shows it.
+    static func offered(_ preset: TBDisplayCapturePreset) -> TBDisplayCapturePreset {
+        preset == .standard1440p ? .smooth1440p60 : preset
+    }
+
+    /// The remembered pictures with 1.1's 30-frame 1440p moved to the 60-frame
+    /// one; nil when there is nothing to move. Run once per Mac (1.1.1), so a
+    /// 30-frame 1440p chosen later in the Full Console is remembered as it is.
+    static func migrated1440p(_ pictures: [String: String]) -> [String: String]? {
+        let old = TBDisplayCapturePreset.standard1440p.rawValue
+        guard pictures.values.contains(old) else { return nil }
+        return pictures.mapValues { $0 == old ? TBDisplayCapturePreset.smooth1440p60.rawValue : $0 }
     }
 
     /// Whose Picture setting the menu shows and sets: the iMac on screen, or

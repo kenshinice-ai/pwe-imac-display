@@ -33,10 +33,10 @@ PROFILE="${NOTARY_PROFILE:-PWE_NOTARY}"
 BUILD="$(date +%Y%m%d%H%M%S)"
 
 # A fresh directory per run, so two builds never delete or mix each other's files.
-# The caches under $TMPDIR keep their pre-rename names: renaming them would only
-# rebuild FFmpeg, SDL2 and libsodium for nothing.
+# The receiver's libraries are cached under ~/Library/Caches, not $TMPDIR: macOS
+# clears $TMPDIR, and verify.sh then quietly skips the sender and receiver tests.
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/pwe-imacdisplay-release.XXXXXX")"
-DEPS="${PWE_DEPS:-${TMPDIR:-/tmp}/pwe-imacdisplay-deps}"
+DEPS="${PWE_DEPS:-$HOME/Library/Caches/pwe-screen-encore-deps}"
 SRC="$WORK/src"
 OUT="$WORK/out"
 DIST="$REPO/pwe/dist"   # notarised release builds only; local checks go to dist/local

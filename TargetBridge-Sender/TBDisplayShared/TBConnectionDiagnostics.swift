@@ -582,6 +582,20 @@ enum TBConnectionDiagnostics {
         return "\(advertised)%\(only)"
     }
 
+    /// PWE (C4): the advertised link-local address was resolved on one of
+    /// `cableBridges`. scopedBridgeIPv6 also scopes it to a lone bridge when
+    /// nothing was resolved, which is right for dialing but proves nothing
+    /// about where the receiver is.
+    static func seenOnCableBridge(advertised: String, resolved: [String], cableBridges: [String]) -> Bool {
+        guard !advertised.contains("%"), let target = IPv6Address(advertised), target.isLinkLocal else { return false }
+        let bridges = Set(cableBridges)
+        return resolved.contains { candidate in
+            guard let address = IPv6Address(candidate), address.rawValue == target.rawValue,
+                  let scope = ipv6Scope(of: candidate) else { return false }
+            return bridges.contains(scope)
+        }
+    }
+
     /// The bridges this Mac's network settings know: the Thunderbolt Bridge,
     /// not a bridge made for a virtual machine or Internet Sharing (bridge100).
     /// The receiver applies the same rule (net.c, interface_is_cable_bridge).
