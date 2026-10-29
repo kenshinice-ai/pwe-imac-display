@@ -47,7 +47,7 @@
 - **[已发] 官网 · 2026-10-29 · /screenencore/guide 使用说明（中英）** — 工具站 main 85e4a92，Cloudflare 448411c1，PWE Assist 知识 4515452；Mac 会话核对线上页：200、10 节、配对码一步在、没有局域网和加密的字 · 数据：未抄
 - **[已发] LinkedIn · 2026-10-28 · PWE Screen Encore 1.1.0** — Lee 提前到当天约 15:12 发；配实拍 P0；21:00 产品片公开后 Lee 在第一条评论贴 youtu.be/CYHKZ5LTn34 · 数据：LinkedIn 会话抄
 - **[排队] YouTube · ENCORE001 产品片** — 已上传并定时：https://youtu.be/CYHKZ5LTn34 ，2026-10-28 21:00 墨尔本公开，在「PWE 工具」播放列表 · YouTube 会话
-- **[排队] LinkedIn · 英文产品片 1 条** — YouTube 会话做英文版（插拔一句改「几秒」、英文字幕），直接上传 LinkedIn；Lee 定 11-02 那周、最早 11-04，片子请 YouTube 会话 11-03 前给；Lee 说「发」才发（Lee 2026-10-29）
+- **[排队] LinkedIn · 英文产品片 1 条** — YouTube 会话做英文版（插拔一句改「几秒」、英文字幕），成片 Youtube Project …/v1-film/en/exports/encore001-v1-film-90s-en.mp4（Lee 2026-10-29 审过：「片子可以」，可提前到 10-29 或 10-30 发）；直接上传 LinkedIn，推荐 10-30 上午；LinkedIn 会话给 Lee 看正文、Lee 说「发」才发
 - **[排队] 微信、小红书、V2EX · 3 条** — 草稿在宣发简报附录 A · 等 10-28 发布后由 Lee 发
 
 ## 等 Lee
