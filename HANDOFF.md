@@ -36,22 +36,20 @@
 
 ## 阶段
 
-- **[阶段] 维护** — 下一步：官网 /screenencore/ 换成 1.1.1 · 负责：「PWE Tools AI 设计」会话 · 卡在：Lee 在那个会话说「部署」 · 自 2026-10-29
+- **[阶段] 维护** — 下一步：写英文版使用说明，交工具站做 /screenencore/guide/ · 负责：本仓库会话 · 卡在：没有 · 自 2026-10-29
 
 ## 宣发
 
 - **[已发] 小红书 · 2026-10-28 · 家里那台5K iMac｜别卖，接上当5K屏** — Lee 提前了发帖时间，10-28 已发；截图是正式版 · 数据：未抄
 - **[排队] 朋友圈 · 测评邀请 1 条** — 正文 A 定稿、P3 文字卡在 `docs/pwe/launch-kit-2026-10-22/moments-beta-invite.md` 和 `moments-beta/` · 等 Blender（P1）和 ChatGPT（P2）出图，Claude 加「效果图」后 Lee 发
 - **[已发] GitHub · 2026-10-29 · PWE Screen Encore 1.1.1** — https://github.com/kenshinice-ai/pwe-imac-display/releases/tag/pwe-1.1.1 · 数据：未抄
-- **[排队] 官网 · /screenencore/ 1.1.1 · 1 次部署** — 改法 2026-10-29 已发给「PWE Tools AI 设计」会话（版本、sha256、署名顺序、27 英寸、快捷键一节）· 等它改完、Lee 说「部署」
-- **[已发] 官网 · 2026-10-28 · /screenencore/ 1.1.0 下载按钮** — 部署 84465b89、4a7187ee；下载 200、9,503,562 字节、sha256 与 release 一致；更新接口对 1.0.0 返回 1.1.0；Install 一行先 `brew trust` · 数据：未抄
+- **[已发] 官网 · 2026-10-29 · /screenencore/ 1.1.1** — 工具站 main 59c637a；更新接口对 1.1.0 返回 1.1.1；线上 DMG 9,765,408 字节，sha256 与 release 一致；新增「快捷键」一节（Claude 2026-10-29 核对）· 数据：未抄
 - **[已发] LinkedIn · 2026-10-28 · PWE Screen Encore 1.1.0** — Lee 提前到当天约 15:12 发；配实拍 P0；21:00 产品片公开后 Lee 在第一条评论贴 youtu.be/CYHKZ5LTn34 · 数据：LinkedIn 会话抄
 - **[排队] YouTube · ENCORE001 产品片** — 已上传并定时：https://youtu.be/CYHKZ5LTn34 ，2026-10-28 21:00 墨尔本公开，在「PWE 工具」播放列表 · YouTube 会话
 - **[排队] 微信、小红书、V2EX · 3 条** — 草稿在宣发简报附录 A · 等 10-28 发布后由 Lee 发
 
 ## 等 Lee
 
-- **[动手] 在「PWE Tools AI 设计」会话说「部署」，官网换成 1.1.1** — 推荐它回报改完就部署 · 不部署则官网下载和更新检查仍给 1.1.0 · 自 2026-10-29
 - **[给料] 测试者名单** — Lee 2026-10-22 已把测试版发给第一批人，名单之后发给 Claude；请把发给了谁（称呼、联系方式、iMac 年份）记进 `docs/pwe/BETA-testers-roster.md`，终身免费要靠这份名单兑现 · 不记则以后核对不了谁该免费 · 自 2026-10-22
 - **[动手] GitHub Sponsors 审核通过后打开仓库的 Sponsorships 开关** — 资料已提交，2026-10-22 状态 Pending（GitHub 审核中）；通过后 GitHub 会发邮件，Lee 到仓库 Settings › General › Features 勾选 Sponsorships · 不开则仓库页没有赞助入口（支持页另由工具站会话放出按钮）· 自 2026-10-21
 - **[给料] 更多真机照片** — Lee 之后拍（2026-10-22）：小红书要 iMac 亮屏正面、一根线的特写；关掉屏幕共享、用中文界面 · 不拍则小红书只能用效果图和截图 · 自 2026-10-21
