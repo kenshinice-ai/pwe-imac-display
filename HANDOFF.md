@@ -47,6 +47,8 @@
 - **[已发] 官网 · 2026-10-29 · /screenencore/ 1.1.1** — 工具站 main 59c637a；更新接口对 1.1.0 返回 1.1.1；线上 DMG 9,765,408 字节，sha256 与 release 一致；新增「快捷键」一节（Claude 2026-10-29 核对）· 数据：未抄
 - **[已发] LinkedIn · 2026-10-28 · PWE Screen Encore 1.1.0** — Lee 提前到当天约 15:12 发；配实拍 P0；21:00 产品片公开后 Lee 在第一条评论贴 youtu.be/CYHKZ5LTn34 · 数据：LinkedIn 会话抄
 - **[排队] YouTube · ENCORE001 产品片** — 已上传并定时：https://youtu.be/CYHKZ5LTn34 ，2026-10-28 21:00 墨尔本公开，在「PWE 工具」播放列表 · YouTube 会话
+- **[排队] LinkedIn · 英文产品片 1 条** — YouTube 会话做英文版（插拔一句改「几秒」、英文字幕），直接上传 LinkedIn，约 11-04～11-11；Lee 审定稿后发（Lee 2026-10-29 同意）
+- **[排队] 官网 · /screenencore/guide 使用说明 1 页** — 工具站分支 site-encore-guide 85e4a92，Mac 会话已核对预览；Lee 2026-10-29 同意部署，等工具站会话上线
 - **[排队] 微信、小红书、V2EX · 3 条** — 草稿在宣发简报附录 A · 等 10-28 发布后由 Lee 发
 
 ## 等 Lee
