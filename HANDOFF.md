@@ -41,7 +41,7 @@
 ## 宣发
 
 - **[已发] 小红书 · 2026-10-28 · 家里那台5K iMac｜别卖，接上当5K屏** — Lee 提前了发帖时间，10-28 已发；截图是正式版 · 数据：未抄
-- **[排队] 朋友圈 · 测评邀请 1 条** — 正文 A 定稿、P3 文字卡在 `docs/pwe/launch-kit-2026-10-22/moments-beta-invite.md` 和 `moments-beta/` · 等 Blender（P1）和 ChatGPT（P2）出图，Claude 加「效果图」后 Lee 发
+- **[已发] 朋友圈 · 2026-10-29 · PWE Screen Encore** — Lee 发，正文以他发出的为准 · 数据：未抄
 - **[已发] GitHub Discussions · 2026-10-29 · 想在 Windows 电脑上用 PWE Screen Encore 吗？** — https://github.com/kenshinice-ai/pwe-imac-display/discussions/1 ，只问需求、不承诺；T+60（约 2026-12-27）复盘时抄 👍 和留言 · 数据：未抄
 - **[已发] GitHub · 2026-10-29 · PWE Screen Encore 1.1.1** — https://github.com/kenshinice-ai/pwe-imac-display/releases/tag/pwe-1.1.1 · 数据：未抄
 - **[已发] 官网 · 2026-10-29 · /screenencore/ 1.1.1** — 工具站 main 59c637a；更新接口对 1.1.0 返回 1.1.1；线上 DMG 9,765,408 字节，sha256 与 release 一致；新增「快捷键」一节（Claude 2026-10-29 核对）· 数据：未抄
