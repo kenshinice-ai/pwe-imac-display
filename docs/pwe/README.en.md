@@ -11,6 +11,8 @@ Formerly PWE iMac Display; renamed with 1.1.
 > 27-inch 5K iMac; other 2014–2020 models should work by design — a "Model report" issue
 > with your result helps everyone.
 
+Setup, connecting, shortcuts and troubleshooting: see the [user guide](guide.en.md).
+
 ## What it is
 
 Apple dropped Target Display Mode with the 5K iMac in late 2014, and Apple silicon
