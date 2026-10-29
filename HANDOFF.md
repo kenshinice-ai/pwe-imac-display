@@ -53,6 +53,8 @@
 - **[给料] 测试者名单** — Lee 2026-10-22 已把测试版发给第一批人，名单之后发给 Claude；请把发给了谁（称呼、联系方式、iMac 年份）记进 `docs/pwe/BETA-testers-roster.md`，终身免费要靠这份名单兑现 · 不记则以后核对不了谁该免费 · 自 2026-10-22
 - **[动手] GitHub Sponsors 审核通过后打开仓库的 Sponsorships 开关** — 资料已提交，2026-10-22 状态 Pending（GitHub 审核中）；通过后 GitHub 会发邮件，Lee 到仓库 Settings › General › Features 勾选 Sponsorships · 不开则仓库页没有赞助入口（支持页另由工具站会话放出按钮）· 自 2026-10-21
 - **[动手] 小红书主页简介写上 pwestudio.site/screenencore（纯文字）** — 10-29 发帖前；帖子里不放网址，评论区有人问就回「主页简介里有」· 不写则问下载的人找不到 · 自 2026-10-22
+- **[决定] 公开仓库加 topics，让 GitHub 搜「Screen Encore」能找到** — 推荐加 `screen-encore` 等 7 个，可逆；改名 `pwe-screen-encore` 等 1.1.1 之后再议 · 不定则小红书读者继续说「GitHub 上没有」· 自 2026-10-29
+- **[动手] 更正小红书两条回复** — 「AirPlay 最多 1080p」Apple 页面没这句；「1.1.1 能到 55 以上」只在流畅 · 4K 60 成立。改法见 `docs/pwe/NOTES-xhs-signals-2026-10-29.md` · 不改则评论区留着两句站不住的话 · 自 2026-10-29
 - **[给料] 更多真机照片** — Lee 之后拍（2026-10-22）：小红书要 iMac 亮屏正面、一根线的特写；关掉屏幕共享、用中文界面 · 不拍则小红书只能用效果图和截图 · 自 2026-10-21
 
 ## GitHub Sponsors 跟进（2026-10-22 起）
