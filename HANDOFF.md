@@ -36,7 +36,7 @@
 
 ## 阶段
 
-- **[阶段] 上线** — 下一步：第一周看 issue 和反馈；1.1.1 约 11-04 · 负责：本仓库会话 · 卡在：没有 · 自 2026-10-28 · 负责：Lee（go/no-go）、本仓库会话（发布步骤）· 卡在：没有 · 自 2026-10-22
+- **[阶段] 上线** — 下一步：1.1.1g 通过后当天发布 1.1.1 · 负责：本仓库会话 · 卡在：测试机跑 1.1.1g · 自 2026-10-29
 
 ## 宣发
 
@@ -96,8 +96,9 @@
 | 10-29 12:00 | 小红书 T+1 图文 | 小红书会话（定时） | 已发 |
 | 发布后 | 使用说明和官网加「只接 iMac 的台式 Mac」一节（Lee 2026-10-23 定，不动 1.1.0）。2026-10-23 在 Mac Studio 上实测：锁屏、睡醒 1–2 秒都在 iMac 上出密码界面，用 iMac 的键盘能解锁 | Claude 写，工具站会话上网站 | — |
 | 10-28～11-04 | 第一周：看 issue 和 support 邮件，填 COMPATIBILITY.md；先攒 bug，不逐个发版 | Claude | 每个 issue 48 小时内有回复 |
-| 约 11-11（T+14） | 宣传可以提配对和加密；上游 PR 一周一个，先提不涉及安全的 | Claude，Lee 定 | — |
+| 约 11-11（T+14） | 宣传可以提配对和加密。上游 PR（Lee 2026-10-29 按推荐定）：一周一个，只提和安全无关的；先提本地分支 `upstream/sender-notice-unplug`（拔线约 2 秒发现），再提 `upstream/sender-no-wake-on-sleep`。先等 #222 有回应再提下一个。「只接 iMac 时直接抓屏」改默认行为，先开 issue 和维护者商量。1.1.1 的其他改动都要手工移植到上游 `maint-3.6`（2026-10-29 试了 10 个，全部冲突） | Claude 提，Lee 定 | 每个 PR 在 `pwe/PATCHES.md` 记上号 |
 | 2026-10-28 晚 | 删了 GitHub 上的旧分支 `pwe-1.1`（10-16 推的 b960b32，已全部在 main；Lee 同意）。cloud 审计报告存了一份在 `docs/pwe/AUDIT-1.1.1-cloud-2026-10-28.md`（不入库；私有仓库分支 `audit-report` 有原件）。补测约 10-31，Lee 配合 | — | — |
+| 2026-10-29 | **Lee 定 go：1.1.1g 通过就当天发布 1.1.1**（原定 11-04）。不在 M4 Max 上测；发布说明写明「没在 M4 上测过」，并给出换回 1.1.0 抓屏方式的命令。测试包就是正式包：标签 `pwe-1.1.1` → e99ba18（本地），`package.sh --notarize` 打的包放进 `docs/pwe/test-mac-2026-10-22/`，测试单 `TEST-1.1.1g-2026-10-29.md`（不入库）。发布说明草稿在 worktree 的 `docs/pwe/releases/1.1.1.md`。**注意：标签和本地分支都叫 `pwe-1.1.1`。** 推送写全名：`git push origin main refs/tags/pwe-1.1.1`。成功判据：`git ls-remote origin refs/tags/pwe-1.1.1` 返回 e99ba18。发布步骤同「1.1 发布步骤」，另加：README 两份和仓库简介去掉「1.1.1 在路上」；工具站产品页改版本号、署名顺序（「由 PWE Group 构建并签名」为主行）、「27 英寸」（Lee 在工具站会话说「部署」） | 测试机会话（1.1.1g）；Claude（发布） | GitHub release 和 cask 是 1.1.1 |
 | 2026-10-28 晚 | **1.1.1 新一轮修复开工**：cloud 审计 7 条加已知 3 条，发送端、接收端两个子代理在修。审计详情只在私有 artifact 和本地未入库文档里，不写进这个公开文件。整理：旧测试包和 RC 包移到废纸篓 `pwe-encore-tidy-20261028`，删了已发布的 `pwe-1.1` worktree | 本仓库会话 | 修完、评审、verify 全过 |
 | 2026-10-28 晚 | 1.1.1 修复合进 `pwe-1.1.1`（本地 e837f0c，未推）：评审后再修一轮，verify 全过（含 smoke）。测试包 20261028154106 在 `docs/pwe/test-mac-2026-10-22/`，复测表 `TEST-1.1.1d-2026-10-31.md`（不入库）。Lee 要求：README 两份和仓库简介加了「1.1.1 在路上」（542a4f9，已推；简介用 `gh repo edit` 改）。**1.1.1 发布时把这两处改掉** | 本仓库会话 | 等 Lee 说测试就绪 |
 | 2026-10-28 | **1.1.0 已发布（Claude 按步骤做，Lee 当天「开始发布」）。** 1 合并 `pwe-1.1` 进 main（5405751，HANDOFF 取 main 的，README 取 1.1 的下载说明）；1b 文档扫过（63 个待推提交里没有安全细节、测试者名单或私下链接；`LAUNCH-PLAN-2026-10-20.md` 加了「60 Hz 已撤回」的注，ec2861e）；2 未入库文档今天不入库；4 推了 main（41795e7..ec2861e）和唯一标签 `pwe-1.1.0`；5 release https://github.com/kenshinice-ai/pwe-imac-display/releases/tag/pwe-1.1.0（latest；下载回来校验值对、Gatekeeper Notarized Developer ID、9,503,562 字节）；6 cask `kenshinice-ai/tap/pwe-screen-encore`（tap 3749f5a；brew style 改了两处写法）——`brew fetch` 没做成：**Homebrew 7 拒绝加载非官方 tap 的 cask，要先 `brew trust kenshinice-ai/tap`**（改信任设置要 Lee 自己做；用户安装也会碰到）；7 README 已是下载说明；8 已回信 Marco（10-14 那封的线程）；9 删了本地分支 `security-1.0.1`（已全部在 main，162a064）。**还没做：** 7a 官网（工具站会话不在线；要 Lee 打开它并说「部署」，分支 site-encore-110 9fd567a）、7c 小红书、YouTube 确认、7b 产品片插拔秒数（正式版 X3：3.2–4.9 s）——这几个会话都不在线 | Lee 打开会话 | 官网显示 1.1.0 下载按钮 |
