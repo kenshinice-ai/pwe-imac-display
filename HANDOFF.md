@@ -44,11 +44,10 @@
 - **[已发] 朋友圈 · 2026-10-29 · PWE Screen Encore** — Lee 发，正文以他发出的为准 · 数据：未抄
 - **[已发] GitHub Discussions · 2026-10-29 · 想在 Windows 电脑上用 PWE Screen Encore 吗？** — https://github.com/kenshinice-ai/pwe-imac-display/discussions/1 ，只问需求、不承诺；T+60（约 2026-12-27）复盘时抄 👍 和留言 · 数据：未抄
 - **[已发] GitHub · 2026-10-29 · PWE Screen Encore 1.1.1** — https://github.com/kenshinice-ai/pwe-imac-display/releases/tag/pwe-1.1.1 · 数据：未抄
-- **[已发] 官网 · 2026-10-29 · /screenencore/ 1.1.1** — 工具站 main 59c637a；更新接口对 1.1.0 返回 1.1.1；线上 DMG 9,765,408 字节，sha256 与 release 一致；新增「快捷键」一节（Claude 2026-10-29 核对）· 数据：未抄
+- **[已发] 官网 · 2026-10-29 · /screenencore/guide 使用说明（中英）** — 工具站 main 85e4a92，Cloudflare 448411c1，PWE Assist 知识 4515452；Mac 会话核对线上页：200、10 节、配对码一步在、没有局域网和加密的字 · 数据：未抄
 - **[已发] LinkedIn · 2026-10-28 · PWE Screen Encore 1.1.0** — Lee 提前到当天约 15:12 发；配实拍 P0；21:00 产品片公开后 Lee 在第一条评论贴 youtu.be/CYHKZ5LTn34 · 数据：LinkedIn 会话抄
 - **[排队] YouTube · ENCORE001 产品片** — 已上传并定时：https://youtu.be/CYHKZ5LTn34 ，2026-10-28 21:00 墨尔本公开，在「PWE 工具」播放列表 · YouTube 会话
 - **[排队] LinkedIn · 英文产品片 1 条** — YouTube 会话做英文版（插拔一句改「几秒」、英文字幕），直接上传 LinkedIn；Lee 定 11-02 那周、最早 11-04，片子请 YouTube 会话 11-03 前给；Lee 说「发」才发（Lee 2026-10-29）
-- **[排队] 官网 · /screenencore/guide 使用说明 1 页** — 工具站分支 site-encore-guide 85e4a92，Mac 会话已核对预览；Lee 2026-10-29 同意部署，等工具站会话上线
 - **[排队] 微信、小红书、V2EX · 3 条** — 草稿在宣发简报附录 A · 等 10-28 发布后由 Lee 发
 
 ## 等 Lee
