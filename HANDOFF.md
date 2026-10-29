@@ -52,7 +52,6 @@
 
 - **[给料] 测试者名单** — Lee 2026-10-22 已把测试版发给第一批人，名单之后发给 Claude；请把发给了谁（称呼、联系方式、iMac 年份）记进 `docs/pwe/BETA-testers-roster.md`，终身免费要靠这份名单兑现 · 不记则以后核对不了谁该免费 · 自 2026-10-22
 - **[动手] GitHub Sponsors 审核通过后打开仓库的 Sponsorships 开关** — 资料已提交，2026-10-22 状态 Pending（GitHub 审核中）；通过后 GitHub 会发邮件，Lee 到仓库 Settings › General › Features 勾选 Sponsorships · 不开则仓库页没有赞助入口（支持页另由工具站会话放出按钮）· 自 2026-10-21
-- **[动手] 小红书主页简介写上 pwestudio.site/screenencore（纯文字）** — 10-29 发帖前；帖子里不放网址，评论区有人问就回「主页简介里有」· 不写则问下载的人找不到 · 自 2026-10-22
 - **[动手] 更正小红书两条回复** — 「AirPlay 最多 1080p」Apple 页面没这句；「1.1.1 能到 55 以上」只在流畅 · 4K 60 成立。改法见 `docs/pwe/NOTES-xhs-signals-2026-10-29.md` · 不改则评论区留着两句站不住的话 · 自 2026-10-29
 - **[给料] 更多真机照片** — Lee 之后拍（2026-10-22）：小红书要 iMac 亮屏正面、一根线的特写；关掉屏幕共享、用中文界面 · 不拍则小红书只能用效果图和截图 · 自 2026-10-21
 
@@ -99,6 +98,7 @@
 | 10-28～11-04 | 第一周：看 issue 和 support 邮件，填 COMPATIBILITY.md；先攒 bug，不逐个发版 | Claude | 每个 issue 48 小时内有回复 |
 | 约 11-11（T+14） | 宣传可以提配对和加密。上游 PR（Lee 2026-10-29 按推荐定）：一周一个，只提和安全无关的；先提本地分支 `upstream/sender-notice-unplug`（拔线约 2 秒发现），再提 `upstream/sender-no-wake-on-sleep`。先等 #222 有回应再提下一个。「只接 iMac 时直接抓屏」改默认行为，先开 issue 和维护者商量。1.1.1 的其他改动都要手工移植到上游 `maint-3.6`（2026-10-29 试了 10 个，全部冲突） | Claude 提，Lee 定 | 每个 PR 在 `pwe/PATCHES.md` 记上号 |
 | 2026-10-28 晚 | 删了 GitHub 上的旧分支 `pwe-1.1`（10-16 推的 b960b32，已全部在 main；Lee 同意）。cloud 审计报告存了一份在 `docs/pwe/AUDIT-1.1.1-cloud-2026-10-28.md`（不入库；私有仓库分支 `audit-report` 有原件）。补测约 10-31，Lee 配合 | — | — |
+| 2026-10-29 | **Lee 定：小红书主页简介暂不放网址**，怕被降流量。读者问下载时，引导搜「PWE Screen Encore」；公开仓库已加 topics（含 `screen-encore`），GitHub 搜索索引更新后应能搜到 | 小红书会话（回复口径）| 过几天复查：`gh search repos "screen encore"` 返回 `kenshinice-ai/pwe-imac-display` |
 | 2026-10-29 | **Lee 定 1.2 的快捷键方向（按推荐）**：iMac 键盘上按 ⌘F2 让出或拿回屏幕（断开语义，像当年的目标显示器模式；不改协议，沿用断开包加新原因）；做「快捷指令」动作；不做在 iMac 上开始控制 Mac，不占 Mac 的全局组合键。方案 `docs/pwe/PLAN-1.2-shortcuts-2026-10-29.md`（不入库）。1.1.1 已有快捷键写进安装指南「快捷键」一节（`pwe-1.1.1` 2a0db0f，本地）；1.1.1 发布时请工具站会话把同一节加进网页版使用说明 | 本仓库会话；工具站会话 | 1.1.1 发出后开工，先做原型 H1–H3 |
 | 2026-10-29 | **Lee 定 go：1.1.1g 通过就当天发布 1.1.1**（原定 11-04）。不在 M4 Max 上测；发布说明写明「没在 M4 上测过」，并给出换回 1.1.0 抓屏方式的命令。测试包就是正式包：标签 `pwe-1.1.1` → e99ba18（本地），`package.sh --notarize` 打的包放进 `docs/pwe/test-mac-2026-10-22/`，测试单 `TEST-1.1.1g-2026-10-29.md`（不入库）。发布说明草稿在 worktree 的 `docs/pwe/releases/1.1.1.md`。**注意：标签和本地分支都叫 `pwe-1.1.1`。** 推送写全名：`git push origin main refs/tags/pwe-1.1.1`。成功判据：`git ls-remote origin refs/tags/pwe-1.1.1` 返回 e99ba18。发布步骤同「1.1 发布步骤」，另加：README 两份和仓库简介去掉「1.1.1 在路上」；工具站产品页改版本号、署名顺序（「由 PWE Group 构建并签名」为主行）、「27 英寸」（Lee 在工具站会话说「部署」） | 测试机会话（1.1.1g）；Claude（发布） | GitHub release 和 cask 是 1.1.1 |
 | 2026-10-28 晚 | **1.1.1 新一轮修复开工**：cloud 审计 7 条加已知 3 条，发送端、接收端两个子代理在修。审计详情只在私有 artifact 和本地未入库文档里，不写进这个公开文件。整理：旧测试包和 RC 包移到废纸篓 `pwe-encore-tidy-20261028`，删了已发布的 `pwe-1.1` worktree | 本仓库会话 | 修完、评审、verify 全过 |
