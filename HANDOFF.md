@@ -46,13 +46,14 @@
 - **[已发] GitHub · 2026-10-29 · PWE Screen Encore 1.1.1** — https://github.com/kenshinice-ai/pwe-imac-display/releases/tag/pwe-1.1.1 · 数据：未抄
 - **[已发] 官网 · 2026-10-29 · /screenencore/guide 使用说明（中英）** — 工具站 main 85e4a92，Cloudflare 448411c1，PWE Assist 知识 4515452；Mac 会话核对线上页：200、10 节、配对码一步在、没有局域网和加密的字 · 数据：未抄
 - **[已发] LinkedIn · 2026-10-28 · PWE Screen Encore 1.1.0** — Lee 提前到当天约 15:12 发；配实拍 P0；21:00 产品片公开后 Lee 在第一条评论贴 youtu.be/CYHKZ5LTn34 · 数据：LinkedIn 会话抄
-- **[排队] YouTube · ENCORE001 产品片** — 已上传并定时：https://youtu.be/CYHKZ5LTn34 ，2026-10-28 21:00 墨尔本公开，在「PWE 工具」播放列表 · YouTube 会话
+- **[已发] YouTube · 2026-10-28 · ENCORE001 产品片** — https://youtu.be/CYHKZ5LTn34 ，「PWE 工具」播放列表；2026-10-29 说明栏补了正式版插拔实测 3.2–4.9 秒（Lee 同意）· 数据：未抄
 - **[排队] LinkedIn · 英文产品片 1 条** — YouTube 会话做英文版（插拔一句改「几秒」、英文字幕），成片 Youtube Project …/v1-film/en/exports/encore001-v1-film-90s-en.mp4（Lee 2026-10-29 审过：「片子可以」，可提前到 10-29 或 10-30 发）；直接上传 LinkedIn，推荐 10-30 上午；LinkedIn 会话给 Lee 看正文、Lee 说「发」才发
 - **[排队] 微信、小红书、V2EX · 3 条** — 草稿在宣发简报附录 A · 等 10-28 发布后由 Lee 发
 
 ## 等 Lee
 
 - **[动手] GitHub Sponsors 审核通过后打开仓库的 Sponsorships 开关** — 资料已提交，2026-10-22 状态 Pending（GitHub 审核中）；通过后 GitHub 会发邮件，Lee 到仓库 Settings › General › Features 勾选 Sponsorships · 不开则仓库页没有赞助入口（支持页另由工具站会话放出按钮）· 自 2026-10-21
+- **[动手] 在 2017 iMac 上跑 1.2 的 ⌘F2 小原型** — 推荐按 `docs/pwe/TEST-1.2-proto-h1h3-2026-10-30.md` 做，约 10 分钟，先退出接收端；Lee 定 10-30 做 · 不做则 1.2 的接收端实现等着 · 自 2026-10-29
 - **[动手] 用家里的 iMac 24（M3）跑第一轮测试** — 推荐按 `docs/pwe/TEST-imac24-m3-round1-2026-10-29.md` 做，约 40 分钟，测试机会话记录 · 不做则 4.5K 画面档只能按代码猜着写 · 自 2026-10-29
 - **[给料] 更多真机照片** — Lee 之后拍（2026-10-22）：小红书要 iMac 亮屏正面、一根线的特写；关掉屏幕共享、用中文界面 · 不拍则小红书只能用效果图和截图 · 自 2026-10-21
 
