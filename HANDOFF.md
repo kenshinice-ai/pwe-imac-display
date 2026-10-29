@@ -36,13 +36,14 @@
 
 ## 阶段
 
-- **[阶段] 上线** — 下一步：1.1.1g 通过后当天发布 1.1.1 · 负责：本仓库会话 · 卡在：测试机跑 1.1.1g · 自 2026-10-29
+- **[阶段] 维护** — 下一步：官网 /screenencore/ 换成 1.1.1 · 负责：「PWE Tools AI 设计」会话 · 卡在：Lee 在那个会话说「部署」 · 自 2026-10-29
 
 ## 宣发
 
 - **[已发] 小红书 · 2026-10-28 · 家里那台5K iMac｜别卖，接上当5K屏** — Lee 提前了发帖时间，10-28 已发；截图是正式版 · 数据：未抄
 - **[排队] 朋友圈 · 测评邀请 1 条** — 正文 A 定稿、P3 文字卡在 `docs/pwe/launch-kit-2026-10-22/moments-beta-invite.md` 和 `moments-beta/` · 等 Blender（P1）和 ChatGPT（P2）出图，Claude 加「效果图」后 Lee 发
-- **[已发] GitHub · 2026-10-28 · PWE Screen Encore 1.1.0** — https://github.com/kenshinice-ai/pwe-imac-display/releases/tag/pwe-1.1.0 · 数据：未抄
+- **[已发] GitHub · 2026-10-29 · PWE Screen Encore 1.1.1** — https://github.com/kenshinice-ai/pwe-imac-display/releases/tag/pwe-1.1.1 · 数据：未抄
+- **[排队] 官网 · /screenencore/ 1.1.1 · 1 次部署** — 改法 2026-10-29 已发给「PWE Tools AI 设计」会话（版本、sha256、署名顺序、27 英寸、快捷键一节）· 等它改完、Lee 说「部署」
 - **[已发] 官网 · 2026-10-28 · /screenencore/ 1.1.0 下载按钮** — 部署 84465b89、4a7187ee；下载 200、9,503,562 字节、sha256 与 release 一致；更新接口对 1.0.0 返回 1.1.0；Install 一行先 `brew trust` · 数据：未抄
 - **[已发] LinkedIn · 2026-10-28 · PWE Screen Encore 1.1.0** — Lee 提前到当天约 15:12 发；配实拍 P0；21:00 产品片公开后 Lee 在第一条评论贴 youtu.be/CYHKZ5LTn34 · 数据：LinkedIn 会话抄
 - **[排队] YouTube · ENCORE001 产品片** — 已上传并定时：https://youtu.be/CYHKZ5LTn34 ，2026-10-28 21:00 墨尔本公开，在「PWE 工具」播放列表 · YouTube 会话
@@ -50,6 +51,7 @@
 
 ## 等 Lee
 
+- **[动手] 在「PWE Tools AI 设计」会话说「部署」，官网换成 1.1.1** — 推荐它回报改完就部署 · 不部署则官网下载和更新检查仍给 1.1.0 · 自 2026-10-29
 - **[给料] 测试者名单** — Lee 2026-10-22 已把测试版发给第一批人，名单之后发给 Claude；请把发给了谁（称呼、联系方式、iMac 年份）记进 `docs/pwe/BETA-testers-roster.md`，终身免费要靠这份名单兑现 · 不记则以后核对不了谁该免费 · 自 2026-10-22
 - **[动手] GitHub Sponsors 审核通过后打开仓库的 Sponsorships 开关** — 资料已提交，2026-10-22 状态 Pending（GitHub 审核中）；通过后 GitHub 会发邮件，Lee 到仓库 Settings › General › Features 勾选 Sponsorships · 不开则仓库页没有赞助入口（支持页另由工具站会话放出按钮）· 自 2026-10-21
 - **[给料] 更多真机照片** — Lee 之后拍（2026-10-22）：小红书要 iMac 亮屏正面、一根线的特写；关掉屏幕共享、用中文界面 · 不拍则小红书只能用效果图和截图 · 自 2026-10-21
@@ -99,6 +101,7 @@
 | 2026-10-28 晚 | 删了 GitHub 上的旧分支 `pwe-1.1`（10-16 推的 b960b32，已全部在 main；Lee 同意）。cloud 审计报告存了一份在 `docs/pwe/AUDIT-1.1.1-cloud-2026-10-28.md`（不入库；私有仓库分支 `audit-report` 有原件）。补测约 10-31，Lee 配合 | — | — |
 | 2026-10-29 | **Lee 定：小红书主页简介暂不放网址**，怕被降流量。读者问下载时，引导搜「PWE Screen Encore」；公开仓库已加 topics（含 `screen-encore`），GitHub 搜索索引更新后应能搜到 | 小红书会话（回复口径）| 过几天复查：`gh search repos "screen encore"` 返回 `kenshinice-ai/pwe-imac-display` |
 | 2026-10-29 | **Lee 定 1.2 的快捷键方向（按推荐）**：iMac 键盘上按 ⌘F2 让出或拿回屏幕（断开语义，像当年的目标显示器模式；不改协议，沿用断开包加新原因）；做「快捷指令」动作；不做在 iMac 上开始控制 Mac，不占 Mac 的全局组合键。方案 `docs/pwe/PLAN-1.2-shortcuts-2026-10-29.md`（不入库）。1.1.1 已有快捷键写进安装指南「快捷键」一节（`pwe-1.1.1` 2a0db0f，本地）；1.1.1 发布时请工具站会话把同一节加进网页版使用说明 | 本仓库会话；工具站会话 | 1.1.1 发出后开工，先做原型 H1–H3 |
+| 2026-10-29 | **1.1.1 已发布。** 1.1.1g 在测试机全部通过（BASELINE「1.1.1g」，只有 P3 文字观察）。发布说明填了日期和「已验证」（`pwe-1.1.1` 404d1f2）；`pwe-1.1.1` 以 --no-ff 合进 main（0aacdaa，README 两份去掉「1.1.1 在路上」）；推了 main（542a4f9..0aacdaa）和标签 `pwe-1.1.1` → e99ba18；release https://github.com/kenshinice-ai/pwe-imac-display/releases/tag/pwe-1.1.1（latest，三个文件下载回来 `shasum -c` 通过，DMG Notarized Developer ID）；cask 1.1.1（tap c2d9e86，`brew style` 通过；`brew audit` 要先 `brew trust`，没做）；仓库简介去掉「1.1.1 在路上」。已通知工具站、小红书、YouTube、LinkedIn 会话 | 本仓库会话；工具站会话 | 官网显示 1.1.1 |
 | 2026-10-29 | **Lee 定 go：1.1.1g 通过就当天发布 1.1.1**（原定 11-04）。不在 M4 Max 上测；发布说明写明「没在 M4 上测过」，并给出换回 1.1.0 抓屏方式的命令。测试包就是正式包：标签 `pwe-1.1.1` → e99ba18（本地），`package.sh --notarize` 打的包放进 `docs/pwe/test-mac-2026-10-22/`，测试单 `TEST-1.1.1g-2026-10-29.md`（不入库）。发布说明草稿在 worktree 的 `docs/pwe/releases/1.1.1.md`。**注意：标签和本地分支都叫 `pwe-1.1.1`。** 推送写全名：`git push origin main refs/tags/pwe-1.1.1`。成功判据：`git ls-remote origin refs/tags/pwe-1.1.1` 返回 e99ba18。发布步骤同「1.1 发布步骤」，另加：README 两份和仓库简介去掉「1.1.1 在路上」；工具站产品页改版本号、署名顺序（「由 PWE Group 构建并签名」为主行）、「27 英寸」（Lee 在工具站会话说「部署」） | 测试机会话（1.1.1g）；Claude（发布） | GitHub release 和 cask 是 1.1.1 |
 | 2026-10-28 晚 | **1.1.1 新一轮修复开工**：cloud 审计 7 条加已知 3 条，发送端、接收端两个子代理在修。审计详情只在私有 artifact 和本地未入库文档里，不写进这个公开文件。整理：旧测试包和 RC 包移到废纸篓 `pwe-encore-tidy-20261028`，删了已发布的 `pwe-1.1` worktree | 本仓库会话 | 修完、评审、verify 全过 |
 | 2026-10-28 晚 | 1.1.1 修复合进 `pwe-1.1.1`（本地 e837f0c，未推）：评审后再修一轮，verify 全过（含 smoke）。测试包 20261028154106 在 `docs/pwe/test-mac-2026-10-22/`，复测表 `TEST-1.1.1d-2026-10-31.md`（不入库）。Lee 要求：README 两份和仓库简介加了「1.1.1 在路上」（542a4f9，已推；简介用 `gh repo edit` 改）。**1.1.1 发布时把这两处改掉** | 本仓库会话 | 等 Lee 说测试就绪 |
